@@ -13,6 +13,7 @@ import OrganizationDetail from "./pages/organizations/OrganizationDetail";
 import ProjectDetail from "./pages/organizations/ProjectDetail";
 import EnvironmentDetail from "./pages/organizations/EnvironmentDetail";
 import AppDetail from "./pages/organizations/AppDetail";
+import AppWorkspacePage from "./pages/organizations/AppWorkspacePage";
 import MyTeamspace from "./pages/MyTeamspace";
 import ViewApplication from "./pages/ViewApplication";
 import JoinApplication from "./pages/JoinApplication";
@@ -58,6 +59,10 @@ const App = () => (
             <Route path=":orgId/projects/:projectId/environments/:environmentId" element={<EnvironmentDetail />} />
             <Route path=":orgId/projects/:projectId/environments/:environmentId/apps/:appId" element={<AppDetail />} />
           </Route>
+          <Route
+            path="/organizations/:orgId/projects/:projectId/environments/:environmentId/apps/:appId/workspace"
+            element={<AuthGuard><AppWorkspacePage /></AuthGuard>}
+          />
           <Route path="/my-teamspace" element={<AuthGuard><MyTeamspace /></AuthGuard>} />
           <Route path="/my-teamspace/view/:appName" element={<AuthGuard><ViewApplication /></AuthGuard>} />
           <Route path="/my-teamspace/join/:appName" element={<AuthGuard><JoinApplication /></AuthGuard>} />

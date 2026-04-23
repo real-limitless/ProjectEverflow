@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button, Page, PageSection, Spinner, TreeView, TreeViewDataItem } from '@patternfly/react-core';
 import { Building2, FolderKanban, GitBranch, Plus, Rocket, Server } from 'lucide-react';
-import { Outlet, useNavigate, useParams } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardSidebar } from '@/components/dashboard/DashboardSidebar';
@@ -25,16 +25,18 @@ import {
   createEnvironment,
   createOrganization,
   createProject,
-  getApps,
-  getCurrentUser,
   getDeployments,
-  getEnvironments,
-  getOrganizationProjects,
-  getOrganizations,
   Organization,
   Project,
   ProjectEnvironment,
 } from '@/lib/api';
+import { useOrganizationHierarchyData } from '@/hooks/useOrganizationHierarchyData';
+import {
+  buildAppWorkspacePath,
+  buildEnvironmentPath,
+  buildOrganizationPath,
+  buildProjectPath,
+} from '@/lib/organizationPaths';
 
 type DialogMode = 'organization' | 'project' | 'environment' | 'app' | 'deployment' | null;
 
@@ -77,14 +79,6 @@ export interface OrganizationHierarchyOutletContext {
   selectedProject: Project | null;
   selectedEnvironment: ProjectEnvironment | null;
   selectedApp: ProjectApp | null;
-}
-
-function parseRouteId(value?: string): number | null {
-  if (!value) {
-    return null;
-  }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function findTreeItem(items: TreeViewDataItem[], id: string): TreeViewDataItem | undefined {
@@ -149,55 +143,29 @@ const Organizations = () => {
   });
 
   const navigate = useNavigate();
-  const params = useParams();
   const queryClient = useQueryClient();
-
-  const selectedOrgId = parseRouteId(params.orgId);
-  const selectedProjectId = parseRouteId(params.projectId);
-  const selectedEnvironmentId = parseRouteId(params.environmentId);
-  const selectedAppId = parseRouteId(params.appId);
-
-  const { data: organizationsResponse, isLoading: organizationsLoading } = useQuery({
-    queryKey: ['organizations'],
-    queryFn: getOrganizations,
-  });
-  const { data: currentUserResponse } = useQuery({
-    queryKey: ['currentUser'],
-    queryFn: getCurrentUser,
-  });
-  const { data: projectsResponse, isLoading: projectsLoading } = useQuery({
-    queryKey: ['organizationProjects', selectedOrgId],
-    queryFn: () => getOrganizationProjects(selectedOrgId as number),
-    enabled: selectedOrgId !== null,
-  });
-  const { data: environmentsResponse, isLoading: environmentsLoading } = useQuery({
-    queryKey: ['environments', selectedProjectId],
-    queryFn: () => getEnvironments(selectedProjectId as number),
-    enabled: selectedProjectId !== null,
-  });
-  const { data: appsResponse, isLoading: appsLoading } = useQuery({
-    queryKey: ['apps', selectedEnvironmentId],
-    queryFn: () => getApps(selectedEnvironmentId as number),
-    enabled: selectedEnvironmentId !== null,
-  });
-  const { data: deploymentsResponse, isLoading: deploymentsLoading } = useQuery({
-    queryKey: ['deployments', selectedAppId],
-    queryFn: () => getDeployments({ appId: selectedAppId as number }),
-    enabled: selectedAppId !== null,
-  });
-
-  const organizations = organizationsResponse?.data ?? [];
-  const projects = projectsResponse?.data ?? [];
-  const environments = environmentsResponse?.data ?? [];
-  const apps = appsResponse?.data ?? [];
-  const deployments = deploymentsResponse?.data ?? [];
-  const currentUser = currentUserResponse?.data;
-  const canCreateOrganization = currentUser?.is_staff || currentUser?.role === 'admin';
-
-  const selectedOrganization = organizations.find((organization) => organization.id === selectedOrgId) ?? null;
-  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
-  const selectedEnvironment = environments.find((environment) => environment.id === selectedEnvironmentId) ?? null;
-  const selectedApp = apps.find((app) => app.id === selectedAppId) ?? null;
+  const {
+    apps,
+    appsLoading,
+    canCreateOrganization,
+    currentUser,
+    deployments,
+    deploymentsLoading,
+    environments,
+    environmentsLoading,
+    organizations,
+    organizationsLoading,
+    projects,
+    projectsLoading,
+    selectedApp,
+    selectedAppId,
+    selectedEnvironment,
+    selectedEnvironmentId,
+    selectedOrgId,
+    selectedOrganization,
+    selectedProject,
+    selectedProjectId,
+  } = useOrganizationHierarchyData();
 
   const hierarchyTree = useMemo<TreeViewDataItem[]>(() => {
     return organizations.map((organization) => ({
@@ -257,7 +225,7 @@ const Organizations = () => {
       setOrganizationForm({ name: '', description: '' });
       setDialogMode(null);
       if (response.data?.id) {
-        navigate(`/organizations/${response.data.id}`);
+        navigate(buildOrganizationPath(response.data.id));
       }
       toast({ title: 'Organization created', description: 'The organization hierarchy is ready for projects.' });
     },
@@ -270,7 +238,7 @@ const Organizations = () => {
       setProjectForm({ name: '', description: '' });
       setDialogMode(null);
       if (selectedOrgId && response.data?.id) {
-        navigate(`/organizations/${selectedOrgId}/projects/${response.data.id}`);
+        navigate(buildProjectPath(selectedOrgId, response.data.id));
       }
       toast({ title: 'Project created', description: 'Add environments to separate dev, staging, and production.' });
     },
@@ -286,7 +254,7 @@ const Organizations = () => {
       });
       setDialogMode(null);
       if (selectedOrgId && selectedProjectId && response.data?.id) {
-        navigate(`/organizations/${selectedOrgId}/projects/${selectedProjectId}/environments/${response.data.id}`);
+        navigate(buildEnvironmentPath(selectedOrgId, selectedProjectId, response.data.id));
       }
       toast({ title: 'Environment created', description: 'You can now attach applications to this environment.' });
     },
@@ -305,7 +273,7 @@ const Organizations = () => {
       });
       setDialogMode(null);
       if (selectedOrgId && selectedProjectId && selectedEnvironmentId && response.data?.id) {
-        navigate(`/organizations/${selectedOrgId}/projects/${selectedProjectId}/environments/${selectedEnvironmentId}/apps/${response.data.id}`);
+        navigate(buildAppWorkspacePath(selectedOrgId, selectedProjectId, selectedEnvironmentId, response.data.id));
       }
       toast({ title: 'Application created', description: 'Open the application workspace to manage services and deployment history.' });
     },
@@ -373,13 +341,13 @@ const Organizations = () => {
     }
 
     if (type === 'organization') {
-      navigate(`/organizations/${id}`);
+      navigate(buildOrganizationPath(id));
     } else if (type === 'project' && selectedOrgId) {
-      navigate(`/organizations/${selectedOrgId}/projects/${id}`);
+      navigate(buildProjectPath(selectedOrgId, id));
     } else if (type === 'environment' && selectedOrgId && selectedProjectId) {
-      navigate(`/organizations/${selectedOrgId}/projects/${selectedProjectId}/environments/${id}`);
+      navigate(buildEnvironmentPath(selectedOrgId, selectedProjectId, id));
     } else if (type === 'app' && selectedOrgId && selectedProjectId && selectedEnvironmentId) {
-      navigate(`/organizations/${selectedOrgId}/projects/${selectedProjectId}/environments/${selectedEnvironmentId}/apps/${id}`);
+      navigate(buildAppWorkspacePath(selectedOrgId, selectedProjectId, selectedEnvironmentId, id));
     }
   };
 

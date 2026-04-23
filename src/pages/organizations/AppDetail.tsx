@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useOutletContext } from 'react-router-dom';
-import { History, Loader2, Pencil, RotateCcw, Rocket, Server, Trash2 } from 'lucide-react';
+import { ArrowRight, History, Loader2, Pencil, RotateCcw, Rocket, Server, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,8 +29,8 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
 import type { OrganizationHierarchyOutletContext } from '@/pages/Organizations';
-import { ApplicationWorkspace } from '@/pages/EditApplication';
 import { deleteApp, deleteDeployment, DeploymentRecord, ProjectApp, rollbackDeployment, updateApp, updateDeployment } from '@/lib/api';
+import { buildAppWorkspacePath } from '@/lib/organizationPaths';
 
 const AppDetail = () => {
   const { selectedOrganization, selectedProject, selectedEnvironment, selectedApp, deployments, deploymentsLoading } = useOutletContext<OrganizationHierarchyOutletContext>();
@@ -164,6 +164,12 @@ const AppDetail = () => {
 
   const rollbackTarget = deployments.find((deployment) => deployment.id === rollbackTargetId) ?? null;
   const editingDeployment = deployments.find((deployment) => deployment.id === editingDeploymentId) ?? null;
+  const workspacePath = buildAppWorkspacePath(
+    selectedOrganization.id,
+    selectedProject.id,
+    selectedEnvironment.id,
+    selectedApp.id,
+  );
 
   const openAppEditDialog = () => {
     setAppForm({
@@ -200,6 +206,10 @@ const AppDetail = () => {
               <CardDescription>{selectedApp.description || 'This application does not have a description yet.'}</CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => navigate(workspacePath)}>
+                <ArrowRight className="mr-2 h-4 w-4" />
+                Open workspace
+              </Button>
               <Button variant="outline" size="sm" onClick={openAppEditDialog}>
                 <Pencil className="mr-2 h-4 w-4" />
                 Edit application
@@ -347,14 +357,6 @@ const AppDetail = () => {
           )}
         </CardContent>
       </Card>
-
-      <ApplicationWorkspace
-        project={selectedProject}
-        applicationName={selectedApp.name}
-        serviceAppId={selectedApp.id}
-        headerTitle="Application workspace"
-        subtitle={`Manage ${selectedApp.name} in ${selectedEnvironment.name}`}
-      />
 
       <Dialog open={isAppEditOpen} onOpenChange={setIsAppEditOpen}>
         <DialogContent>

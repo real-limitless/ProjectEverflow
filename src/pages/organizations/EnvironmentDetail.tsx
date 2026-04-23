@@ -29,6 +29,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
 import { deleteEnvironment, ProjectEnvironment, updateEnvironment } from '@/lib/api';
+import { buildAppWorkspacePath } from '@/lib/organizationPaths';
 import type { OrganizationHierarchyOutletContext } from '@/pages/Organizations';
 
 const EnvironmentDetail = () => {
@@ -171,7 +172,9 @@ const EnvironmentDetail = () => {
               <button
                 key={app.id}
                 type="button"
-                onClick={() => navigate(`/organizations/${selectedOrganization.id}/projects/${selectedProject.id}/environments/${selectedEnvironment.id}/apps/${app.id}`)}
+                onClick={() =>
+                  navigate(buildAppWorkspacePath(selectedOrganization.id, selectedProject.id, selectedEnvironment.id, app.id))
+                }
                 className="rounded-lg border border-border bg-background p-5 text-left transition hover:border-primary/40 hover:bg-primary/5"
               >
                 <div className="flex items-start justify-between gap-3">

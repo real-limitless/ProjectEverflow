@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Spinner } from '@patternfly/react-core';
 
 import { getApps, getEnvironments, getProjects } from '@/lib/api';
+import { buildAppWorkspacePath, buildEnvironmentPath, buildProjectPath } from '@/lib/organizationPaths';
 
 interface LegacyHierarchyRouteRedirectProps {
   projectIdentifier?: string;
@@ -66,7 +67,7 @@ export const LegacyHierarchyRouteRedirect = ({
       return;
     }
 
-    const projectPath = `/organizations/${project.organization.id}/projects/${project.id}`;
+    const projectPath = buildProjectPath(project.organization.id, project.id);
 
     if (environments.length !== 1) {
       navigate(projectPath, { replace: true });
@@ -74,7 +75,7 @@ export const LegacyHierarchyRouteRedirect = ({
     }
 
     const environment = environments[0];
-    const environmentPath = `${projectPath}/environments/${environment.id}`;
+    const environmentPath = buildEnvironmentPath(project.organization.id, project.id, environment.id);
 
     if (appsLoading || appsResponse === undefined) {
       return;
@@ -85,7 +86,7 @@ export const LegacyHierarchyRouteRedirect = ({
       return;
     }
 
-    navigate(`${environmentPath}/apps/${apps[0].id}`, { replace: true });
+    navigate(buildAppWorkspacePath(project.organization.id, project.id, environment.id, apps[0].id), { replace: true });
   }, [apps, appsLoading, appsResponse, environments, environmentsLoading, navigate, project, projectsLoading]);
 
   return (
