@@ -1,0 +1,200 @@
+{
+  "checks": [
+    {
+      "id": "check-001",
+      "name": "SQL Injection Detection",
+      "category": "Security",
+      "severity": "Critical",
+      "description": "Detects potential SQL injection vulnerabilities in database queries",
+      "aiPrompt": "Analyze the code for SQL injection patterns including unescaped user input in queries, dynamic SQL construction without parameterization, and lack of input validation.",
+      "lastUpdated": "2025-09-20",
+      "usedInProjects": 12,
+      "enabled": true
+    },
+    {
+      "id": "check-002",
+      "name": "XSS Vulnerability Scan",
+      "category": "Security",
+      "severity": "Critical",
+      "description": "Identifies cross-site scripting vulnerabilities",
+      "aiPrompt": "Check for XSS vulnerabilities including unescaped HTML output, dangerous innerHTML usage, and missing Content Security Policy headers.",
+      "lastUpdated": "2025-09-22",
+      "usedInProjects": 15,
+      "enabled": true
+    },
+    {
+      "id": "check-003",
+      "name": "PII Data Exposure",
+      "category": "Compliance",
+      "severity": "Critical",
+      "description": "Detects potential exposure of personally identifiable information",
+      "aiPrompt": "Scan for PII data exposure including SSN, credit cards, email addresses, phone numbers in logs, error messages, or client-side code.",
+      "lastUpdated": "2025-09-25",
+      "usedInProjects": 18,
+      "enabled": true
+    },
+    {
+      "id": "check-004",
+      "name": "Code Complexity Analysis",
+      "category": "Code Quality",
+      "severity": "Warning",
+      "description": "Analyzes code complexity and suggests refactoring",
+      "aiPrompt": "Evaluate cyclomatic complexity, nesting depth, function length, and identify code that should be refactored for maintainability.",
+      "lastUpdated": "2025-10-01",
+      "usedInProjects": 8,
+      "enabled": true
+    },
+    {
+      "id": "check-005",
+      "name": "API Rate Limiting",
+      "category": "Performance",
+      "severity": "Warning",
+      "description": "Ensures proper rate limiting on API endpoints",
+      "aiPrompt": "Check that all API endpoints have appropriate rate limiting configured to prevent abuse and ensure service availability.",
+      "lastUpdated": "2025-09-18",
+      "usedInProjects": 10,
+      "enabled": true
+    },
+    {
+      "id": "check-006",
+      "name": "Dependency Vulnerability Scan",
+      "category": "Security",
+      "severity": "Critical",
+      "description": "Scans dependencies for known vulnerabilities",
+      "aiPrompt": "Check all package dependencies against known vulnerability databases and flag outdated or vulnerable packages.",
+      "lastUpdated": "2025-10-05",
+      "usedInProjects": 20,
+      "enabled": true
+    },
+    {
+      "id": "check-007",
+      "name": "GDPR Compliance Check",
+      "category": "Compliance",
+      "severity": "Critical",
+      "description": "Validates GDPR compliance requirements",
+      "aiPrompt": "Verify GDPR compliance including data minimization, consent management, right to erasure implementation, and data processing agreements.",
+      "lastUpdated": "2025-09-28",
+      "usedInProjects": 14,
+      "enabled": true
+    },
+    {
+      "id": "check-008",
+      "name": "Authentication Security",
+      "category": "Security",
+      "severity": "Critical",
+      "description": "Reviews authentication and authorization implementation",
+      "aiPrompt": "Analyze authentication mechanisms for weak password policies, missing MFA, insecure session management, and authorization bypass vulnerabilities.",
+      "lastUpdated": "2025-10-02",
+      "usedInProjects": 16,
+      "enabled": true
+    },
+    {
+      "id": "check-009",
+      "name": "Performance Bottleneck Detection",
+      "category": "Performance",
+      "severity": "Warning",
+      "description": "Identifies potential performance bottlenecks",
+      "aiPrompt": "Detect performance issues including N+1 queries, missing database indexes, inefficient algorithms, and memory leaks.",
+      "lastUpdated": "2025-09-30",
+      "usedInProjects": 7,
+      "enabled": false
+    },
+    {
+      "id": "check-010",
+      "name": "Accessibility Standards",
+      "category": "Code Quality",
+      "severity": "Info",
+      "description": "Validates WCAG 2.1 accessibility compliance",
+      "aiPrompt": "Check for accessibility issues including missing alt text, improper ARIA labels, keyboard navigation problems, and color contrast ratios.",
+      "lastUpdated": "2025-10-03",
+      "usedInProjects": 5,
+      "enabled": false
+    }
+  ],
+  "templates": [
+    {
+      "id": "template-001",
+      "name": "HIPAA Compliance",
+      "description": "Healthcare data protection and privacy requirements",
+      "checks": ["check-001", "check-003", "check-006", "check-008"],
+      "projectsUsing": ["proj-002", "proj-005"]
+    },
+    {
+      "id": "template-002",
+      "name": "SOC2 Type II",
+      "description": "Security, availability, and confidentiality controls",
+      "checks": ["check-001", "check-002", "check-003", "check-006", "check-008"],
+      "projectsUsing": ["proj-001", "proj-003"]
+    },
+    {
+      "id": "template-003",
+      "name": "GDPR Compliance",
+      "description": "European data protection regulation compliance",
+      "checks": ["check-003", "check-007", "check-008"],
+      "projectsUsing": ["proj-001", "proj-003", "proj-006"]
+    },
+    {
+      "id": "template-004",
+      "name": "General Security",
+      "description": "Basic security checks for all projects",
+      "checks": ["check-001", "check-002", "check-006", "check-008"],
+      "projectsUsing": ["proj-004"]
+    }
+  ],
+  "projectAssignments": [
+    {
+      "projectId": "proj-001",
+      "projectName": "AI Document Analyzer",
+      "templates": ["template-002", "template-003"],
+      "customChecks": [],
+      "lastRun": "2025-10-10T14:30:00Z",
+      "status": "Pass",
+      "violations": 0
+    },
+    {
+      "projectId": "proj-002",
+      "projectName": "Smart Code Assistant",
+      "templates": ["template-001"],
+      "customChecks": ["check-004"],
+      "lastRun": "2025-10-10T12:15:00Z",
+      "status": "Pass",
+      "violations": 0
+    },
+    {
+      "projectId": "proj-003",
+      "projectName": "Customer Sentiment Analyzer",
+      "templates": ["template-002", "template-003"],
+      "customChecks": [],
+      "lastRun": "2025-10-10T16:45:00Z",
+      "status": "Warning",
+      "violations": 2
+    },
+    {
+      "projectId": "proj-004",
+      "projectName": "Automated QA Bot",
+      "templates": ["template-004"],
+      "customChecks": [],
+      "lastRun": "2025-10-09T09:30:00Z",
+      "status": "Pass",
+      "violations": 0
+    },
+    {
+      "projectId": "proj-005",
+      "projectName": "Knowledge Base Chatbot",
+      "templates": ["template-001"],
+      "customChecks": ["check-005"],
+      "lastRun": "2025-10-10T11:00:00Z",
+      "status": "Fail",
+      "violations": 5
+    },
+    {
+      "projectId": "proj-006",
+      "projectName": "Predictive Analytics Dashboard",
+      "templates": ["template-003"],
+      "customChecks": ["check-005", "check-009"],
+      "lastRun": "2025-10-08T13:20:00Z",
+      "status": "Pass",
+      "violations": 0
+    }
+  ]
+}

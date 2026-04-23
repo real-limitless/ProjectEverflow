@@ -1,0 +1,39 @@
+{
+  "personas": [
+    {
+      "id": "general",
+      "name": "General Assistant",
+      "description": "Helpful assistant for general queries",
+      "icon": "User",
+      "category": "General"
+    },
+    {
+      "id": "business",
+      "name": "Business Analyst",
+      "description": "Expert in business strategy and analysis",
+      "icon": "Briefcase",
+      "category": "Business"
+    },
+    {
+      "id": "developer",
+      "name": "Code Assistant",
+      "description": "Programming and technical support",
+      "icon": "Code",
+      "category": "Technical"
+    },
+    {
+      "id": "wellness",
+      "name": "Wellness Coach",
+      "description": "Health and wellness guidance",
+      "icon": "Heart",
+      "category": "Lifestyle"
+    },
+    {
+      "id": "creative",
+      "name": "Creative Writer",
+      "description": "Content creation and storytelling",
+      "icon": "Lightbulb",
+      "category": "Creative"
+    }
+  ]
+}

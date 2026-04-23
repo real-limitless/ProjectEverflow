@@ -1,0 +1,18 @@
+{
+  "metrics": [
+    { "title": "Total Users", "value": "1,234", "change": "+12%" },
+    { "title": "Active Sessions", "value": "567", "change": "+8%" },
+    { "title": "Revenue", "value": "$89,432", "change": "+23%" },
+    { "title": "Conversion Rate", "value": "3.24%", "change": "+5%" }
+  ],
+  "analytics": {
+    "data": [30, 45, 38, 52, 61, 58],
+    "labels": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+  },
+  "recentActivity": [
+    { "name": "John Doe", "email": "john@example.com", "status": "Active", "date": "2025-01-15" },
+    { "name": "Jane Smith", "email": "jane@example.com", "status": "Active", "date": "2025-01-14" },
+    { "name": "Bob Johnson", "email": "bob@example.com", "status": "Inactive", "date": "2025-01-13" },
+    { "name": "Alice Brown", "email": "alice@example.com", "status": "Active", "date": "2025-01-12" }
+  ]
+}

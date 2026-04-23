@@ -1,0 +1,46 @@
+{
+  "defaultSettings": {
+    "aiModel": "google/gemini-2.5-flash",
+    "temperature": 0.7,
+    "maxTokens": 2048,
+    "topP": 0.9,
+    "frequencyPenalty": 0,
+    "presencePenalty": 0,
+    "streamResponse": true
+  },
+  "sampleFiles": {
+    "src/App.tsx": "// Sample App.tsx content\nimport React from \"react\";\n\nfunction App() {\n  return <div>Hello World</div>;\n}",
+    "src/index.tsx": "// Sample index.tsx\nimport React from \"react\";\nimport ReactDOM from \"react-dom\";\nimport App from \"./App\";",
+    "package.json": "{\n  \"name\": \"my-app\",\n  \"version\": \"1.0.0\"\n}",
+    "README.md": "# My Application\n\nThis is a sample application."
+  },
+  "defaultMcpServers": [
+    {
+      "id": "1",
+      "name": "Custom Tool Server",
+      "url": "https://api.example.com/mcp",
+      "enabled": true
+    }
+  ],
+  "sampleFileStructure": [
+    {
+      "name": "src",
+      "type": "folder",
+      "path": "src",
+      "children": [
+        { "name": "App.tsx", "type": "file", "path": "src/App.tsx" },
+        { "name": "index.tsx", "type": "file", "path": "src/index.tsx" },
+        {
+          "name": "components",
+          "type": "folder",
+          "path": "src/components",
+          "children": [
+            { "name": "Button.tsx", "type": "file", "path": "src/components/Button.tsx" }
+          ]
+        }
+      ]
+    },
+    { "name": "package.json", "type": "file", "path": "package.json" },
+    { "name": "README.md", "type": "file", "path": "README.md" }
+  ]
+}

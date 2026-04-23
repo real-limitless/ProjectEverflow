@@ -1,0 +1,20 @@
+# Copilot Mode Agent Dependencies
+# These are installed in the workspace container image
+
+# Web framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+
+# LangGraph agent framework
+langgraph>=0.2.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+
+# HTTP client for API calls
+httpx>=0.27.0
+aiohttp>=3.9.0
+
+# Optional: For custom tools that need these
+requests>=2.31.0
+python-dotenv>=1.0.0

@@ -1,0 +1,87 @@
+# UBI 9 Development Workspace
+# Pre-built image with essential development tools for AI-assisted code editing
+FROM registry.access.redhat.com/ubi9/ubi
+
+LABEL maintainer="PatternFly Dash Brew"
+LABEL description="UBI 9 workspace with git, Python, Node.js, and development tools"
+LABEL version="1.0"
+
+# Set working directory
+WORKDIR /workspace
+
+# Install essential development tools
+RUN yum update -y && \
+    yum install -y \
+    # Version control
+    git \
+    # Python ecosystem
+    python3 \
+    python3-pip \
+    python3-devel \
+    # Node.js ecosystem (using NodeSource or module)
+    # Note: May need to enable nodejs module stream
+    # Build tools
+    gcc \
+    gcc-c++ \
+    make \
+    # Editors
+    vim \
+    nano \
+    # Utilities
+
+    wget \
+    tar \
+    gzip \
+    unzip \
+    which \
+    findutils \
+    diffutils \
+    patch \
+    # Additional tools
+    jq \
+    && yum clean all
+
+# Install Node.js from NodeSource (since UBI doesn't have nodejs in base repos)
+RUN curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - && \
+    yum install -y nodejs && \
+    yum clean all
+
+# Create non-root user for workspace operations
+RUN useradd -m -u 1000 -s /bin/bash workspace && \
+    chown -R workspace:workspace /workspace
+
+# Create agent directory structure
+RUN mkdir -p /opt/agent && \
+    chown -R workspace:workspace /opt/agent
+
+# Copy agent service files
+COPY agent/agent_service.py /opt/agent/agent_service.py
+COPY agent/requirements.txt /opt/agent/requirements.txt
+
+# Install agent dependencies as root (system-wide)
+RUN pip3 install --no-cache-dir -r /opt/agent/requirements.txt
+
+# Switch to workspace user
+USER workspace
+
+# Set environment variables
+ENV HOME=/home/workspace
+ENV PATH="${HOME}/.local/bin:${PATH}"
+ENV AGENT_PORT=8080
+
+# Create entrypoint script that can optionally start the agent
+RUN printf '#!/bin/bash\n\
+if [ "$COPILOT_MODE" = "true" ]; then\n\
+    echo "[Workspace] Starting Copilot Mode agent on port $AGENT_PORT" > /home/workspace/.agent/agent.log 2>&1\n\
+    mkdir -p /home/workspace/.agent/logs\n\
+    nohup python3 /opt/agent/agent_service.py >> /home/workspace/.agent/agent.log 2>&1 &\n\
+fi\n\
+# Keep container running\n\
+exec tail -f /dev/null\n\
+' > /home/workspace/entrypoint.sh && chmod +x /home/workspace/entrypoint.sh
+
+# Expose agent port
+EXPOSE 8080
+
+# Use entrypoint script
+CMD ["/home/workspace/entrypoint.sh"]

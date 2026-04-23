@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # Development service
+  frontend:
+    build:
+      context: .
+      dockerfile: Containerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount source code for hot reload during development
+      - ./src:/app/src:Z
+      - ./public:/app/public:Z
+      - ./index.html:/app/index.html:Z
+      - ./vite.config.ts:/app/vite.config.ts:Z
+      - ./tsconfig.json:/app/tsconfig.json:Z
+      - ./tsconfig.node.json:/app/tsconfig.node.json:Z
+      - ./tailwind.config.ts:/app/tailwind.config.ts:Z
+      - ./postcss.config.js:/app/postcss.config.js:Z
+      # DO NOT mount node_modules - let container use its own
+    environment:
+      - NODE_ENV=development
+    command: npm run dev
+    depends_on:
+      - backend  # Ensure backend starts first
+
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Containerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app:Z  # Mount backend code for hot reload
+      #- podman_cfg:/app/podman-config  # Persistent Podman remote config
+      - /run/user/1000/podman/:/run/podman/:Z
+
+    environment:
+      # Optional: Explicitly tell clients where to find the socket
+      - CONTAINER_HOST=unix:///run/podman/podman.sock
+      - DJANGO_SETTINGS_MODULE=backend.settings
+      - DEBUG=True
+      - DJANGO_SUPERUSER_PASSWORD=admin123  # Change this to your desired password
+      # Encryption key for LLM provider API keys (must be 32 url-safe base64-encoded bytes)
+      # Generate new key with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      # IMPORTANT: Keep this consistent across container restarts to decrypt existing API keys
+      - FIELD_ENCRYPTION_KEY=6LdqZ4Zy8w9tJxK3vN2mR7pT5hF1gB0qW4eC8aY6sU8=
+
+    devices:
+      - /dev/fuse  # Required for Podman socket communication
+    security_opt:
+      - label=disable  # Allow socket access
+
+volumes:
+  podman_cfg:  # Named volume for persistent Podman remote config
+
+networks:
+  default:
+    name: patternfly-network

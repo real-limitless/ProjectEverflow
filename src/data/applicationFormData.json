@@ -1,0 +1,66 @@
+{
+  "categories": [
+    {
+      "id": "nlp",
+      "name": "Natural Language Processing",
+      "description": "Applications that process and understand human language"
+    },
+    {
+      "id": "computer-vision",
+      "name": "Computer Vision",
+      "description": "Applications that analyze and understand visual content"
+    },
+    {
+      "id": "predictive-analytics",
+      "name": "Predictive Analytics",
+      "description": "Applications that forecast trends and outcomes"
+    },
+    {
+      "id": "automation",
+      "name": "Automation",
+      "description": "Applications that automate business processes"
+    },
+    {
+      "id": "chatbot",
+      "name": "Chatbot & Conversational AI",
+      "description": "Conversational AI and chatbot applications"
+    },
+    {
+      "id": "other",
+      "name": "Other",
+      "description": "Other types of AI applications"
+    }
+  ],
+  "aiTechnologies": [
+    {
+      "id": "gpt",
+      "name": "GPT / Large Language Models",
+      "description": "Applications using GPT or similar large language models"
+    },
+    {
+      "id": "bert",
+      "name": "BERT / Transformers",
+      "description": "Applications using BERT or transformer architectures"
+    },
+    {
+      "id": "tensorflow",
+      "name": "TensorFlow",
+      "description": "Applications built with TensorFlow framework"
+    },
+    {
+      "id": "pytorch",
+      "name": "PyTorch",
+      "description": "Applications built with PyTorch framework"
+    },
+    {
+      "id": "opencv",
+      "name": "OpenCV",
+      "description": "Computer vision applications using OpenCV"
+    },
+    {
+      "id": "custom",
+      "name": "Custom ML Model",
+      "description": "Applications using custom machine learning models"
+    }
+  ]
+}

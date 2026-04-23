@@ -1,0 +1,32 @@
+{
+  "changeRequests": [
+    {
+      "id": "cr-001",
+      "projectId": "proj-001",
+      "projectName": "AI Document Analyzer",
+      "requestedBy": {
+        "id": "user-003",
+        "name": "Jane Smith",
+        "initials": "JS"
+      },
+      "type": "Feature",
+      "title": "Add PDF export functionality",
+      "description": "Implement PDF export feature for processed documents. Includes table of contents, formatting preservation, and metadata embedding.",
+      "filesChanged": 8,
+      "linesAdded": 247,
+      "linesRemoved": 34,
+      "status": "Pending Review",
+      "requiredApprovals": 3,
+      "currentApprovals": [
+        {
+          "userId": "user-001",
+          "name": "Sarah Chen",
+          "date": "2025-10-10T14:30:00Z"
+        }
+      ],
+      "submittedDate": "2025-10-09T10:15:00Z",
+      "branch": "feature/pdf-export",
+      "targetBranch": "main"
+    }
+  ]
+}

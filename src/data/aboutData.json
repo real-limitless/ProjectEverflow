@@ -1,0 +1,8 @@
+{
+  "about": {
+    "title": "PatternFly Dashboard",
+    "version": "1.0.0",
+    "description": "Built with PatternFly v6.3.1, a enterprise-grade UI framework designed for consistency and scalability.",
+    "additionalInfo": "This dashboard provides a comprehensive view of your projects, applications, and team collaboration tools."
+  }
+}
