@@ -745,6 +745,7 @@ interface ApplicationWorkspaceProps {
     onClick: () => void;
   };
   embedded?: boolean;
+  layoutMode?: 'default' | 'full-page';
 }
 
 export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
@@ -755,6 +756,7 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
   subtitle,
   backLink,
   embedded = false,
+  layoutMode = 'default',
 }) => {
   const workspaceLabel = applicationName || project?.name || 'Application';
   const projectIdOrName = project ? project.id.toString() : applicationName || '';
@@ -1125,11 +1127,11 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
         </div>
       </PageSection>
 
-      <PageSection variant="default" isFilled style={{ paddingTop: '1rem', paddingBottom: 0 }}>
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: activeTab === 0 ? 'hidden' : 'auto' }}>
+      <PageSection variant="default" isFilled hasBodyWrapper={false} style={{ paddingTop: '1rem', paddingBottom: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: activeTab === 0 || activeTab === 3 ? 'hidden' : 'auto' }}>
         {activeTab === 0 && (
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            {project ? <AIEditorTab project={project} /> : <div>Loading AI editor...</div>}
+            {project ? <AIEditorTab project={project} layoutMode={layoutMode} /> : <div>Loading AI editor...</div>}
           </div>
         )}
 
@@ -1142,7 +1144,9 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
         )}
 
         {activeTab === 3 && (
-          project ? <FileManagerTab project={project} /> : <div>Loading file manager...</div>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {project ? <FileManagerTab project={project} layoutMode={layoutMode} /> : <div>Loading file manager...</div>}
+          </div>
         )}
 
         {activeTab === 4 && (

@@ -25,9 +25,10 @@ interface GitStatusResponse {
 
 interface FileManagerTabProps {
   project: Project;
+  layoutMode?: 'default' | 'full-page';
 }
 
-export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project }) => {
+export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project, layoutMode = 'default' }) => {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContents, setFileContents] = useState<Record<string, string>>({});
   const [originalContents, setOriginalContents] = useState<Record<string, string>>({});
@@ -35,6 +36,10 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project }) => {
   const [gitModifiedFiles, setGitModifiedFiles] = useState<Set<string>>(new Set());
   const [gitStagedFiles, setGitStagedFiles] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
+  const panelDefaults =
+    layoutMode === 'full-page'
+      ? { tree: 18, editor: 52, git: 30, treeMin: 14, treeMax: 24, editorMin: 34, gitMin: 22, gitMax: 36 }
+      : { tree: 20, editor: 50, git: 30, treeMin: 15, treeMax: 30, editorMin: 30, gitMin: 20, gitMax: 40 };
 
   // Fetch file tree
   const { data: fileTreeResponse, isLoading: treeLoading, error: treeError } = useQuery({
@@ -236,8 +241,8 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project }) => {
 
   if (treeError) {
     return (
-      <div style={{ height: 'calc(100vh - 330px)', padding: '20px' }}>
-        <Card>
+      <div className="flex h-full min-h-0 flex-col overflow-hidden p-5">
+        <Card className="flex min-h-0 flex-col overflow-hidden">
           <CardBody>
             <p style={{ color: 'var(--pf-v6-global--danger-color--100)' }}>
               Error loading workspace files. Make sure the workspace is started.
@@ -249,28 +254,30 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project }) => {
   }
 
   return (
-    <div style={{ height: 'calc(100vh - 330px)' }}>
-      <ResizablePanelGroup direction="horizontal" className="h-full w-full">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <ResizablePanelGroup direction="horizontal" className="h-full min-h-0 w-full">
         {/* File Tree Panel */}
-        <ResizablePanel defaultSize={20} minSize={15} maxSize={30}>
-          <Card className="h-full m-0 rounded-lg border-0">
-            <CardBody style={{ padding: '1rem' }}>
+        <ResizablePanel defaultSize={panelDefaults.tree} minSize={panelDefaults.treeMin} maxSize={panelDefaults.treeMax} className="min-h-0">
+          <Card className="m-0 flex h-full min-h-0 flex-col rounded-lg border-0">
+            <CardBody className="flex min-h-0 flex-1 flex-col p-4">
               <h3 className="text-sm font-semibold mb-3">Files</h3>
-              {treeLoading ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  <span className="text-xs text-muted-foreground">Loading...</span>
-                </div>
-              ) : (
-                <FileTree
-                  files={fileTree as FileNode[]}
-                  selectedFile={selectedFile}
-                  onFileSelect={handleFileSelect}
-                  modifiedFiles={modifiedFiles}
-                  gitModifiedFiles={gitModifiedFiles}
-                  gitStagedFiles={gitStagedFiles}
-                />
-              )}
+              <div className="min-h-0 flex-1 overflow-auto">
+                {treeLoading ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    <span className="text-xs text-muted-foreground">Loading...</span>
+                  </div>
+                ) : (
+                  <FileTree
+                    files={fileTree as FileNode[]}
+                    selectedFile={selectedFile}
+                    onFileSelect={handleFileSelect}
+                    modifiedFiles={modifiedFiles}
+                    gitModifiedFiles={gitModifiedFiles}
+                    gitStagedFiles={gitStagedFiles}
+                  />
+                )}
+              </div>
             </CardBody>
           </Card>
         </ResizablePanel>
@@ -278,9 +285,9 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project }) => {
         <ResizableHandle withHandle className="w-2 bg-border hover:bg-primary/20 transition-colors" />
 
         {/* Code Editor Panel */}
-        <ResizablePanel defaultSize={50} minSize={30}>
-          <Card className="h-full m-0 rounded-lg border-0">
-            <CardBody style={{ padding: 0, height: '100%' }}>
+        <ResizablePanel defaultSize={panelDefaults.editor} minSize={panelDefaults.editorMin} className="min-h-0">
+          <Card className="m-0 flex h-full min-h-0 flex-col rounded-lg border-0">
+            <CardBody className="flex min-h-0 flex-1 flex-col p-0">
               {selectedFile ? (
                 <CodeEditor
                   content={fileContents[selectedFile] || ''}
@@ -292,7 +299,7 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project }) => {
                   onDiscard={handleDiscardFile}
                 />
               ) : (
-                <div className="flex items-center justify-center h-full text-muted-foreground">
+                <div className="flex h-full min-h-0 flex-1 items-center justify-center text-muted-foreground">
                   <p className="text-sm">Select a file to edit</p>
                 </div>
               )}
@@ -303,9 +310,9 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project }) => {
         <ResizableHandle withHandle className="w-2 bg-border hover:bg-primary/20 transition-colors" />
 
         {/* Git Changes Panel */}
-        <ResizablePanel defaultSize={30} minSize={20} maxSize={40}>
-          <Card className="h-full m-0 rounded-lg border-0">
-            <CardBody style={{ padding: 0, height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <ResizablePanel defaultSize={panelDefaults.git} minSize={panelDefaults.gitMin} maxSize={panelDefaults.gitMax} className="min-h-0">
+          <Card className="m-0 flex h-full min-h-0 flex-col rounded-lg border-0">
+            <CardBody className="flex min-h-0 flex-1 flex-col p-0">
               {/* Git Status Summary */}
               {gitStatusResponse && (gitStatusResponse.modified.length > 0 || gitStatusResponse.untracked.length > 0 || gitStatusResponse.staged.length > 0) && (
                 <div className="px-3 py-2 border-b bg-muted/30 space-y-2">
@@ -354,7 +361,7 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project }) => {
                   </div>
                 </div>
               )}
-              <div style={{ flex: 1, minHeight: 0 }}>
+              <div className="min-h-0 flex-1 overflow-hidden">
                 <GitDiffViewer
                   modifiedFiles={getGitDiffs()}
                   onStageFile={handleStageFile}

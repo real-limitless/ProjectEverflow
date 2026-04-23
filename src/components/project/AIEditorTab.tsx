@@ -21,6 +21,7 @@ interface Message {
 
 interface AIEditorTabProps {
   project: Project;
+  layoutMode?: 'default' | 'full-page';
 }
 
 // WorkspacePanel Component
@@ -40,8 +41,76 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ project, isChatCollapse
   );
 };
 
-const DEFAULT_PANEL_LAYOUT: [number, number] = [40, 60];
-const DEFAULT_SIDEBAR_SIZE = 18;
+type WorkspaceLayoutMode = 'default' | 'full-page';
+type WorkspaceChatTab = 'chat' | 'agent-todos' | 'summary' | 'memory';
+
+const AI_EDITOR_LAYOUT_PRESETS: Record<WorkspaceLayoutMode, {
+  panelLayout: [number, number];
+  sidebarSize: number;
+  sidebarMin: number;
+  sidebarMax: number;
+  mainMin: number;
+  chatMin: number;
+  chatMax: number;
+  previewMin: number;
+}> = {
+  default: {
+    panelLayout: [40, 60],
+    sidebarSize: 18,
+    sidebarMin: 12,
+    sidebarMax: 35,
+    mainMin: 50,
+    chatMin: 25,
+    chatMax: 75,
+    previewMin: 25,
+  },
+  'full-page': {
+    panelLayout: [56, 44],
+    sidebarSize: 16,
+    sidebarMin: 14,
+    sidebarMax: 28,
+    mainMin: 56,
+    chatMin: 32,
+    chatMax: 78,
+    previewMin: 22,
+  },
+};
+
+const readStoredNumber = (storageKey: string, fallback: number) => {
+  if (typeof window === 'undefined') return fallback;
+
+  try {
+    const stored = window.localStorage.getItem(storageKey);
+    if (!stored) return fallback;
+    const parsed = JSON.parse(stored);
+    return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const readStoredPanelLayout = (storageKey: string, fallback: [number, number]): [number, number] => {
+  if (typeof window === 'undefined') return fallback;
+
+  try {
+    const stored = window.localStorage.getItem(storageKey);
+    if (!stored) return fallback;
+    const parsed = JSON.parse(stored);
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      parsed.every((size) => typeof size === 'number' && Number.isFinite(size))
+    ) {
+      return [parsed[0], parsed[1]];
+    }
+  } catch {}
+
+  return fallback;
+};
+
+const isWorkspaceChatTab = (tab: string): tab is WorkspaceChatTab => {
+  return tab === 'chat' || tab === 'agent-todos' || tab === 'summary' || tab === 'memory';
+};
 
 const getMessageTimestamp = (message: Partial<ChatMessage> & { timestamp?: Date | string }) => {
   const source = message.created_at || message.timestamp;
@@ -50,7 +119,8 @@ const getMessageTimestamp = (message: Partial<ChatMessage> & { timestamp?: Date 
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-export const AIEditorTab: React.FC<AIEditorTabProps> = ({ project }) => {
+export const AIEditorTab: React.FC<AIEditorTabProps> = ({ project, layoutMode = 'default' }) => {
+  const layoutPreset = AI_EDITOR_LAYOUT_PRESETS[layoutMode];
   const [isChatCollapsed, setIsChatCollapsed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
@@ -61,17 +131,15 @@ export const AIEditorTab: React.FC<AIEditorTabProps> = ({ project }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const tabbedEditorRef = useRef<TabbedEditorHandle>(null);
   const queryClient = useQueryClient();
-  const layoutStorageKey = `ai-editor-panel-layout:${project.id}`;
-  const sidebarLayoutKey = `ai-editor-sidebar-size:${project.id}`;
-  const [panelLayout, setPanelLayout] = useState<[number, number]>(DEFAULT_PANEL_LAYOUT);
-  const [sidebarSize, setSidebarSize] = useState<number>(() => {
-    try {
-      const stored = window.localStorage.getItem(`ai-editor-sidebar-size:${project.id}`);
-      if (stored) return JSON.parse(stored);
-    } catch {}
-    return DEFAULT_SIDEBAR_SIZE;
-  });
-  const viewStorageKey = `ai-editor-active-view:${project.id}`;
+  const layoutStorageKey = `ai-editor-panel-layout:${layoutMode}:${project.id}`;
+  const sidebarLayoutKey = `ai-editor-sidebar-size:${layoutMode}:${project.id}`;
+  const viewStorageKey = `ai-editor-active-view:${layoutMode}:${project.id}`;
+  const [panelLayout, setPanelLayout] = useState<[number, number]>(() =>
+    readStoredPanelLayout(layoutStorageKey, layoutPreset.panelLayout)
+  );
+  const [sidebarSize, setSidebarSize] = useState<number>(() =>
+    readStoredNumber(sidebarLayoutKey, layoutPreset.sidebarSize)
+  );
 
   // Use LLM models hook for available models and default
   const { models: availableModels, defaultModel, getEffectiveModel, getModelLabel } = useLLMModels(project.id);
@@ -94,7 +162,7 @@ export const AIEditorTab: React.FC<AIEditorTabProps> = ({ project }) => {
   // New states for summary and memory
   const [chatSummary, setChatSummary] = useState('');
   const [memoryItems, setMemoryItems] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<'chat' | 'agent-todos' | 'summary' | 'memory' | 'history'>('chat');
+  const [activeTab, setActiveTab] = useState<WorkspaceChatTab>('chat');
   const [activeSidebarTab, setActiveSidebarTab] = useState<'explore' | 'editor'>('explore');
   const [isEditorFocusMode, setIsEditorFocusMode] = useState(false);
   const [previewManuallyHidden, setPreviewManuallyHidden] = useState(false);
@@ -129,7 +197,7 @@ export const AIEditorTab: React.FC<AIEditorTabProps> = ({ project }) => {
   const [savingMessageId, setSavingMessageId] = useState<number | string | null>(null);
 
   // Subscribe to agent stream events (if available)
-  const { wsRef: agentWsRef, status: agentWsStatus, sendMessage: wsSendMessage, cancel: wsCancel } = useAgentStream(project.id, currentSessionId, (data) => {
+  const { wsRef: agentWsRef, status: agentWsStatus, sendMessage: wsSendMessage, cancel: wsCancel } = useAgentStream(project.id, currentSessionId, (data: any) => {
     try {
       if (!data) return;
 
@@ -332,7 +400,8 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
     ? llmOptions.find((option) => option.id === selectedLLM)?.label || getModelLabel(selectedLLM)
     : getModelLabel(null);
 
-  const handleTabChange = (tab: 'chat' | 'agent-todos' | 'summary' | 'todo' | 'history') => {
+  const handleTabChange = (tab: string) => {
+    if (!isWorkspaceChatTab(tab)) return;
     setActiveTab(tab);
     if (typeof window === 'undefined') return;
     try {
@@ -558,13 +627,20 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
     if (typeof window === 'undefined') return;
     try {
       const stored = window.localStorage.getItem(viewStorageKey);
-      if (stored === 'chat' || stored === 'summary' || stored === 'memory') {
+      if (stored && isWorkspaceChatTab(stored)) {
         setActiveTab(stored);
+      } else {
+        setActiveTab('chat');
       }
     } catch (error) {
       console.warn('Failed to read active tab from storage', error);
     }
   }, [viewStorageKey]);
+
+  useEffect(() => {
+    setPanelLayout(readStoredPanelLayout(layoutStorageKey, layoutPreset.panelLayout));
+    setSidebarSize(readStoredNumber(sidebarLayoutKey, layoutPreset.sidebarSize));
+  }, [layoutMode, project.id, layoutPreset, layoutStorageKey, sidebarLayoutKey]);
 
   // Load stored summary and memory when session changes
   useEffect(() => {
@@ -1108,12 +1184,13 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
         {/* Main layout: Resizable sidebar | Chat + Preview */}
         <div className="flex-1 min-h-0 h-full overflow-hidden">
           <ResizablePanelGroup
+            key={`ai-editor-sidebar:${layoutMode}:${project.id}`}
             direction="horizontal"
             className="h-full w-full"
             onLayout={handleSidebarLayoutChange}
           >
           {/* Left Sidebar: File Explorer + Tabbed Editor (resizable) */}
-          <ResizablePanel defaultSize={sidebarSize} minSize={12} maxSize={35}>
+          <ResizablePanel defaultSize={sidebarSize} minSize={layoutPreset.sidebarMin} maxSize={layoutPreset.sidebarMax}>
             <div className="h-full flex flex-col overflow-hidden" style={{ borderRight: '1px solid var(--pf-v6-global--BorderColor--100)' }}>
             <UITabs value={activeSidebarTab} onValueChange={(v) => setActiveSidebarTab(v as 'explore' | 'editor')} className="h-full flex flex-col overflow-hidden">
               <div className="flex items-center border-b flex-shrink-0">
@@ -1184,9 +1261,9 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
           />
 
           {/* Right side: Chat and Preview Area - takes remaining space */}
-          <ResizablePanel defaultSize={100 - sidebarSize} minSize={50}>
+          <ResizablePanel defaultSize={100 - sidebarSize} minSize={layoutPreset.mainMin}>
             <ResizablePanelGroup
-              key={`${isChatCollapsed ? 'cc' : 'ce'}-${isEditorFocusMode ? 'fm' : 'fn'}`}
+              key={`ai-editor-main:${layoutMode}:${project.id}:${isChatCollapsed ? 'cc' : 'ce'}:${isEditorFocusMode ? 'fm' : 'fn'}`}
               direction="horizontal"
               className="h-full w-full gap-4"
               onLayout={handlePanelLayoutChange}
@@ -1194,7 +1271,7 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
             {/* Chat Panel — PatternFly Chatbot */}
             {!isChatCollapsed && (
               <>
-                <ResizablePanel defaultSize={isEditorFocusMode ? 100 : panelLayout[0]} minSize={25} maxSize={isEditorFocusMode ? 100 : 75} className="flex flex-col h-full min-h-0">
+                <ResizablePanel defaultSize={isEditorFocusMode ? 100 : panelLayout[0]} minSize={layoutPreset.chatMin} maxSize={isEditorFocusMode ? 100 : layoutPreset.chatMax} className="flex flex-col h-full min-h-0">
                   <ChatPanel
                     project={project}
                     allDisplayMessages={allDisplayMessages}
@@ -1304,7 +1381,7 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
 
             {/* Workspace Panel — hidden in editor focus mode */}
             {!isEditorFocusMode && (
-              <ResizablePanel defaultSize={isChatCollapsed ? 100 : panelLayout[1]} minSize={25}>
+              <ResizablePanel defaultSize={isChatCollapsed ? 100 : panelLayout[1]} minSize={layoutPreset.previewMin}>
                 <WorkspacePanel 
                   project={project}
                   isChatCollapsed={isChatCollapsed}

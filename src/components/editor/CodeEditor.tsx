@@ -176,16 +176,15 @@ export const CodeEditor = ({
       </div>
 
       {/* Editor Area */}
-      <div className="flex-1 overflow-hidden flex flex-col">
+      <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
         {/* Using Textarea as fallback - can be replaced with Monaco Editor later */}
         <Textarea
           value={editorContent}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           readOnly={isReadOnly}
-          className="w-full h-full font-mono text-sm resize-none border-0 rounded-none p-4"
+          className="flex-1 h-full min-h-0 w-full font-mono text-sm resize-none border-0 rounded-none p-4"
           style={{ 
-            minHeight: '100%',
             fontFamily: '"Fira Code", "Courier New", monospace',
             fontSize: '13px',
             lineHeight: '1.6',

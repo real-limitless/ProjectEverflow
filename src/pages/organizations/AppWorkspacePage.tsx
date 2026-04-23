@@ -64,6 +64,7 @@ const AppWorkspacePage = () => {
       masthead={<DashboardHeader onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />}
       sidebar={<DashboardSidebar isOpen={isSidebarOpen} />}
       mainAriaLabel="Application workspace"
+      isContentFilled
     >
       <PageSection variant="default" style={{ paddingBottom: 0 }}>
         <Breadcrumb aria-label="Application workspace breadcrumb">
@@ -138,6 +139,7 @@ const AppWorkspacePage = () => {
           serviceAppId={selectedApp.id}
           headerTitle={selectedApp.name}
           subtitle={workspaceSubtitle}
+          layoutMode="full-page"
           backLink={{
             label: 'Back to application overview',
             onClick: () => navigate(overviewPath),
