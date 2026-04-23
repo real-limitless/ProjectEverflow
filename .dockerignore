@@ -1,0 +1,16 @@
+.git
+.github
+.vscode
+node_modules
+dist
+coverage
+logs
+*.log
+.env
+.env.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+Dockerfile.dev
+container-compose.dev.override.yml
