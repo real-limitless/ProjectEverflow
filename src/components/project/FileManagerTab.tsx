@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, CardBody, Button } from '@patternfly/react-core';
+import { Card, CardBody, Button, EmptyState, EmptyStateActions, EmptyStateBody, EmptyStateFooter, EmptyStateVariant } from '@patternfly/react-core';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { FileTree } from '@/components/editor/FileTree';
 import { CodeEditor } from '@/components/editor/CodeEditor';
@@ -7,6 +7,7 @@ import { GitDiffViewer } from '@/components/editor/GitDiffViewer';
 import { toast } from '@/hooks/use-toast';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
+  createWorkspaceFile,
   getWorkspaceFileTree, 
   readWorkspaceFile, 
   updateWorkspaceFile,
@@ -14,7 +15,7 @@ import {
   Project,
   apiCall
 } from '@/lib/api';
-import { Loader2, Archive, Undo2, FileWarning } from 'lucide-react';
+import { Loader2, Archive, Undo2, FileWarning, FilePlus2, FolderSearch } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
 interface GitStatusResponse {
@@ -42,7 +43,7 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project, layoutM
       : { tree: 20, editor: 50, git: 30, treeMin: 15, treeMax: 30, editorMin: 30, gitMin: 20, gitMax: 40 };
 
   // Fetch file tree
-  const { data: fileTreeResponse, isLoading: treeLoading, error: treeError } = useQuery({
+  const { data: fileTreeResponse, isLoading: treeLoading, error: treeError, refetch: refetchFileTree } = useQuery({
     queryKey: ['workspace-file-tree', project.id],
     queryFn: () => getWorkspaceFileTree(project.id),
     retry: 3,
@@ -115,6 +116,29 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project, layoutM
       });
     },
   });
+
+  const createFileMutation = useMutation({
+    mutationFn: ({ path, content }: { path: string; content: string }) =>
+      createWorkspaceFile(project.id, path, content),
+    onSuccess: (_response, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['workspace-file-tree', project.id] });
+      setSelectedFile(variables.path);
+      setFileContents((prev) => ({ ...prev, [variables.path]: variables.content }));
+      setOriginalContents((prev) => ({ ...prev, [variables.path]: variables.content }));
+      toast({ title: 'File created', description: `${variables.path} is ready to edit.` });
+    },
+    onError: () => {
+      toast({ title: 'Error', description: 'Failed to create file', variant: 'destructive' });
+    },
+  });
+
+  const handleCreateFile = () => {
+    const nextPath = window.prompt('Create a new file', 'src/new-file.tsx');
+    if (!nextPath) return;
+    const path = nextPath.trim();
+    if (!path) return;
+    createFileMutation.mutate({ path, content: '' });
+  };
 
   const handleFileSelect = (path: string) => {
     setSelectedFile(path);
@@ -243,10 +267,24 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project, layoutM
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden p-5">
         <Card className="flex min-h-0 flex-col overflow-hidden">
-          <CardBody>
-            <p style={{ color: 'var(--pf-v6-global--danger-color--100)' }}>
-              Error loading workspace files. Make sure the workspace is started.
-            </p>
+          <CardBody className="flex h-full items-center justify-center">
+            <EmptyState variant={EmptyStateVariant.lg} titleText="Refresh workspace files" headingLevel="h4" icon={FolderSearch}>
+              <EmptyStateBody>
+                The file tree could not be loaded. Refresh the workspace files or create a new file to start editing.
+              </EmptyStateBody>
+              <EmptyStateFooter>
+                <EmptyStateActions>
+                  <Button variant="primary" onClick={() => refetchFileTree()}>
+                    Refresh files
+                  </Button>
+                </EmptyStateActions>
+                <EmptyStateActions>
+                  <Button variant="secondary" onClick={handleCreateFile} isDisabled={createFileMutation.isPending}>
+                    Create new file
+                  </Button>
+                </EmptyStateActions>
+              </EmptyStateFooter>
+            </EmptyState>
           </CardBody>
         </Card>
       </div>
@@ -266,6 +304,26 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project, layoutM
                   <div className="flex items-center justify-center py-4">
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
                     <span className="text-xs text-muted-foreground">Loading...</span>
+                  </div>
+                ) : fileTree.length === 0 ? (
+                  <div className="flex h-full items-center justify-center">
+                    <EmptyState variant={EmptyStateVariant.lg} titleText="Create your first file" headingLevel="h4" icon={FilePlus2}>
+                      <EmptyStateBody>
+                        This workspace does not have any files yet. Create a file and open it directly in the editor.
+                      </EmptyStateBody>
+                      <EmptyStateFooter>
+                        <EmptyStateActions>
+                          <Button variant="primary" onClick={handleCreateFile} isDisabled={createFileMutation.isPending}>
+                            Create new file
+                          </Button>
+                        </EmptyStateActions>
+                        <EmptyStateActions>
+                          <Button variant="link" onClick={() => refetchFileTree()}>
+                            Refresh files
+                          </Button>
+                        </EmptyStateActions>
+                      </EmptyStateFooter>
+                    </EmptyState>
                   </div>
                 ) : (
                   <FileTree
@@ -299,8 +357,19 @@ export const FileManagerTab: React.FC<FileManagerTabProps> = ({ project, layoutM
                   onDiscard={handleDiscardFile}
                 />
               ) : (
-                <div className="flex h-full min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                  <p className="text-sm">Select a file to edit</p>
+                <div className="flex h-full min-h-0 flex-1 items-center justify-center px-6 text-muted-foreground">
+                  <EmptyState variant={EmptyStateVariant.lg} titleText="Choose a file to edit" headingLevel="h4" icon={FolderSearch}>
+                    <EmptyStateBody>
+                      Select a file from the Files panel or create a new one to start editing in this workspace.
+                    </EmptyStateBody>
+                    <EmptyStateFooter>
+                      <EmptyStateActions>
+                        <Button variant="primary" onClick={handleCreateFile} isDisabled={createFileMutation.isPending}>
+                          Create new file
+                        </Button>
+                      </EmptyStateActions>
+                    </EmptyStateFooter>
+                  </EmptyState>
                 </div>
               )}
             </CardBody>

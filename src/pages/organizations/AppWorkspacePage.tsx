@@ -12,6 +12,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useOrganizationHierarchyData } from '@/hooks/useOrganizationHierarchyData';
 import {
@@ -53,11 +54,6 @@ const AppWorkspacePage = () => {
     selectedAppId !== null
       ? buildAppOverviewPath(selectedOrgId, selectedProjectId, selectedEnvironmentId, selectedAppId)
       : '/organizations';
-
-  const workspaceSubtitle =
-    selectedOrganization && selectedProject && selectedEnvironment
-      ? `${selectedOrganization.name} / ${selectedProject.name} / ${selectedEnvironment.name}`
-      : undefined;
 
   return (
     <Page
@@ -108,7 +104,7 @@ const AppWorkspacePage = () => {
             ) : null}
             <BreadcrumbSeparator />
             <BreadcrumbItem>
-              <BreadcrumbPage>{selectedApp?.name ? `${selectedApp.name} workspace` : 'Application workspace'}</BreadcrumbPage>
+              <BreadcrumbPage>{selectedApp?.name || 'Application workspace'}</BreadcrumbPage>
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
@@ -138,7 +134,12 @@ const AppWorkspacePage = () => {
           applicationName={selectedApp.name}
           serviceAppId={selectedApp.id}
           headerTitle={selectedApp.name}
-          subtitle={workspaceSubtitle}
+          subtitle={undefined}
+          headerMeta={
+            <Badge variant="outline" className="border-red-200 bg-red-500/10 text-red-700">
+              {selectedEnvironment.name}
+            </Badge>
+          }
           layoutMode="full-page"
           backLink={{
             label: 'Back to application overview',

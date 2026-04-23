@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Card, CardBody } from '@patternfly/react-core';
-import { Loader2, AlertCircle, RefreshCw, Power, Monitor, Maximize2, Minimize2, Play, Trash2, Terminal, ArrowLeft, ArrowRight, ExternalLink, Smartphone, Tablet, MonitorUp } from 'lucide-react';
+import { Card, CardBody, EmptyState, EmptyStateActions, EmptyStateBody, EmptyStateFooter, EmptyStateVariant } from '@patternfly/react-core';
+import { Loader2, AlertCircle, RefreshCw, Power, Monitor, Maximize2, Minimize2, Play, Trash2, Terminal, ArrowLeft, ArrowRight, ExternalLink, Smartphone, Tablet, MonitorUp, Rocket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
@@ -36,7 +36,6 @@ interface PreviewService {
 export const LivePreviewPanel: React.FC<LivePreviewPanelProps> = ({ project, isCollapsed = false, isChatCollapsed = false, onChatCollapsedChange }) => {
   const queryClient = useQueryClient();
   const [previewUrl, setPreviewUrl] = useState<string>('');
-  const [isStarting, setIsStarting] = useState(false);
   const [selectedService, setSelectedService] = useState<string>('stats'); // 'stats' or service id
   const [enabledServiceIds, setEnabledServiceIds] = useState<number[] | null>(null);
   const [availableServices, setAvailableServices] = useState<PreviewService[]>([]);
@@ -279,6 +278,18 @@ export const LivePreviewPanel: React.FC<LivePreviewPanelProps> = ({ project, isC
     }
   }, [isRunning, selectedService, availableServices, refreshKey, project.id]);
 
+  const startWorkspaceMutation = useMutation({
+    mutationFn: () => ensureWorkspace(project.id),
+    onSuccess: () => {
+      toast({ title: 'Workspace starting', description: 'Live preview will appear as soon as services are ready.' });
+      queryClient.invalidateQueries({ queryKey: ['project-services', project.id] });
+      queryClient.invalidateQueries({ queryKey: ['project-services', project.id, 'file-explorer'] });
+    },
+    onError: () => {
+      toast({ title: 'Unable to start workspace', description: 'Try again from the workspace controls.', variant: 'destructive' });
+    },
+  });
+
   if (isCollapsed) {
     return null;
   }
@@ -300,7 +311,6 @@ export const LivePreviewPanel: React.FC<LivePreviewPanelProps> = ({ project, isC
   };
 
   const showBrowserToolbar = isRunning && selectedService !== 'stats' && previewUrl;
-
   return (
     <Card className="h-full m-0 rounded-lg border-0 flex flex-col">
       {/* Header */}
@@ -313,16 +323,16 @@ export const LivePreviewPanel: React.FC<LivePreviewPanelProps> = ({ project, isC
         flexShrink: 0,
       }}>
         <div style={{ flex: 1 }}>
-          <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Live Preview</h2>
-          {selectedService === 'stats' ? (
+          <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Preview</h2>
+          {isRunning && selectedService === 'stats' ? (
             <p style={{ fontSize: '0.75rem', color: 'var(--pf-v6-global--Color--200)', margin: '0.125rem 0 0 0' }}>
               Container Statistics & Metrics
             </p>
-          ) : (
+          ) : isRunning ? (
             <p style={{ fontSize: '0.75rem', color: 'var(--pf-v6-global--Color--200)', margin: '0.125rem 0 0 0' }}>
               {availableServices.find(s => s.id === selectedService)?.name || 'Select a service'}
             </p>
-          )}
+          ) : null}
         </div>
 
         {/* Service Selector */}
@@ -378,15 +388,6 @@ export const LivePreviewPanel: React.FC<LivePreviewPanelProps> = ({ project, isC
               ) : (
                 <RefreshCw size={14} />
               )}
-            </Button>
-          )}
-          {!isRunning && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => ensureWorkspace(project.id)}
-            >
-              Start Workspace
             </Button>
           )}
           {onChatCollapsedChange && (
@@ -503,22 +504,31 @@ export const LivePreviewPanel: React.FC<LivePreviewPanelProps> = ({ project, isC
       {/* Content */}
       <CardBody style={{ flex: 1, padding: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {!isRunning ? (
-          <div style={{ 
-            flex: 1, 
-            display: 'flex', 
-            alignItems: 'center', 
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: 'var(--pf-v6-global--BackgroundColor--200)',
-            flexDirection: 'column',
-            gap: '1rem',
+            padding: '1.5rem',
           }}>
-            <AlertCircle size={32} style={{ opacity: 0.5 }} />
-            <p style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--pf-v6-global--Color--200)', margin: 0 }}>
-              Workspace Not Running
-            </p>
-            <p style={{ fontSize: '0.875rem', color: 'var(--pf-v6-global--Color--200)', textAlign: 'center', maxWidth: '80%' }}>
-              Start the workspace to enable live preview
-            </p>
+            <EmptyState variant={EmptyStateVariant.lg} titleText="Start the workspace" headingLevel="h4" icon={Rocket}>
+              <EmptyStateBody>
+                Start the workspace to open live previews and container stats for this application.
+              </EmptyStateBody>
+              <EmptyStateFooter>
+                <EmptyStateActions>
+                  <Button onClick={() => startWorkspaceMutation.mutate()} disabled={startWorkspaceMutation.isPending} className="min-w-[10rem]">
+                    {startWorkspaceMutation.isPending ? 'Starting...' : 'Start workspace'}
+                  </Button>
+                </EmptyStateActions>
+                <EmptyStateActions>
+                  <Button variant="outline" onClick={() => refetchServices()}>
+                    Refresh status
+                  </Button>
+                </EmptyStateActions>
+              </EmptyStateFooter>
+            </EmptyState>
           </div>
         ) : selectedService === 'stats' ? (
           <WorkspaceStatsPanel project={project} />

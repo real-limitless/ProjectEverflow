@@ -8,11 +8,12 @@ import { Play, Pause, RotateCw, Container, AlertCircle, CheckCircle, Clock, Play
 
 interface WorkspaceOrchestrationProps {
   project: Project;
+  showStatusSummary?: boolean;
 }
 
 type ServiceStatus = 'running' | 'stopped' | 'building' | 'error' | 'unknown';
 
-export const WorkspaceOrchestration = ({ project }: WorkspaceOrchestrationProps) => {
+export const WorkspaceOrchestration = ({ project, showStatusSummary = true }: WorkspaceOrchestrationProps) => {
   const queryClient = useQueryClient();
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -177,22 +178,24 @@ export const WorkspaceOrchestration = ({ project }: WorkspaceOrchestrationProps)
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
       {/* Service Status Display */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-        {aiWorkspace && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Container className="h-4 w-4" style={{ color: 'var(--pf-v6-global--Color--200)' }} />
-            {aiWorkspace.container_name && (
-              <span style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: 'var(--pf-v6-global--Color--200)', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={aiWorkspace.container_name}>
-                {aiWorkspace.container_name}
-              </span>
-            )}
-            <Badge variant={getStatusColor(aiWorkspaceStatus)}>
-              {getStatusIcon(aiWorkspaceStatus)}
-              {getStatusText(aiWorkspaceStatus)}
-            </Badge>
-          </div>
-        )}
-      </div>
+      {showStatusSummary && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          {aiWorkspace && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Container className="h-4 w-4" style={{ color: 'var(--pf-v6-global--Color--200)' }} />
+              {aiWorkspace.container_name && (
+                <span style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: 'var(--pf-v6-global--Color--200)', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={aiWorkspace.container_name}>
+                  {aiWorkspace.container_name}
+                </span>
+              )}
+              <Badge variant={getStatusColor(aiWorkspaceStatus)}>
+                {getStatusIcon(aiWorkspaceStatus)}
+                {getStatusText(aiWorkspaceStatus)}
+              </Badge>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Workspace Controls Dropdown */}
       <Dropdown

@@ -246,9 +246,9 @@ const TabbedEditorInner: React.FC<TabbedEditorProps & { forwardedRef: React.Ref<
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
             <div className="text-center">
               {console.debug(`[TabbedEditor] Rendering empty state: activeFilePath=${activeFilePath}, openFiles=${openFiles.length}, activeFile=${activeFile ? 'yes' : 'no'}`)}
-              <p className="text-sm mb-2">No file open</p>
+              <p className="text-sm mb-2">Open a file to start editing</p>
               <p className="text-xs text-muted-foreground">
-                Click on a file in the explorer to open it
+                Use the Files sidebar to open an existing file or create a new one.
               </p>
             </div>
           </div>

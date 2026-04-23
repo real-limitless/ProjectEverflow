@@ -11,17 +11,11 @@ import { FileExplorer } from '@/components/project/FileExplorer';
 import { TabbedEditor, TabbedEditorHandle } from '@/components/editor/TabbedEditor';
 import { useAgentStream } from '@/hooks/useAgentStream';
 import { ChatPanel } from '@/components/project/ChatPanel';
-import { Eye, EyeOff } from 'lucide-react';
-
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
-}
 
 interface AIEditorTabProps {
   project: Project;
   layoutMode?: 'default' | 'full-page';
+  layoutScope?: string;
 }
 
 // WorkspacePanel Component
@@ -42,7 +36,8 @@ const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ project, isChatCollapse
 };
 
 type WorkspaceLayoutMode = 'default' | 'full-page';
-type WorkspaceChatTab = 'chat' | 'agent-todos' | 'summary' | 'memory';
+
+const AI_EDITOR_STORAGE_VERSION = 'v2';
 
 const AI_EDITOR_LAYOUT_PRESETS: Record<WorkspaceLayoutMode, {
   panelLayout: [number, number];
@@ -65,8 +60,8 @@ const AI_EDITOR_LAYOUT_PRESETS: Record<WorkspaceLayoutMode, {
     previewMin: 25,
   },
   'full-page': {
-    panelLayout: [56, 44],
-    sidebarSize: 16,
+    panelLayout: [62, 38],
+    sidebarSize: 18,
     sidebarMin: 14,
     sidebarMax: 28,
     mainMin: 56,
@@ -103,13 +98,24 @@ const readStoredPanelLayout = (storageKey: string, fallback: [number, number]): 
     ) {
       return [parsed[0], parsed[1]];
     }
-  } catch {}
+  } catch {
+    return fallback;
+  }
 
   return fallback;
 };
 
-const isWorkspaceChatTab = (tab: string): tab is WorkspaceChatTab => {
-  return tab === 'chat' || tab === 'agent-todos' || tab === 'summary' || tab === 'memory';
+const readStoredBoolean = (storageKey: string, fallback: boolean) => {
+  if (typeof window === 'undefined') return fallback;
+
+  try {
+    const stored = window.localStorage.getItem(storageKey);
+    if (!stored) return fallback;
+    const parsed = JSON.parse(stored);
+    return typeof parsed === 'boolean' ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
 };
 
 const getMessageTimestamp = (message: Partial<ChatMessage> & { timestamp?: Date | string }) => {
@@ -119,26 +125,33 @@ const getMessageTimestamp = (message: Partial<ChatMessage> & { timestamp?: Date 
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-export const AIEditorTab: React.FC<AIEditorTabProps> = ({ project, layoutMode = 'default' }) => {
+export const AIEditorTab: React.FC<AIEditorTabProps> = ({ project, layoutMode = 'default', layoutScope }) => {
   const layoutPreset = AI_EDITOR_LAYOUT_PRESETS[layoutMode];
+  const storageScope = layoutScope || `project-${project.id}`;
   const [isChatCollapsed, setIsChatCollapsed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
-  const [initialMessages, setInitialMessages] = useState<Message[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [streamingContent, setStreamingContent] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const tabbedEditorRef = useRef<TabbedEditorHandle>(null);
   const queryClient = useQueryClient();
-  const layoutStorageKey = `ai-editor-panel-layout:${layoutMode}:${project.id}`;
-  const sidebarLayoutKey = `ai-editor-sidebar-size:${layoutMode}:${project.id}`;
-  const viewStorageKey = `ai-editor-active-view:${layoutMode}:${project.id}`;
+  const layoutStorageKey = `ai-editor:${AI_EDITOR_STORAGE_VERSION}:panel-layout:${layoutMode}:${storageScope}`;
+  const sidebarLayoutKey = `ai-editor:${AI_EDITOR_STORAGE_VERSION}:sidebar-size:${layoutMode}:${storageScope}`;
+  const sidebarCollapsedKey = `ai-editor:${AI_EDITOR_STORAGE_VERSION}:sidebar-collapsed:${layoutMode}:${storageScope}`;
+  const previewHiddenKey = `ai-editor:${AI_EDITOR_STORAGE_VERSION}:preview-hidden:${layoutMode}:${storageScope}`;
   const [panelLayout, setPanelLayout] = useState<[number, number]>(() =>
     readStoredPanelLayout(layoutStorageKey, layoutPreset.panelLayout)
   );
   const [sidebarSize, setSidebarSize] = useState<number>(() =>
     readStoredNumber(sidebarLayoutKey, layoutPreset.sidebarSize)
+  );
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() =>
+    readStoredBoolean(sidebarCollapsedKey, layoutMode === 'full-page')
+  );
+  const [isPreviewHidden, setIsPreviewHidden] = useState<boolean>(() =>
+    readStoredBoolean(previewHiddenKey, false)
   );
 
   // Use LLM models hook for available models and default
@@ -162,15 +175,10 @@ export const AIEditorTab: React.FC<AIEditorTabProps> = ({ project, layoutMode = 
   // New states for summary and memory
   const [chatSummary, setChatSummary] = useState('');
   const [memoryItems, setMemoryItems] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<WorkspaceChatTab>('chat');
-  const [activeSidebarTab, setActiveSidebarTab] = useState<'explore' | 'editor'>('explore');
-  const [isEditorFocusMode, setIsEditorFocusMode] = useState(false);
-  const [previewManuallyHidden, setPreviewManuallyHidden] = useState(false);
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'editor'>('files');
   const [chatMode, setChatMode] = useState<ChatMode>('ask');
   const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(null);
   const [selectedToolIds, setSelectedToolIds] = useState<number[]>([]);
-  const [isPersonaSelectOpen, setIsPersonaSelectOpen] = useState(false);
-  const [isToolSelectOpen, setIsToolSelectOpen] = useState(false);
   const [isModelSelectOpen, setIsModelSelectOpen] = useState(false);
   const [isToolSelectorDialogOpen, setIsToolSelectorDialogOpen] = useState(false);
   // Agent mode: 'assisted' (backend LLM) or 'copilot' (container-native LLM)
@@ -400,16 +408,14 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
     ? llmOptions.find((option) => option.id === selectedLLM)?.label || getModelLabel(selectedLLM)
     : getModelLabel(null);
 
-  const handleTabChange = (tab: string) => {
-    if (!isWorkspaceChatTab(tab)) return;
-    setActiveTab(tab);
+  const persistStoredValue = useCallback((storageKey: string, value: unknown) => {
     if (typeof window === 'undefined') return;
     try {
-      window.localStorage.setItem(viewStorageKey, tab);
+      window.localStorage.setItem(storageKey, JSON.stringify(value));
     } catch (error) {
-      console.warn('Failed to persist active tab', error);
+      console.warn(`Failed to persist storage key: ${storageKey}`, error);
     }
-  };
+  }, []);
 
   // Handlers for editing summary and todo
   const handleSummaryChange = (value: string) => {
@@ -565,25 +571,21 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
     scrollToBottom();
   }, [messages]);
 
-  // Auto-activate editor focus mode when editor tab is selected
-  useEffect(() => {
-    if (activeSidebarTab === 'editor') {
-      setIsEditorFocusMode(true);
-    } else {
-      // When switching back to explore, restore preview unless manually hidden
-      if (!previewManuallyHidden) {
-        setIsEditorFocusMode(false);
-      }
-    }
-  }, [activeSidebarTab, previewManuallyHidden]);
-
-  const togglePreviewVisibility = useCallback(() => {
-    setIsEditorFocusMode(prev => {
+  const handleSidebarToggle = useCallback(() => {
+    setIsSidebarCollapsed(prev => {
       const next = !prev;
-      setPreviewManuallyHidden(next);
+      persistStoredValue(sidebarCollapsedKey, next);
       return next;
     });
-  }, []);
+  }, [persistStoredValue, sidebarCollapsedKey]);
+
+  const handlePreviewToggle = useCallback(() => {
+    setIsPreviewHidden(prev => {
+      const next = !prev;
+      persistStoredValue(previewHiddenKey, next);
+      return next;
+    });
+  }, [persistStoredValue, previewHiddenKey]);
 
   // Process pending file open when ref becomes available (editor tab was activated)
   useEffect(() => {
@@ -601,16 +603,6 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
     }
   }, [pendingFileOpen, activeSidebarTab]); // Re-check when sidebar tab changes
 
-  // Handle initial greeting
-  useEffect(() => {
-    const greeting: Message = {
-      role: 'assistant',
-      content: `Hello! I'm your AI assistant for editing "${project.name}". How can I help you modify your project today?`,
-      timestamp: new Date()
-    };
-    setInitialMessages([greeting]);
-  }, [project.name]);
-
   useEffect(() => {
     if (!currentSessionId) return;
     updateSessionMutation.mutate({
@@ -624,23 +616,11 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
   }, [chatMode, selectedPersonaId, selectedToolIds]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const stored = window.localStorage.getItem(viewStorageKey);
-      if (stored && isWorkspaceChatTab(stored)) {
-        setActiveTab(stored);
-      } else {
-        setActiveTab('chat');
-      }
-    } catch (error) {
-      console.warn('Failed to read active tab from storage', error);
-    }
-  }, [viewStorageKey]);
-
-  useEffect(() => {
     setPanelLayout(readStoredPanelLayout(layoutStorageKey, layoutPreset.panelLayout));
     setSidebarSize(readStoredNumber(sidebarLayoutKey, layoutPreset.sidebarSize));
-  }, [layoutMode, project.id, layoutPreset, layoutStorageKey, sidebarLayoutKey]);
+    setIsSidebarCollapsed(readStoredBoolean(sidebarCollapsedKey, layoutMode === 'full-page'));
+    setIsPreviewHidden(readStoredBoolean(previewHiddenKey, false));
+  }, [layoutMode, layoutPreset, layoutStorageKey, previewHiddenKey, project.id, sidebarCollapsedKey, sidebarLayoutKey]);
 
   // Load stored summary and memory when session changes
   useEffect(() => {
@@ -747,22 +727,15 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
   }, [currentSessionId, project.id, queryClient, chatSummary]);
 
   const handlePanelLayoutChange = (sizes: number[]) => {
-    if (isChatCollapsed || sizes.length !== 2 || sizes.some((size) => typeof size !== 'number')) return;
+    if (isChatCollapsed || isPreviewHidden || sizes.length !== 2 || sizes.some((size) => typeof size !== 'number')) return;
     setPanelLayout((prev) => (prev[0] === sizes[0] && prev[1] === sizes[1] ? prev : [sizes[0], sizes[1]]));
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(layoutStorageKey, JSON.stringify(sizes));
-    } catch (error) {
-      console.warn('Failed to persist AI editor layout', error);
-    }
+    persistStoredValue(layoutStorageKey, sizes);
   };
 
   const handleSidebarLayoutChange = (sizes: number[]) => {
-    if (sizes.length < 2 || typeof sizes[0] !== 'number') return;
+    if (isSidebarCollapsed || sizes.length < 2 || typeof sizes[0] !== 'number') return;
     setSidebarSize(sizes[0]);
-    try {
-      window.localStorage.setItem(sidebarLayoutKey, JSON.stringify(sizes[0]));
-    } catch {}
+    persistStoredValue(sidebarLayoutKey, sizes[0]);
   };
 
   const handleSend = async (userMessage: string) => {
@@ -899,7 +872,7 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
     }
   };
 
-  const displayMessages = messages && messages.length > 0 ? messages : initialMessages;
+  const displayMessages = messages && messages.length > 0 ? messages : [];
 
   // Include streaming message in display if actively streaming
   const allDisplayMessages = isStreaming && streamingContent
@@ -932,6 +905,8 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
   // Handler to open file in editor (explicit action)
   const handleOpenInEditor = (path: string, content: string) => {
     setActiveSidebarTab('editor');
+    setIsSidebarCollapsed(false);
+    persistStoredValue(sidebarCollapsedKey, false);
     
     // Try to open directly, or queue if ref not yet available
     if (tabbedEditorRef.current) {
@@ -1184,86 +1159,81 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
         {/* Main layout: Resizable sidebar | Chat + Preview */}
         <div className="flex-1 min-h-0 h-full overflow-hidden">
           <ResizablePanelGroup
-            key={`ai-editor-sidebar:${layoutMode}:${project.id}`}
+            key={`ai-editor-sidebar:${layoutMode}:${storageScope}:${isSidebarCollapsed ? 'collapsed' : 'expanded'}`}
             direction="horizontal"
             className="h-full w-full"
             onLayout={handleSidebarLayoutChange}
           >
-          {/* Left Sidebar: File Explorer + Tabbed Editor (resizable) */}
-          <ResizablePanel defaultSize={sidebarSize} minSize={layoutPreset.sidebarMin} maxSize={layoutPreset.sidebarMax}>
-            <div className="h-full flex flex-col overflow-hidden" style={{ borderRight: '1px solid var(--pf-v6-global--BorderColor--100)' }}>
-            <UITabs value={activeSidebarTab} onValueChange={(v) => setActiveSidebarTab(v as 'explore' | 'editor')} className="h-full flex flex-col overflow-hidden">
-              <div className="flex items-center border-b flex-shrink-0">
-                <TabsList className="grid flex-1 grid-cols-2 rounded-none border-0">
-                  <TabsTrigger value="explore">Explore</TabsTrigger>
-                  <TabsTrigger value="editor">Editor</TabsTrigger>
-                </TabsList>
-                <button
-                  onClick={togglePreviewVisibility}
-                  className="flex items-center justify-center shrink-0 mx-1 p-1.5 rounded hover:bg-muted transition-colors"
-                  title={isEditorFocusMode ? 'Show Live Preview' : 'Hide Live Preview'}
-                  style={{ color: 'var(--pf-v6-global--Color--200)' }}
-                >
-                  {isEditorFocusMode ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
-              </div>
-              
-              <TabsContent value="explore" className="flex-1 min-h-0 overflow-hidden p-0 mt-0 flex flex-col">
-                <FileExplorer
-                  project={project}
-                  onFileSelect={handleFileSelect}
-                  onOpenInEditor={handleOpenInEditor}
-                  onAskAboutFile={handleAskAboutFile}
-                  chatSessionId={currentSessionId}
-                  onEnsureSession={async () => {
-                    if (currentSessionId) return currentSessionId;
-                    try {
-                      const resp = await createChatSession({
-                        project: project.id,
-                        title: `Deep analysis session for ${project.name}`,
-                      });
-                      const sid = resp?.data?.id || null;
-                      if (sid) {
-                        setCurrentSessionId(sid);
-                        toast({
-                          title: 'Session created',
-                          description: `Chat session ${sid} started for streaming.`,
-                        });
-                        return sid;
-                      }
-                      return null;
-                    } catch (e) {
-                      console.error('Failed to create chat session', e);
-                      return null;
-                    }
-                  }}
-                />
-              </TabsContent>
+          {!isSidebarCollapsed && (
+            <>
+              {/* Left Sidebar: File Explorer + Tabbed Editor (resizable) */}
+              <ResizablePanel defaultSize={sidebarSize} minSize={layoutPreset.sidebarMin} maxSize={layoutPreset.sidebarMax}>
+                <div className="h-full flex flex-col overflow-hidden" style={{ borderRight: '1px solid var(--pf-v6-global--BorderColor--100)' }}>
+                <UITabs value={activeSidebarTab} onValueChange={(v) => setActiveSidebarTab(v as 'files' | 'editor')} className="h-full flex flex-col overflow-hidden">
+                  <div className="flex items-center border-b flex-shrink-0">
+                    <TabsList className="grid flex-1 grid-cols-2 rounded-none border-0">
+                      <TabsTrigger value="files">Files</TabsTrigger>
+                      <TabsTrigger value="editor">Editor</TabsTrigger>
+                    </TabsList>
+                  </div>
+                  
+                  <TabsContent value="files" className="flex-1 min-h-0 overflow-hidden p-0 mt-0 flex flex-col">
+                    <FileExplorer
+                      project={project}
+                      onFileSelect={handleFileSelect}
+                      onOpenInEditor={handleOpenInEditor}
+                      onAskAboutFile={handleAskAboutFile}
+                      chatSessionId={currentSessionId}
+                      onEnsureSession={async () => {
+                        if (currentSessionId) return currentSessionId;
+                        try {
+                          const resp = await createChatSession({
+                            project: project.id,
+                            title: `Deep analysis session for ${project.name}`,
+                          });
+                          const sid = resp?.data?.id || null;
+                          if (sid) {
+                            setCurrentSessionId(sid);
+                            toast({
+                              title: 'Session created',
+                              description: `Chat session ${sid} started for streaming.`,
+                            });
+                            return sid;
+                          }
+                          return null;
+                        } catch (e) {
+                          console.error('Failed to create chat session', e);
+                          return null;
+                        }
+                      }}
+                    />
+                  </TabsContent>
 
-
-              <TabsContent value="editor" className="data-[state=active]:flex-1 data-[state=inactive]:h-0 min-h-0 overflow-hidden p-0 mt-0" forceMount>
-                <div className={activeSidebarTab === 'editor' ? 'h-full' : 'hidden'}>
-                  <TabbedEditor
-                    ref={tabbedEditorRef}
-                    project={project}
-                    onAskAboutFile={handleAskAboutFile}
-                    onOpenFilesChange={handleOpenFilesChange}
-                  />
+                  <TabsContent value="editor" className="data-[state=active]:flex-1 data-[state=inactive]:h-0 min-h-0 overflow-hidden p-0 mt-0" forceMount>
+                    <div className={activeSidebarTab === 'editor' ? 'h-full' : 'hidden'}>
+                      <TabbedEditor
+                        ref={tabbedEditorRef}
+                        project={project}
+                        onAskAboutFile={handleAskAboutFile}
+                        onOpenFilesChange={handleOpenFilesChange}
+                      />
+                    </div>
+                  </TabsContent>
+                </UITabs>
                 </div>
-              </TabsContent>
-            </UITabs>
-            </div>
-          </ResizablePanel>
+              </ResizablePanel>
 
-          <ResizableHandle
-            withHandle
-            className="w-1.5 bg-border hover:bg-primary/20 transition-colors cursor-col-resize"
-          />
+              <ResizableHandle
+                withHandle
+                className="w-1.5 bg-border hover:bg-primary/20 transition-colors cursor-col-resize"
+              />
+            </>
+          )}
 
           {/* Right side: Chat and Preview Area - takes remaining space */}
-          <ResizablePanel defaultSize={100 - sidebarSize} minSize={layoutPreset.mainMin}>
+          <ResizablePanel defaultSize={isSidebarCollapsed ? 100 : 100 - sidebarSize} minSize={layoutPreset.mainMin}>
             <ResizablePanelGroup
-              key={`ai-editor-main:${layoutMode}:${project.id}:${isChatCollapsed ? 'cc' : 'ce'}:${isEditorFocusMode ? 'fm' : 'fn'}`}
+              key={`ai-editor-main:${layoutMode}:${storageScope}:${isChatCollapsed ? 'cc' : 'ce'}:${isPreviewHidden ? 'ph' : 'pv'}`}
               direction="horizontal"
               className="h-full w-full gap-4"
               onLayout={handlePanelLayoutChange}
@@ -1271,7 +1241,7 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
             {/* Chat Panel — PatternFly Chatbot */}
             {!isChatCollapsed && (
               <>
-                <ResizablePanel defaultSize={isEditorFocusMode ? 100 : panelLayout[0]} minSize={layoutPreset.chatMin} maxSize={isEditorFocusMode ? 100 : layoutPreset.chatMax} className="flex flex-col h-full min-h-0">
+                <ResizablePanel defaultSize={isPreviewHidden ? 100 : panelLayout[0]} minSize={layoutPreset.chatMin} maxSize={isPreviewHidden ? 100 : layoutPreset.chatMax} className="flex flex-col h-full min-h-0">
                   <ChatPanel
                     project={project}
                     allDisplayMessages={allDisplayMessages}
@@ -1322,7 +1292,10 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
                     allTools={allTools}
                     selectedToolIds={selectedToolIds}
                     onToolsChange={setSelectedToolIds}
+                    personas={personas}
                     selectedPersona={selectedPersona}
+                    selectedPersonaId={selectedPersonaId}
+                    onSelectedPersonaChange={setSelectedPersonaId}
                     isToolSelectorDialogOpen={isToolSelectorDialogOpen}
                     onToolSelectorDialogOpenChange={setIsToolSelectorDialogOpen}
                     agentMode={agentMode}
@@ -1363,14 +1336,16 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
                     onDeleteMemory={handleDeleteMemory}
                     onClearAllMemory={handleClearAllMemory}
                     agentTodos={agentTodos}
-                    activeTab={activeTab}
-                    onTabChange={handleTabChange}
+                    isSidebarCollapsed={isSidebarCollapsed}
+                    onSidebarToggle={handleSidebarToggle}
+                    isPreviewHidden={isPreviewHidden}
+                    onPreviewToggle={handlePreviewToggle}
                     onStopStreaming={wsCancel || undefined}
                     messagesEndRef={messagesEndRef}
                   />
                 </ResizablePanel>
 
-                {!isEditorFocusMode && (
+                {!isPreviewHidden && (
                   <ResizableHandle
                     withHandle
                     className="w-2 bg-border hover:bg-primary/20 transition-colors cursor-col-resize"
@@ -1379,8 +1354,8 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
               </>
             )}
 
-            {/* Workspace Panel — hidden in editor focus mode */}
-            {!isEditorFocusMode && (
+            {/* Workspace Panel — optional */}
+            {!isPreviewHidden && (
               <ResizablePanel defaultSize={isChatCollapsed ? 100 : panelLayout[1]} minSize={layoutPreset.previewMin}>
                 <WorkspacePanel 
                   project={project}

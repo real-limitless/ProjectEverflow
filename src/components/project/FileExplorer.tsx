@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
-import { Button, Divider, TreeView, TreeViewDataItem } from '@patternfly/react-core';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { getWorkspaceFileTree, readWorkspaceFile, FileNode, Project } from '@/lib/api';
-import { Loader2 } from 'lucide-react';
+import { Button, Divider, EmptyState, EmptyStateActions, EmptyStateBody, EmptyStateFooter, EmptyStateVariant, TreeView, TreeViewDataItem } from '@patternfly/react-core';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { createWorkspaceFile, ensureWorkspace, getProjectServices, getWorkspaceFileTree, readWorkspaceFile, FileNode, Project } from '@/lib/api';
+import { Loader2, FolderSearch, Rocket, FilePlus2 } from 'lucide-react';
 import FolderIcon from '@patternfly/react-icons/dist/esm/icons/folder-icon';
 import FolderOpenIcon from '@patternfly/react-icons/dist/esm/icons/folder-open-icon';
 import FileIcon from '@patternfly/react-icons/dist/esm/icons/file-alt-icon';
+import { toast } from '@/hooks/use-toast';
 
 interface FileExplorerProps {
   project: Project;
@@ -52,17 +53,27 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   chatSessionId,
   onEnsureSession,
 }) => {
+  const queryClient = useQueryClient();
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [selectedFileContent, setSelectedFileContent] = useState<string | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['workspace-file-tree', project.id],
     queryFn: () => getWorkspaceFileTree(project.id),
     retry: 2,
   });
 
+  const { data: services = [] } = useQuery({
+    queryKey: ['project-services', project.id, 'file-explorer'],
+    queryFn: () => getProjectServices(project.id),
+    select: (response) => response?.data || [],
+    retry: 1,
+  });
+
   const rawTree = data?.data?.tree?.children || ([] as FileNode[]);
   const treeData = useMemo(() => toTreeViewData(rawTree), [rawTree]);
+  const workspaceService = services.find((service: any) => service.service_type === 'ai-workspace');
+  const isWorkspaceRunning = workspaceService?.status === 'running';
 
   const readFile = useMutation({
     mutationFn: (path: string) => readWorkspaceFile(project.id, path),
@@ -80,6 +91,37 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     onError: () => setSelectedFileContent('// Error reading file'),
   });
 
+  const createFile = useMutation({
+    mutationFn: ({ path, content }: { path: string; content: string }) => createWorkspaceFile(project.id, path, content),
+    onSuccess: (_response, variables) => {
+      setSelectedFile(variables.path);
+      setSelectedFileContent(variables.content);
+      queryClient.invalidateQueries({ queryKey: ['workspace-file-tree', project.id] });
+      toast({ title: 'File created', description: `${variables.path} is ready to edit.` });
+      if (onFileSelect) {
+        onFileSelect(variables.path, variables.content);
+      }
+      if (onOpenInEditor) {
+        onOpenInEditor(variables.path, variables.content);
+      }
+    },
+    onError: () => {
+      toast({ title: 'Unable to create file', description: 'Choose a different path and try again.', variant: 'destructive' });
+    },
+  });
+
+  const startWorkspace = useMutation({
+    mutationFn: () => ensureWorkspace(project.id),
+    onSuccess: () => {
+      toast({ title: 'Workspace starting', description: 'Refreshing files as the workspace comes online.' });
+      queryClient.invalidateQueries({ queryKey: ['project-services', project.id, 'file-explorer'] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-file-tree', project.id] });
+    },
+    onError: () => {
+      toast({ title: 'Unable to start workspace', description: 'Try again from the workspace controls.', variant: 'destructive' });
+    },
+  });
+
   const handleTreeSelect = (_event: React.MouseEvent, item: TreeViewDataItem) => {
     // Only read leaf files, not folders
     if (item.children && item.children.length > 0) return;
@@ -93,6 +135,14 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     const node = findTreeItem(treeData, selectedFile);
     return node ? [node] : undefined;
   }, [selectedFile, treeData]);
+
+  const handleCreateFile = () => {
+    const nextPath = window.prompt('Create a new file', 'src/new-file.tsx');
+    if (!nextPath) return;
+    const path = nextPath.trim();
+    if (!path) return;
+    createFile.mutate({ path, content: '' });
+  };
 
   const handleDeepAnalyze = async () => {
     if (!selectedFile || selectedFileContent == null) return;
@@ -138,15 +188,18 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     <div className="h-full flex flex-col overflow-hidden" style={{ backgroundColor: 'var(--pf-v6-global--BackgroundColor--100)' }}>
       {/* Header */}
       <div
-        className="px-3 py-2 flex items-center flex-shrink-0"
+        className="px-3 py-2 flex flex-col gap-0.5 flex-shrink-0"
         style={{
-          fontSize: 'var(--pf-v6-global--FontSize--xs)',
+          fontSize: '0.6875rem',
           fontWeight: 'var(--pf-v6-global--FontWeight--bold)' as any,
           color: 'var(--pf-v6-global--Color--200)',
           borderBottom: '1px solid var(--pf-v6-global--BorderColor--100)',
         }}
       >
-        Workspace Files
+        <span>Files</span>
+        <span style={{ fontSize: '0.6875rem', fontWeight: 400, lineHeight: 1.4 }}>
+          Browse the workspace or open a file in the editor.
+        </span>
       </div>
 
       {/* Tree area — use relative+absolute to guarantee scroll containment */}
@@ -155,13 +208,70 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 py-8">
             <Loader2 className="animate-spin h-4 w-4" />
-            <span style={{ fontSize: 'var(--pf-v6-global--FontSize--sm)', color: 'var(--pf-v6-global--Color--200)' }}>
+            <span style={{ fontSize: '0.6875rem', color: 'var(--pf-v6-global--Color--200)' }}>
               Loading…
             </span>
           </div>
+        ) : error || (!isWorkspaceRunning && treeData.length === 0) ? (
+          <div className="flex min-h-full items-center justify-center px-3 py-5">
+            <EmptyState
+              variant={EmptyStateVariant.sm}
+              titleText="Start the workspace"
+              titleClassName="text-sm"
+              headingLevel="h4"
+              icon={Rocket}
+              className="max-w-[20rem]"
+            >
+              <EmptyStateBody>
+                <span className="text-xs leading-5">
+                  Start the workspace before browsing files, or create a new file to start from a blank canvas.
+                </span>
+              </EmptyStateBody>
+              <EmptyStateFooter>
+                <EmptyStateActions>
+                  <Button size="sm" variant="primary" onClick={() => startWorkspace.mutate()} isDisabled={startWorkspace.isPending}>
+                    {startWorkspace.isPending ? 'Starting...' : 'Start workspace'}
+                  </Button>
+                </EmptyStateActions>
+                <EmptyStateActions>
+                  <Button size="sm" variant="secondary" onClick={handleCreateFile} isDisabled={createFile.isPending}>
+                    Create new file
+                  </Button>
+                  <Button size="sm" variant="link" onClick={() => refetch()}>
+                    Refresh files
+                  </Button>
+                </EmptyStateActions>
+              </EmptyStateFooter>
+            </EmptyState>
+          </div>
         ) : treeData.length === 0 ? (
-          <div className="text-center py-8" style={{ fontSize: 'var(--pf-v6-global--FontSize--sm)', color: 'var(--pf-v6-global--Color--200)' }}>
-            No files found
+          <div className="flex min-h-full items-center justify-center px-3 py-5">
+            <EmptyState
+              variant={EmptyStateVariant.sm}
+              titleText="Create your first workspace file"
+              titleClassName="text-sm"
+              headingLevel="h4"
+              icon={FolderSearch}
+              className="max-w-[20rem]"
+            >
+              <EmptyStateBody>
+                <span className="text-xs leading-5">
+                  This workspace is ready, but it does not have any files yet. Create a starter file and open it in the editor.
+                </span>
+              </EmptyStateBody>
+              <EmptyStateFooter>
+                <EmptyStateActions>
+                  <Button size="sm" variant="primary" icon={<FilePlus2 size={14} />} onClick={handleCreateFile} isDisabled={createFile.isPending}>
+                    Create new file
+                  </Button>
+                </EmptyStateActions>
+                <EmptyStateActions>
+                  <Button size="sm" variant="link" onClick={() => refetch()}>
+                    Refresh files
+                  </Button>
+                </EmptyStateActions>
+              </EmptyStateFooter>
+            </EmptyState>
           </div>
         ) : (
           <TreeView
@@ -184,7 +294,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
             <div
               className="mb-2 truncate"
               style={{
-                fontSize: 'var(--pf-v6-global--FontSize--xs)',
+                fontSize: '0.6875rem',
                 color: 'var(--pf-v6-global--Color--200)',
                 fontFamily: 'var(--pf-v6-global--FontFamily--mono)',
               }}
@@ -225,7 +335,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                 isBlock
                 onClick={handleDeepAnalyze}
               >
-                Analyze
+                Deep analyze
               </Button>
             </div>
           </div>

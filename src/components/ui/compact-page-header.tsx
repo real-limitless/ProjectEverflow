@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 interface CompactPageHeaderProps {
   title: string;
   subtitle?: string;
+  headerMeta?: React.ReactNode;
   backLink?: {
     label: string;
     onClick: () => void;
@@ -45,6 +46,7 @@ interface CompactPageHeaderProps {
 export const CompactPageHeader: React.FC<CompactPageHeaderProps> = ({
   title,
   subtitle,
+  headerMeta,
   backLink,
   tabs,
   actions,
@@ -70,6 +72,7 @@ export const CompactPageHeader: React.FC<CompactPageHeaderProps> = ({
             )}
             <div className="min-w-0 flex items-center gap-3">
               <h1 className="text-lg font-semibold truncate">{title}</h1>
+              {headerMeta}
               {subtitle && (
                 <>
                   <span className="text-muted-foreground shrink-0">•</span>
@@ -106,7 +109,10 @@ export const CompactPageHeader: React.FC<CompactPageHeaderProps> = ({
                     {backLink.label}
                   </PFButton>
                 )}
-                <h1 className="text-3xl font-bold mb-2">{title}</h1>
+                <div className="mb-2 flex flex-wrap items-center gap-3">
+                  <h1 className="text-3xl font-bold">{title}</h1>
+                  {headerMeta}
+                </div>
                 {subtitle && (
                   <p className="text-muted-foreground">{subtitle}</p>
                 )}

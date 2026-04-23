@@ -28,8 +28,8 @@ export const GitDiffViewer = ({
       <div className="flex items-center justify-center h-full text-muted-foreground">
         <div className="text-center">
           <GitBranch size={48} className="mx-auto mb-4 opacity-50" />
-          <p className="text-sm">No changes detected</p>
-          <p className="text-xs mt-1">Make changes to files to see diffs here</p>
+          <p className="text-sm">No local edits yet</p>
+          <p className="text-xs mt-1">Edit a file in this workspace to review the diff here.</p>
         </div>
       </div>
     );

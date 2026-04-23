@@ -740,6 +740,7 @@ interface ApplicationWorkspaceProps {
   serviceAppId?: number;
   headerTitle?: string;
   subtitle?: string;
+  headerMeta?: React.ReactNode;
   backLink?: {
     label: string;
     onClick: () => void;
@@ -754,6 +755,7 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
   serviceAppId,
   headerTitle = 'Application workspace',
   subtitle,
+  headerMeta,
   backLink,
   embedded = false,
   layoutMode = 'default',
@@ -1105,10 +1107,12 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
           <CompactPageHeader
             title={headerTitle}
             subtitle={subtitle || workspaceLabel}
+            headerMeta={headerMeta}
             backLink={backLink}
+            defaultCompact={layoutMode === 'full-page'}
             actions={
               <div className="flex items-center gap-2">
-                {project && <WorkspaceOrchestration project={project} />}
+                {project && <WorkspaceOrchestration project={project} showStatusSummary={layoutMode !== 'full-page'} />}
                 <button
                   onClick={() => setIsBranchChatOpen(!isBranchChatOpen)}
                   className={`p-2 rounded-md border transition-colors ${
@@ -1131,7 +1135,7 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: activeTab === 0 || activeTab === 3 ? 'hidden' : 'auto' }}>
         {activeTab === 0 && (
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            {project ? <AIEditorTab project={project} layoutMode={layoutMode} /> : <div>Loading AI editor...</div>}
+            {project ? <AIEditorTab project={project} layoutMode={layoutMode} layoutScope={serviceAppId !== undefined ? `app-${serviceAppId}` : `project-${project.id}`} /> : <div>Loading AI editor...</div>}
           </div>
         )}
 

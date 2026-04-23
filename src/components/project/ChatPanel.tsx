@@ -23,7 +23,6 @@ import ChatbotHeader, {
   ChatbotHeaderMain,
   ChatbotHeaderTitle,
   ChatbotHeaderActions,
-  ChatbotHeaderSelectorDropdown,
 } from '@patternfly/chatbot/dist/dynamic/ChatbotHeader';
 import ChatbotConversationHistoryNav, {
   Conversation,
@@ -35,6 +34,7 @@ import {
   Card,
   CardBody,
   CardTitle,
+  Dropdown,
   DropdownItem,
   DropdownList,
   Flex,
@@ -48,6 +48,8 @@ import {
   Tabs,
   TabTitleText,
   TextArea,
+  ToggleGroup,
+  ToggleGroupItem,
 } from '@patternfly/react-core';
 import { TrashIcon } from '@patternfly/react-icons';
 
@@ -55,6 +57,7 @@ import { TrashIcon } from '@patternfly/react-icons';
 import { Label as FieldLabel } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ToggleGroup as ModeToggleGroup, ToggleGroupItem as ModeToggleGroupItem } from '@/components/ui/toggle-group';
 
 // ── Custom editor components ────────────────────────────────────────
 import { MessageEdit } from '@/components/editor/MessageEdit';
@@ -78,6 +81,10 @@ import {
   AlertTriangle,
   Wrench,
   SquarePen,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
 } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -97,11 +104,15 @@ const USER_AVATAR =
 
 const CHAT_MODES: Array<{ value: ChatMode; label: string; description: string; icon: typeof MessageCircle }> = [
   { value: 'ask', label: 'Ask', description: 'Direct answers', icon: MessageCircle },
-  { value: 'plan', label: 'Plan', description: 'Step-by-step plans', icon: Sparkles },
-  { value: 'agent', label: 'Agent', description: 'Autonomous agent', icon: Workflow },
-  { value: 'persona', label: 'Persona', description: 'Persona-aligned replies', icon: Sparkles },
-  { value: 'deep', label: 'Deep', description: 'Deep reasoning + multi-step', icon: Bot },
+  { value: 'plan', label: 'Plan', description: 'Outline the next steps before editing', icon: Sparkles },
+  { value: 'agent', label: 'Agent', description: 'Run autonomous multi-step work', icon: Workflow },
+  { value: 'persona', label: 'Persona', description: 'Respond with a selected persona', icon: Sparkles },
+  { value: 'deep', label: 'Deep', description: 'Spend more time reasoning across context', icon: Bot },
 ];
+
+const PRIMARY_CHAT_MODES = CHAT_MODES.filter(({ value }) => value === 'ask' || value === 'plan' || value === 'agent');
+
+type UtilityDialogTab = 'summary' | 'memory' | 'agent-todos';
 
 // ── Helper ───────────────────────────────────────────────────────────
 const getMessageTimestamp = (message: Partial<ChatMessage> & { timestamp?: Date | string }) => {
@@ -170,7 +181,10 @@ export interface ChatPanelProps {
   allTools: ProjectTool[];
   selectedToolIds: number[];
   onToolsChange: (ids: number[]) => void;
+  personas: ChatbotPersona[];
   selectedPersona: ChatbotPersona | null;
+  selectedPersonaId: number | null;
+  onSelectedPersonaChange: (personaId: number | null) => void;
   isToolSelectorDialogOpen: boolean;
   onToolSelectorDialogOpenChange: (open: boolean) => void;
 
@@ -202,9 +216,11 @@ export interface ChatPanelProps {
   // Agent tasks
   agentTodos: Array<{ description: string; status: 'pending' | 'in_progress' | 'completed' | 'failed'; details?: string }>;
 
-  // Active tab
-  activeTab: string;
-  onTabChange: (tab: string) => void;
+  // Workspace chrome controls
+  isSidebarCollapsed: boolean;
+  onSidebarToggle: () => void;
+  isPreviewHidden: boolean;
+  onPreviewToggle: () => void;
 
   // Stop handler for streaming
   onStopStreaming?: () => void;
@@ -254,7 +270,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
     allTools,
     selectedToolIds,
     onToolsChange,
+    personas,
     selectedPersona,
+    selectedPersonaId,
+    onSelectedPersonaChange,
     isToolSelectorDialogOpen,
     onToolSelectorDialogOpenChange,
     agentMode,
@@ -275,8 +294,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
     onDeleteMemory,
     onClearAllMemory,
     agentTodos,
-    activeTab,
-    onTabChange,
+    isSidebarCollapsed,
+    onSidebarToggle,
+    isPreviewHidden,
+    onPreviewToggle,
     onStopStreaming,
     messagesEndRef,
   } = props;
@@ -286,11 +307,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
   const [historySearch, setHistorySearch] = useState('');
   const historyRef = useRef<HTMLButtonElement>(null);
 
-  // ── MessageBox ref for programmatic scroll ─────────────────────
-  const messageBoxRef = useRef<HTMLDivElement>(null);
-
   // ── Model selector for PF header ───────────────────────────────
   const [isHeaderModelOpen, setIsHeaderModelOpen] = useState(false);
+  const [isAgentModeMenuOpen, setIsAgentModeMenuOpen] = useState(false);
+  const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [isUtilityDialogOpen, setIsUtilityDialogOpen] = useState(false);
+  const [isPersonaDialogOpen, setIsPersonaDialogOpen] = useState(false);
+  const [activeUtilityTab, setActiveUtilityTab] = useState<UtilityDialogTab>('summary');
 
   // Build PF Conversation[] from sessions, grouped by date
   const conversations = useMemo<{ [key: string]: Conversation[] }>(() => {
@@ -328,6 +352,26 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
     ],
     [project.name]
   );
+
+  const primaryChatMode = useMemo<ChatMode>(() => {
+    if (chatMode === 'plan' || chatMode === 'agent') {
+      return chatMode;
+    }
+    return 'ask';
+  }, [chatMode]);
+
+  const activeModeDescription = useMemo(() => {
+    if (chatMode === 'persona') {
+      return selectedPersona
+        ? `${selectedPersona.name} shapes the reply and tool choices.`
+        : 'Choose a persona to tailor how the assistant responds.';
+    }
+
+    return CHAT_MODES.find((mode) => mode.value === chatMode)?.description || 'Direct answers';
+  }, [chatMode, selectedPersona]);
+
+  const activeAdvancedModeLabel = chatMode === 'persona' ? 'Persona' : chatMode === 'deep' ? 'Deep' : null;
+  const agentModeLabel = agentMode === 'copilot' ? 'Copilot' : 'Assisted';
 
   // ── Build PF Message list ──────────────────────────────────────
   // We convert the app's ChatMessage[] into PF MessageProps[].
@@ -392,23 +436,42 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
     [onSelectSession]
   );
 
-  // ── Auto-scroll to bottom (programmatic, targets MessageBox container) ──
-  useEffect(() => {
-    // Use the MessageBox DOM ref for reliable scroll
-    const el = messageBoxRef.current;
-    if (el && allDisplayMessages.length > 0) {
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
-    }
-  }, [allDisplayMessages.length, isStreaming, streamingContent]);
+  const openUtilityDialog = useCallback((tab: UtilityDialogTab) => {
+    setActiveUtilityTab(tab);
+    setIsUtilityDialogOpen(true);
+    setIsUtilityMenuOpen(false);
+  }, []);
 
-  // Also try messagesEndRef as fallback
+  const handlePersonaChoice = useCallback((personaId: number | null) => {
+    onSelectedPersonaChange(personaId);
+    setIsPersonaDialogOpen(false);
+    setIsMoreMenuOpen(false);
+    if (personaId === null) {
+      if (chatMode === 'persona') {
+        onChatModeChange('ask');
+      }
+      return;
+    }
+    onChatModeChange('persona');
+  }, [chatMode, onChatModeChange, onSelectedPersonaChange]);
+
+  const handleAgentModeSelect = useCallback((nextMode: 'assisted' | 'copilot') => {
+    setIsAgentModeMenuOpen(false);
+    if (nextMode === agentMode) {
+      return;
+    }
+    if (nextMode === 'copilot' && !copilotAvailable) {
+      return;
+    }
+    onAgentModeToggle();
+  }, [agentMode, copilotAvailable, onAgentModeToggle]);
+
+  // Auto-scroll using the end-of-message anchor.
   useEffect(() => {
     if (allDisplayMessages.length > 1) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [allDisplayMessages.length]);
+  }, [allDisplayMessages.length, messagesEndRef]);
 
   return (
     <div className="pf-chatbot-container" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
@@ -443,10 +506,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
                     onMenuToggle={() => setIsDrawerOpen(!isDrawerOpen)}
                   />
                   <ChatbotHeaderTitle>
-                    <span style={{ fontWeight: 600, fontSize: '1rem' }}>AI Editor</span>
-                    <span style={{ fontSize: '0.75rem', opacity: 0.7, marginLeft: 8 }}>
-                      {project.name}
-                    </span>
+                    <span className="text-sm font-semibold leading-none">AI Editor</span>
                     <span
                       className={`ml-2 inline-block w-2 h-2 rounded-full ${
                         agentWsStatus === 'connected' ? 'bg-green-500' :
@@ -459,7 +519,110 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
                 </ChatbotHeaderMain>
                 <ChatbotHeaderActions>
                   <Button
-                    variant="plain"
+                    variant="secondary"
+                    size="sm"
+                    icon={isSidebarCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+                    onClick={onSidebarToggle}
+                    className="text-xs"
+                    title={isSidebarCollapsed ? 'Show files panel' : 'Hide files panel'}
+                  >
+                    Files
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={isPreviewHidden ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
+                    onClick={onPreviewToggle}
+                    className="text-xs"
+                    title={isPreviewHidden ? 'Show live preview' : 'Hide live preview'}
+                  >
+                    Preview
+                  </Button>
+                  <Dropdown
+                    isOpen={isUtilityMenuOpen}
+                    onSelect={() => setIsUtilityMenuOpen(false)}
+                    toggle={(toggleRef) => (
+                      <MenuToggle
+                        ref={toggleRef}
+                        isExpanded={isUtilityMenuOpen}
+                        onClick={() => setIsUtilityMenuOpen((prev) => !prev)}
+                        variant="secondary"
+                        size="sm"
+                        icon={<Settings size={14} />}
+                        className="text-xs"
+                      >
+                        Utilities
+                      </MenuToggle>
+                    )}
+                    popperProps={{ position: 'end' }}
+                  >
+                    <DropdownList>
+                      <DropdownItem onClick={() => openUtilityDialog('summary')}>Summary</DropdownItem>
+                      <DropdownItem onClick={() => openUtilityDialog('memory')}>Memory</DropdownItem>
+                      <DropdownItem onClick={() => openUtilityDialog('agent-todos')}>Tasks</DropdownItem>
+                    </DropdownList>
+                  </Dropdown>
+                  <Select
+                    isOpen={isHeaderModelOpen}
+                    selected={selectedLLM || '__default__'}
+                    onSelect={handleModelSelect}
+                    onOpenChange={setIsHeaderModelOpen}
+                    toggle={(toggleRef) => (
+                      <MenuToggle
+                        ref={toggleRef}
+                        isExpanded={isHeaderModelOpen}
+                        onClick={() => setIsHeaderModelOpen((prev) => !prev)}
+                        variant="secondary"
+                        size="sm"
+                        icon={<Bot size={14} />}
+                        className="max-w-[12rem] text-xs"
+                        isPlaceholder={!selectedLLM}
+                      >
+                        <span className="truncate">{selectedModelLabel}</span>
+                      </MenuToggle>
+                    )}
+                  >
+                    <SelectOption key="default" value="__default__">
+                      ⭐ {getModelLabel(null)}
+                    </SelectOption>
+                    {llmOptions.map((option) => (
+                      <SelectOption key={option.id} value={option.id}>
+                        {option.label}
+                      </SelectOption>
+                    ))}
+                  </Select>
+                  <Dropdown
+                    isOpen={isAgentModeMenuOpen}
+                    onSelect={() => setIsAgentModeMenuOpen(false)}
+                    toggle={(toggleRef) => (
+                      <MenuToggle
+                        ref={toggleRef}
+                        isExpanded={isAgentModeMenuOpen}
+                        onClick={() => setIsAgentModeMenuOpen((prev) => !prev)}
+                        variant="secondary"
+                        size="sm"
+                        icon={<Workflow size={14} />}
+                        className="text-xs"
+                      >
+                        {agentModeLabel}
+                      </MenuToggle>
+                    )}
+                    popperProps={{ position: 'end' }}
+                  >
+                    <DropdownList>
+                      <DropdownItem onClick={() => handleAgentModeSelect('assisted')}>Assisted</DropdownItem>
+                      <DropdownItem
+                        onClick={() => handleAgentModeSelect('copilot')}
+                        isDisabled={!copilotAvailable}
+                        description={copilotAvailable ? undefined : 'Requires a workspace started with COPILOT_MODE=true'}
+                      >
+                        Copilot
+                      </DropdownItem>
+                    </DropdownList>
+                  </Dropdown>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     icon={<SquarePen size={16} />}
                     aria-label="New chat"
                     onClick={onNewSession}
@@ -467,301 +630,160 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
                 </ChatbotHeaderActions>
               </ChatbotHeader>
 
-              {/* ── Tabbed content ─────────────────────────────── */}
-              <Tabs
-                activeKey={activeTab}
-                onSelect={(_e: any, k: string | number) => onTabChange(String(k))}
-                style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}
-              >
+              {/* ── Main chat content ────────────────────────────── */}
+              <div style={{ display: 'flex', flex: 1, minHeight: 0, flexDirection: 'column', overflow: 'hidden' }}>
+                <div style={{ flex: '1 1 0%', minHeight: 0, position: 'relative' }}>
+                  <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                    <ChatbotContent>
+                      <MessageBox announcement={isStreaming ? 'AI is responding…' : undefined}>
+                        {!messagesLoading && allDisplayMessages.length === 0 && (
+                          <ChatbotWelcomePrompt
+                            title={`Welcome to ${project.name}`}
+                            description="Ask a question, sketch a plan, or hand off a task to the agent."
+                            prompts={welcomePrompts}
+                            isCompact
+                          />
+                        )}
 
-                {/* ── Chat Tab ───────────────────────────────────── */}
-                <Tab eventKey="chat" title={<TabTitleText>Chat</TabTitleText>} >
-                  <div style={{ flex: '1 1 0%', minHeight: 0, position: 'relative' }}>
-                    <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-                  <ChatbotContent >
-                    <MessageBox
-                      ref={messageBoxRef}
-                      announcement={isStreaming ? 'AI is responding…' : undefined}
-                    >
-                      {/* Welcome state when no messages */}
-                      {!messagesLoading && allDisplayMessages.length === 0 && (
-                        <ChatbotWelcomePrompt
-                          title={`Hello! I'm your AI assistant for ${project.name}`}
-                          description="How can I help you today?"
-                          prompts={welcomePrompts}
-                        />
-                      )}
+                        {messagesLoading && (
+                          <div className="flex items-center justify-center py-8">
+                            <Loader2 className="h-6 w-6 animate-spin" />
+                            <span className="ml-2 text-xs text-muted-foreground">Loading messages…</span>
+                          </div>
+                        )}
 
-                      {/* Loading indicator */}
-                      {messagesLoading && (
-                        <div className="flex items-center justify-center py-8">
-                          <Loader2 className="h-6 w-6 animate-spin" />
-                          <span className="ml-2 text-sm text-muted-foreground">Loading messages…</span>
-                        </div>
-                      )}
+                        {!messagesLoading &&
+                          pfMessages.map((msg, idx) => {
+                            const raw = msg._raw;
+                            const isEditing = editingMessageId === raw.id;
+                            const key = msg.id || `msg-${idx}`;
 
-                      {/* Messages */}
-                      {!messagesLoading &&
-                        pfMessages.map((msg, idx) => {
-                          const raw = msg._raw;
-                          const isEditing = editingMessageId === raw.id;
-                          const key = msg.id || `msg-${idx}`;
+                            if (isEditing && msg.role === 'user') {
+                              return (
+                                <div key={key} className="pf-chatbot__message-editing-wrapper" style={{ padding: '0 var(--pf-t--global--spacer--lg)' }}>
+                                  <MessageEdit
+                                    message={raw}
+                                    isEditing={true}
+                                    onEdit={() => {}}
+                                    onSave={(content) => onEditMessage(raw.id || key, content)}
+                                    onCancel={() => onSetEditingMessageId(null)}
+                                    isSaving={savingMessageId === raw.id}
+                                  />
+                                </div>
+                              );
+                            }
 
-                          // If user is editing this message, render custom edit UI
-                          if (isEditing && msg.role === 'user') {
+                            const actions =
+                              msg.role === 'bot'
+                                ? {
+                                    positive: {
+                                      onClick: () => {},
+                                      ariaLabel: 'Good response',
+                                    },
+                                    negative: {
+                                      onClick: () => {},
+                                      ariaLabel: 'Bad response',
+                                    },
+                                    copy: {
+                                      onClick: () => onCopyMessage(raw.content || ''),
+                                      ariaLabel: 'Copy response',
+                                    },
+                                    regenerate: {
+                                      onClick: () => onRegenerateMessage(raw.id || key),
+                                      ariaLabel: 'Regenerate response',
+                                      icon: (
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                          <path d="M3 3v5h5" />
+                                          <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                                          <path d="M16 16h5v5" />
+                                        </svg>
+                                      ),
+                                      tooltipContent: 'Regenerate',
+                                    },
+                                  }
+                                : undefined;
+
+                            const toolCalls =
+                              raw.tool_calls?.length > 0
+                                ? raw.tool_calls
+                                : raw.metadata?.tool_calls?.length > 0
+                                ? raw.metadata.tool_calls
+                                : null;
+
+                            const hasReasoning = (raw as any).reasoning;
+
                             return (
-                              <div key={key} className="pf-chatbot__message-editing-wrapper" style={{ padding: '0 var(--pf-t--global--spacer--lg)' }}>
-                                <MessageEdit
-                                  message={raw}
-                                  isEditing={true}
-                                  onEdit={() => {}}
-                                  onSave={(content) => onEditMessage(raw.id || key, content)}
-                                  onCancel={() => onSetEditingMessageId(null)}
-                                  isSaving={savingMessageId === raw.id}
-                                />
+                              <div key={key} className="group">
+                                <Message
+                                  id={key}
+                                  role={msg.role}
+                                  content={msg.content}
+                                  name={msg.name}
+                                  avatar={msg.avatar}
+                                  timestamp={msg.timestamp}
+                                  isLoading={msg.isLoading}
+                                  avatarProps={msg.avatarProps}
+                                  actions={actions}
+                                  hasRoundAvatar
+                                >
+                                  {hasReasoning && (
+                                    <details className="mb-2 text-xs">
+                                      <summary className="flex cursor-pointer items-center gap-1 text-muted-foreground">
+                                        💭 <span className="underline">Show reasoning</span>
+                                      </summary>
+                                      <div className="mt-1 rounded bg-muted p-2 text-[11px] whitespace-pre-wrap">
+                                        {(raw as any).reasoning}
+                                      </div>
+                                    </details>
+                                  )}
+                                </Message>
+
+                                {toolCalls && (
+                                  <div className="ml-12 mt-1 space-y-1">
+                                    {toolCalls.map((tc: any, tIdx: number) => (
+                                      <ToolOutput
+                                        key={tc.id || tIdx}
+                                        toolCall={tc}
+                                        projectId={project.id}
+                                        projectTools={allTools}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+
+                                {msg.role === 'user' && (
+                                  <div className="ml-12 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <Button
+                                      variant="link"
+                                      size="sm"
+                                      onClick={() => onSetEditingMessageId(raw.id || key)}
+                                      className="text-xs"
+                                    >
+                                      Edit
+                                    </Button>
+                                  </div>
+                                )}
+
+                                {idx === pfMessages.length - 1 && <div ref={messagesEndRef} />}
                               </div>
                             );
-                          }
-
-                          // Build actions for bot messages
-                          const actions =
-                            msg.role === 'bot'
-                              ? {
-                                  positive: {
-                                    onClick: () => {},
-                                    ariaLabel: 'Good response',
-                                  },
-                                  negative: {
-                                    onClick: () => {},
-                                    ariaLabel: 'Bad response',
-                                  },
-                                  copy: {
-                                    onClick: () => onCopyMessage(raw.content || ''),
-                                    ariaLabel: 'Copy response',
-                                  },
-                                  // Custom regenerate action
-                                  regenerate: {
-                                    onClick: () => onRegenerateMessage(raw.id || key),
-                                    ariaLabel: 'Regenerate response',
-                                    icon: (
-                                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                                        <path d="M3 3v5h5" />
-                                        <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-                                        <path d="M16 16h5v5" />
-                                      </svg>
-                                    ),
-                                    tooltipContent: 'Regenerate',
-                                  },
-                                }
-                              : undefined;
-
-                          // Determine if this message has tool calls
-                          const toolCalls =
-                            raw.tool_calls?.length > 0
-                              ? raw.tool_calls
-                              : raw.metadata?.tool_calls?.length > 0
-                              ? raw.metadata.tool_calls
-                              : null;
-
-                          // Build extra content for tool outputs and reasoning
-                          const hasReasoning = (raw as any).reasoning;
-
-                          return (
-                            <div key={key} className="group">
-                              <Message
-                                id={key}
-                                role={msg.role}
-                                content={msg.content}
-                                name={msg.name}
-                                avatar={msg.avatar}
-                                timestamp={msg.timestamp}
-                                isLoading={msg.isLoading}
-                                avatarProps={msg.avatarProps}
-                                actions={actions}
-                                hasRoundAvatar
-                              >
-                                {/* Reasoning block (custom, before content would be) */}
-                                {hasReasoning && (
-                                  <details className="mb-2 text-sm">
-                                    <summary className="cursor-pointer text-muted-foreground flex items-center gap-1">
-                                      💭 <span className="underline">Show reasoning</span>
-                                    </summary>
-                                    <div className="mt-1 p-2 bg-muted rounded text-xs whitespace-pre-wrap">
-                                      {(raw as any).reasoning}
-                                    </div>
-                                  </details>
-                                )}
-                              </Message>
-
-                              {/* Tool outputs rendered below the message */}
-                              {toolCalls && (
-                                <div className="ml-12 mt-1 space-y-1">
-                                  {toolCalls.map((tc: any, tIdx: number) => (
-                                    <ToolOutput
-                                      key={tc.id || tIdx}
-                                      toolCall={tc}
-                                      projectId={project.id}
-                                      projectTools={allTools}
-                                    />
-                                  ))}
-                                </div>
-                              )}
-
-                              {/* Edit button for user messages (hover-revealed) */}
-                              {msg.role === 'user' && (
-                                <div className="ml-12 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <Button
-                                    variant="link"
-                                    size="sm"
-                                    onClick={() => onSetEditingMessageId(raw.id || key)}
-                                    className="text-xs"
-                                  >
-                                    Edit
-                                  </Button>
-                                </div>
-                              )}
-
-                              {/* Scroll anchor on last message */}
-                              {idx === pfMessages.length - 1 && <div ref={messagesEndRef} />}
-                            </div>
-                          );
-                        })}
-                    </MessageBox>
-                  </ChatbotContent>
-                    </div>
+                          })}
+                      </MessageBox>
+                    </ChatbotContent>
                   </div>
-                </Tab>
+                </div>
 
-                {/* ── Summary Tab ────────────────────────────────── */}
-                <Tab eventKey="summary" title={<TabTitleText>Summary</TabTitleText>}>
-                  <div style={{ flex: '1 1 0%', minHeight: 0, position: 'relative' }}>
-                    <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain' }} className="px-6 py-5">
-                    <Card>
-                      <CardBody>
-                        <CardTitle>Chat Summary</CardTitle>
-                        <TextArea
-                          value={chatSummary}
-                          onChange={(_, value) => onSummaryChange(value)}
-                          placeholder="Enter or edit the chat summary…"
-                          resizeOrientation="vertical"
-                          className="min-h-32"
-                        />
-                        <Flex className="mt-3" gap={{ default: 'gapSm' }}>
-                          <Button
-                            variant="secondary"
-                            onClick={onRegenerateSummary}
-                            isDisabled={!currentSessionId}
-                          >
-                            Regenerate Summary
-                          </Button>
-                        </Flex>
-                      </CardBody>
-                    </Card>
-                    </div>
-                  </div>
-                </Tab>
-
-                {/* ── Memory Tab ─────────────────────────────────── */}
-                <Tab eventKey="memory" title={<TabTitleText>Memory</TabTitleText>}>
-                  <div style={{ flex: '1 1 0%', minHeight: 0, position: 'relative' }}>
-                    <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain' }} className="px-6 py-5">
-                    <Card>
-                      <CardBody>
-                        <CardTitle>💭 Session Memory</CardTitle>
-                        <p className="text-sm text-muted-foreground mb-4">
-                          Store useful context and insights for this conversation.
-                        </p>
-                        {memoryItems.length > 0 ? (
-                          <div className="space-y-3">
-                            {memoryItems.map((item, idx) => (
-                              <Flex key={idx} gap={{ default: 'gapSm' }} alignItems={{ default: 'alignItemsFlexStart' }}>
-                                <TextArea
-                                  value={item}
-                                  onChange={(_, value) => onEditMemory(idx, value)}
-                                  placeholder="Edit memory item…"
-                                  resizeOrientation="vertical"
-                                  className="flex-1 min-h-16 text-sm"
-                                />
-                                <Button
-                                  variant="plain"
-                                  icon={<TrashIcon />}
-                                  onClick={() => onDeleteMemory(idx)}
-                                  aria-label="Delete memory item"
-                                />
-                              </Flex>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="py-8 text-center text-muted-foreground">
-                            <p>No memory items yet.</p>
-                            <p className="text-xs mt-1">Add memories to help the LLM understand context</p>
-                          </div>
-                        )}
-                        <Flex className="mt-4" gap={{ default: 'gapSm' }}>
-                          <Button variant="secondary" onClick={onAddMemory}>
-                            Add Memory Item
-                          </Button>
-                          {memoryItems.length > 0 && (
-                            <Button variant="plain" onClick={onClearAllMemory} className="text-red-600 hover:text-red-700">
-                              Clear All
-                            </Button>
-                          )}
-                        </Flex>
-                      </CardBody>
-                    </Card>
-                    </div>
-                  </div>
-                </Tab>
-
-                {/* ── Agent Tasks Tab ────────────────────────────── */}
-                <Tab eventKey="agent-todos" title={<TabTitleText>Tasks</TabTitleText>}>
-                  <div style={{ flex: '1 1 0%', minHeight: 0, position: 'relative' }}>
-                    <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain' }} className="px-6 py-5">
-                    <Card>
-                      <CardBody>
-                        <CardTitle>Agent Tasks</CardTitle>
-                        {agentTodos.length > 0 ? (
-                          <div className="space-y-3">
-                            {agentTodos.map((task, idx) => (
-                              <Flex key={idx} gap={{ default: 'gapSm' }} alignItems={{ default: 'alignItemsCenter' }}>
-                                <div className="flex-1">
-                                  <Flex gap={{ default: 'gapSm' }} alignItems={{ default: 'alignItemsCenter' }}>
-                                    {task.status === 'pending' && <Clock className="w-4 h-4 text-yellow-500" />}
-                                    {task.status === 'in_progress' && <Spinner size="sm" />}
-                                    {task.status === 'completed' && <CheckCircle className="w-4 h-4 text-green-500" />}
-                                    {task.status === 'failed' && <AlertTriangle className="w-4 h-4 text-red-500" />}
-                                    <span className="flex-1">{typeof task.description === 'string' ? task.description : String(task.description)}</span>
-                                  </Flex>
-                                  {task.details && (
-                                    <span className="text-sm text-muted-foreground mt-1 ml-6">
-                                      {typeof task.details === 'string' ? task.details : JSON.stringify(task.details)}
-                                    </span>
-                                  )}
-                                </div>
-                              </Flex>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-muted-foreground">No agent tasks yet.</p>
-                        )}
-                      </CardBody>
-                    </Card>
-                    </div>
-                  </div>
-                </Tab>
-              </Tabs>
-
-              {/* ── Footer (pinned to bottom, visible on Chat tab) ── */}
-              {activeTab === 'chat' && (
                 <ChatbotFooter>
-                  {/* Persona / tool chips */}
-                  {(selectedPersona || selectedToolIds.length > 0) && (
-                    <Flex gap={{ default: 'gapSm' }} className="px-4 pb-1">
+                  {(selectedPersona || selectedToolIds.length > 0 || activeAdvancedModeLabel) && (
+                    <Flex gap={{ default: 'gapSm' }} className="px-4 pb-2">
                       {selectedPersona && (
                         <PFLabel color="green" icon={<Sparkles className="h-3 w-3" />}>
                           {selectedPersona.name}
                         </PFLabel>
+                      )}
+                      {activeAdvancedModeLabel && (
+                        <PFLabel color="orange">{activeAdvancedModeLabel} mode</PFLabel>
                       )}
                       {allTools
                         .filter((t) => selectedToolIds.includes(t.id))
@@ -777,97 +799,268 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
                     </Flex>
                   )}
 
-                  {/* Mode selector row */}
-                  <div className="flex items-center gap-2 px-4 pb-1">
-                    {CHAT_MODES.map((m) => (
-                      <button
-                        key={m.value}
-                        onClick={() => onChatModeChange(m.value)}
-                        className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
-                          chatMode === m.value
-                            ? 'bg-[var(--pf-v6-global--primary-color--100,#0066cc)] text-white border-[var(--pf-v6-global--primary-color--100,#0066cc)]'
-                            : 'border-border text-muted-foreground hover:bg-muted'
-                        }`}
-                        title={m.description}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                    <div className="flex-1" />
-                    <button
-                      onClick={onAgentModeToggle}
-                      className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
-                        agentMode === 'copilot'
-                          ? 'bg-green-600 text-white border-green-600'
-                          : 'bg-[var(--pf-v6-global--primary-color--100,#0066cc)] text-white border-[var(--pf-v6-global--primary-color--100,#0066cc)]'
-                      }`}
-                      title={copilotAvailable ? 'Toggle between Copilot and Assisted modes' : 'Start workspace with COPILOT_MODE=true to enable Copilot'}
-                    >
-                      {agentMode === 'copilot' ? '🤖 Copilot' : '🔧 Assisted'}
-                      {copilotAvailable && <span className="ml-1">●</span>}
-                    </button>
-                  </div>
-
-                  {/* Context Files */}
-                  <div className="px-4 pb-1">
-                    <FileContextSelector
-                      openFiles={openFiles}
-                      selectedContext={contextFiles}
-                      onContextChange={onContextChange}
-                    />
-                  </div>
-
-                  {/* Model selector row */}
-                  <div className="flex items-center gap-1 px-4 pb-1">
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Bot size={12} />
-                      <ChatbotHeaderSelectorDropdown
-                        value={selectedModelLabel}
-                        onSelect={handleModelSelect}
-                      >
-                        <DropdownList>
-                          <DropdownItem value="__default__" key="default">
-                            ⭐ {getModelLabel(null)}
-                          </DropdownItem>
-                          {llmOptions.map((opt) => (
-                            <DropdownItem value={opt.id} key={opt.id}>
-                              {opt.label}
-                            </DropdownItem>
+                  <div className="px-4 pb-2">
+                    <div className="rounded-xl border border-border/80 bg-background/95 p-2.5 shadow-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <ModeToggleGroup
+                          type="single"
+                          value={primaryChatMode}
+                          aria-label="Primary chat modes"
+                          variant="pill"
+                          size="pill"
+                          className="rounded-full bg-muted/70 p-0.5"
+                        >
+                          {PRIMARY_CHAT_MODES.map((mode) => (
+                            <ModeToggleGroupItem
+                              key={mode.value}
+                              value={mode.value}
+                              aria-label={mode.label}
+                              onClick={() => onChatModeChange(mode.value)}
+                              title={mode.description}
+                            >
+                              {mode.label}
+                            </ModeToggleGroupItem>
                           ))}
-                        </DropdownList>
-                      </ChatbotHeaderSelectorDropdown>
-                    </div>
-                  </div>
+                        </ModeToggleGroup>
+                        <div className="ml-auto flex items-center gap-2">
+                          <Dropdown
+                            isOpen={isMoreMenuOpen}
+                            onSelect={() => setIsMoreMenuOpen(false)}
+                            toggle={(toggleRef) => (
+                              <MenuToggle
+                                ref={toggleRef}
+                                isExpanded={isMoreMenuOpen}
+                                onClick={() => setIsMoreMenuOpen((prev) => !prev)}
+                                variant="plainText"
+                                size="sm"
+                                className="h-8 rounded-full border border-input bg-muted/70 px-3 text-xs font-medium text-foreground hover:bg-background"
+                              >
+                                More
+                              </MenuToggle>
+                            )}
+                            popperProps={{ position: 'end' }}
+                          >
+                            <DropdownList>
+                              <DropdownItem onClick={() => setIsPersonaDialogOpen(true)}>
+                                {selectedPersona ? `Persona: ${selectedPersona.name}` : 'Choose persona'}
+                              </DropdownItem>
+                              {selectedPersona && (
+                                <DropdownItem onClick={() => handlePersonaChoice(null)}>
+                                  Clear persona
+                                </DropdownItem>
+                              )}
+                              <DropdownItem onClick={() => onChatModeChange('deep')}>
+                                Deep reasoning
+                              </DropdownItem>
+                            </DropdownList>
+                          </Dropdown>
+                        </div>
+                      </div>
 
-                  <div className="flex items-center gap-1 px-1">
-                    <div className="flex-1">
-                      <MessageBar
-                        onSendMessage={handlePFSend}
-                        hasMicrophoneButton
-                        hasStopButton={isStreaming}
-                        handleStopButton={onStopStreaming ? () => onStopStreaming() : undefined}
-                        isSendButtonDisabled={isLoading}
-                        placeholder="Ask about your code…"
-                      />
+                      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span>{activeModeDescription}</span>
+                        {isStreaming && <span className="font-medium text-[var(--pf-v6-global--primary-color--100,#0066cc)]">AI is thinking…</span>}
+                      </div>
+
+                      {(openFiles.length > 0 || contextFiles.length > 0) && (
+                        <div className="mt-2">
+                          <FileContextSelector
+                            openFiles={openFiles}
+                            selectedContext={contextFiles}
+                            onContextChange={onContextChange}
+                          />
+                        </div>
+                      )}
+
+                      <div className="mt-2 flex items-center gap-1.5 px-1">
+                        <div className="flex-1">
+                          <MessageBar
+                            onSendMessage={handlePFSend}
+                            hasMicrophoneButton
+                            hasStopButton={isStreaming}
+                            handleStopButton={onStopStreaming ? () => onStopStreaming() : undefined}
+                            isSendButtonDisabled={isLoading}
+                            placeholder="Ask about your code…"
+                          />
+                        </div>
+                        <Button
+                          variant="plain"
+                          size="sm"
+                          icon={<Wrench size={16} />}
+                          aria-label="Tool selector"
+                          onClick={() => onToolSelectorDialogOpenChange(true)}
+                        />
+                        <Button
+                          variant="plain"
+                          size="sm"
+                          icon={<Settings size={16} />}
+                          aria-label="Chat settings"
+                          onClick={() => onSettingsOpenChange(true)}
+                        />
+                      </div>
                     </div>
-                    <Button
-                      variant="plain"
-                      icon={<Wrench size={16} />}
-                      aria-label="Tool selector"
-                      onClick={() => onToolSelectorDialogOpenChange(true)}
-                    />
-                    <Button
-                      variant="plain"
-                      icon={<Settings size={16} />}
-                      aria-label="Chat settings"
-                      onClick={() => onSettingsOpenChange(true)}
-                    />
                   </div>
                   <ChatbotFootnote
                     label="AI may make mistakes. Verify important information."
                   />
                 </ChatbotFooter>
-              )}
+              </div>
+
+              <Dialog open={isUtilityDialogOpen} onOpenChange={setIsUtilityDialogOpen}>
+                <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden">
+                  <DialogHeader>
+                    <DialogTitle>Workspace notes</DialogTitle>
+                    <DialogDescription>Review the working summary, saved memory, and agent task list without leaving the conversation.</DialogDescription>
+                  </DialogHeader>
+                  <Tabs activeKey={activeUtilityTab} onSelect={(_e, key) => setActiveUtilityTab(String(key) as UtilityDialogTab)}>
+                    <Tab eventKey="summary" title={<TabTitleText>Summary</TabTitleText>}>
+                      <div className="space-y-4 mt-4 max-h-[55vh] overflow-y-auto pr-1">
+                        <Card>
+                          <CardBody>
+                            <CardTitle>Chat Summary</CardTitle>
+                            <TextArea
+                              value={chatSummary}
+                              onChange={(_, value) => onSummaryChange(value)}
+                              placeholder="Capture the current direction and decisions from this session."
+                              resizeOrientation="vertical"
+                              className="min-h-32"
+                            />
+                            <Flex className="mt-3" gap={{ default: 'gapSm' }}>
+                              <Button variant="secondary" onClick={onRegenerateSummary} isDisabled={!currentSessionId}>
+                                Regenerate Summary
+                              </Button>
+                            </Flex>
+                          </CardBody>
+                        </Card>
+                      </div>
+                    </Tab>
+                    <Tab eventKey="memory" title={<TabTitleText>Memory</TabTitleText>}>
+                      <div className="space-y-4 mt-4 max-h-[55vh] overflow-y-auto pr-1">
+                        <Card>
+                          <CardBody>
+                            <CardTitle>Session Memory</CardTitle>
+                            <p className="text-sm text-muted-foreground mb-4">
+                              Store useful context and constraints for this conversation.
+                            </p>
+                            {memoryItems.length > 0 ? (
+                              <div className="space-y-3">
+                                {memoryItems.map((item, idx) => (
+                                  <Flex key={idx} gap={{ default: 'gapSm' }} alignItems={{ default: 'alignItemsFlexStart' }}>
+                                    <TextArea
+                                      value={item}
+                                      onChange={(_, value) => onEditMemory(idx, value)}
+                                      placeholder="Edit memory item…"
+                                      resizeOrientation="vertical"
+                                      className="flex-1 min-h-16 text-sm"
+                                    />
+                                    <Button
+                                      variant="plain"
+                                      icon={<TrashIcon />}
+                                      onClick={() => onDeleteMemory(idx)}
+                                      aria-label="Delete memory item"
+                                    />
+                                  </Flex>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="py-8 text-center text-muted-foreground">
+                                <p>No memory items yet.</p>
+                                <p className="text-xs mt-1">Add memory to preserve useful context for later turns.</p>
+                              </div>
+                            )}
+                            <Flex className="mt-4" gap={{ default: 'gapSm' }}>
+                              <Button variant="secondary" onClick={onAddMemory}>
+                                Add Memory Item
+                              </Button>
+                              {memoryItems.length > 0 && (
+                                <Button variant="plain" onClick={onClearAllMemory} className="text-red-600 hover:text-red-700">
+                                  Clear All
+                                </Button>
+                              )}
+                            </Flex>
+                          </CardBody>
+                        </Card>
+                      </div>
+                    </Tab>
+                    <Tab eventKey="agent-todos" title={<TabTitleText>Tasks</TabTitleText>}>
+                      <div className="space-y-4 mt-4 max-h-[55vh] overflow-y-auto pr-1">
+                        <Card>
+                          <CardBody>
+                            <CardTitle>Agent Tasks</CardTitle>
+                            {agentTodos.length > 0 ? (
+                              <div className="space-y-3">
+                                {agentTodos.map((task, idx) => (
+                                  <Flex key={idx} gap={{ default: 'gapSm' }} alignItems={{ default: 'alignItemsCenter' }}>
+                                    <div className="flex-1">
+                                      <Flex gap={{ default: 'gapSm' }} alignItems={{ default: 'alignItemsCenter' }}>
+                                        {task.status === 'pending' && <Clock className="w-4 h-4 text-yellow-500" />}
+                                        {task.status === 'in_progress' && <Spinner size="sm" />}
+                                        {task.status === 'completed' && <CheckCircle className="w-4 h-4 text-green-500" />}
+                                        {task.status === 'failed' && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                                        <span className="flex-1">{typeof task.description === 'string' ? task.description : String(task.description)}</span>
+                                      </Flex>
+                                      {task.details && (
+                                        <span className="text-sm text-muted-foreground mt-1 ml-6">
+                                          {typeof task.details === 'string' ? task.details : JSON.stringify(task.details)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </Flex>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-muted-foreground">No agent tasks yet.</p>
+                            )}
+                          </CardBody>
+                        </Card>
+                      </div>
+                    </Tab>
+                  </Tabs>
+                </DialogContent>
+              </Dialog>
+
+              <Dialog open={isPersonaDialogOpen} onOpenChange={setIsPersonaDialogOpen}>
+                <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Choose a persona</DialogTitle>
+                    <DialogDescription>Select a persona to shape how the assistant responds in persona mode.</DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-3 py-2">
+                    {personas.length > 0 ? (
+                      personas.map((persona) => (
+                        <button
+                          key={persona.id}
+                          type="button"
+                          onClick={() => handlePersonaChoice(persona.id)}
+                          className={`rounded-lg border p-3 text-left transition-colors ${
+                            selectedPersonaId === persona.id ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/40'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="font-medium text-foreground">{persona.name}</p>
+                              {persona.description && (
+                                <p className="mt-1 text-sm text-muted-foreground">{persona.description}</p>
+                              )}
+                            </div>
+                            {selectedPersonaId === persona.id && <PFLabel color="green">Active</PFLabel>}
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No personas are available for this workspace yet.</p>
+                    )}
+                  </div>
+                  <Flex justifyContent={{ default: 'justifyContentSpaceBetween' }}>
+                    <Button variant="secondary" onClick={() => handlePersonaChoice(null)}>
+                      Clear persona
+                    </Button>
+                    <Button variant="link" onClick={() => setIsPersonaDialogOpen(false)}>
+                      Close
+                    </Button>
+                  </Flex>
+                </DialogContent>
+              </Dialog>
 
               <Dialog open={isSettingsOpen} onOpenChange={onSettingsOpenChange}>
                 <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
