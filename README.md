@@ -4,7 +4,7 @@ Project Everflow is a Vite + React landing page focused on safe AI vibecoding fo
 
 ## Docker Compose
 
-This repo now includes separate Compose files for local development and production-style serving.
+This repo now includes separate Compose files and separate container build files for local development and production-style serving.
 
 Development:
 
@@ -12,7 +12,7 @@ Development:
 docker compose -f container-compose.dev.yml up --build
 ```
 
-The app will be available at `http://localhost:8080` with Vite hot reload.
+The development stack builds from `Containerfile.dev`, mounts the repo into the container, installs dependencies with `npm ci`, and serves the app at `http://localhost:8080` with Vite hot reload.
 
 Production-style runtime:
 
@@ -20,7 +20,7 @@ Production-style runtime:
 docker compose -f container-compose.prod.yml up --build -d
 ```
 
-The production container builds the site with `npm ci && npm run build` and serves the generated `dist/` directory through Nginx on `http://localhost`.
+The production stack builds from `Containerfile.prod` and serves the generated `dist/` directory through Nginx on `http://localhost`. The root `Dockerfile` remains available as the same production build path for direct `docker build` usage.
 
 ## Local setup
 
