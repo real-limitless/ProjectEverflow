@@ -142,14 +142,14 @@ META = {'HTTP_AUTHORIZATION': f'Bearer {token}'}
 4. Remove the hardcoded admin bootstrap password and require explicit secure provisioning for privileged accounts.
 
 ### Short-term (Medium)
-2. Make Django production-safe by default: no fallback secret key, no default `DEBUG=True`, and no wildcard `ALLOWED_HOSTS`.
-3. Replace token / header `print()` statements with structured, redacted logging.
-4. Repair `get_git_status`, remove unreachable code, and either wire up or delete `analyze_stream`.
+5. Make Django production-safe by default: no fallback secret key, no default `DEBUG=True`, and no wildcard `ALLOWED_HOSTS`.
+6. Replace token / header `print()` statements with structured, redacted logging.
+7. Repair `get_git_status`, remove unreachable code, and either wire up or delete `analyze_stream`.
 
 ### Long-term (Architectural / Low priority)
-3. Break up `api/views.py`, centralize proxy/auth/token handling, and converge duplicate worker / workspace helper logic into shared utilities.
-4. Add automated coverage for workspace file APIs, proxy auth flows, ASGI WebSocket handling, and agent command execution boundaries.
-5. Review the LangGraph/agent subsystem for a stricter tool-execution contract that never hands raw shell strings to the runtime.
+8. Break up `api/views.py`, centralize proxy/auth/token handling, and converge duplicate worker / workspace helper logic into shared utilities.
+9. Add automated coverage for workspace file APIs, proxy auth flows, ASGI WebSocket handling, and agent command execution boundaries.
+10. Review the LangGraph/agent subsystem for a stricter tool-execution contract that never hands raw shell strings to the runtime.
 
 ## 9. Conclusion & Next Steps
 This backend has a solid Django/DRF foundation, but the infrastructure-oriented code paths introduce materially higher risk than the standard API layer. The combination of path traversal, shell injection opportunities, and URL-based token handling is sufficient to rate the current backend as **Critical** from a real-world attack-surface perspective.
