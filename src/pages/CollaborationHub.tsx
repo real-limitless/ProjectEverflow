@@ -401,9 +401,9 @@ const CollaborationHub = () => {
                         variant="link"
                         style={{ padding: 0 }}
                         component={Link}
-                        to={`/my-applications/edit/${project.name}`}
+                        to={project.organization ? `/organizations/${project.organization.id}/projects/${project.id}` : '/organizations'}
                       >
-                        View Project
+                        Open Project
                       </Button>
                     </div>
                   </CardBody>

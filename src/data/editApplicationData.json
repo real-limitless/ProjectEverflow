@@ -12,7 +12,7 @@
     "src/App.tsx": "// Sample App.tsx content\nimport React from \"react\";\n\nfunction App() {\n  return <div>Hello World</div>;\n}",
     "src/index.tsx": "// Sample index.tsx\nimport React from \"react\";\nimport ReactDOM from \"react-dom\";\nimport App from \"./App\";",
     "package.json": "{\n  \"name\": \"my-app\",\n  \"version\": \"1.0.0\"\n}",
-    "README.md": "# My Application\n\nThis is a sample application."
+    "README.md": "# My Project\n\nThis is a sample project."
   },
   "defaultMcpServers": [
     {

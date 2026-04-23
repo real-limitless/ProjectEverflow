@@ -1,20 +1,87 @@
 from rest_framework import serializers
-from .models import User, Team, Project, ProjectTemplate, ChangeRequest, Approval, ComplianceCheck, ComplianceTemplate, ProjectAssignment, Discussion, DiscussionReply, MarketplaceItem, MarketplaceCategory, ChatbotPersona, ChatbotTemplate, ChatSession, ChatMessage, Issue, IssueReply, Workflow, WorkflowExecution, LLMProvider
+from .models import User, Team, Organization, OrganizationMembership, Project, Environment, App, Deployment, ProjectTemplate, ChangeRequest, Approval, ComplianceCheck, ComplianceTemplate, ProjectAssignment, Discussion, DiscussionReply, MarketplaceItem, MarketplaceCategory, ChatbotPersona, ChatbotTemplate, ChatSession, ChatMessage, Issue, IssueReply, Workflow, WorkflowExecution, LLMProvider
 from .models import ProjectPod, ProjectService, ProjectTool, ToolExecution, WorkspaceResourceTier
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'bio', 'avatar', 'teams', 'email_notifications', 'dark_mode', 'default_llm_model']
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'is_staff', 'bio', 'avatar', 'teams', 'email_notifications', 'dark_mode', 'default_llm_model']
         read_only_fields = ['id', 'username', 'role', 'teams']  # Users can't change these directly
 
+
+class OrganizationMembershipSerializer(serializers.ModelSerializer):
+    organization = serializers.PrimaryKeyRelatedField(read_only=True)
+    organization_id = serializers.PrimaryKeyRelatedField(source='organization', queryset=Organization.objects.all(), write_only=True, required=False)
+    organization_name = serializers.CharField(source='organization.name', read_only=True)
+    user = UserSerializer(read_only=True)
+    user_id = serializers.PrimaryKeyRelatedField(source='user', queryset=User.objects.all(), write_only=True, required=False)
+
+    class Meta:
+        model = OrganizationMembership
+        fields = [
+            'id',
+            'organization',
+            'organization_id',
+            'organization_name',
+            'user',
+            'user_id',
+            'role',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'organization', 'organization_name', 'user', 'created_at', 'updated_at']
+
+
+class OrganizationSerializer(serializers.ModelSerializer):
+    owner = UserSerializer(read_only=True)
+    memberships = OrganizationMembershipSerializer(many=True, read_only=True)
+    member_count = serializers.SerializerMethodField()
+    project_count = serializers.SerializerMethodField()
+    user_role = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Organization
+        fields = [
+            'id',
+            'name',
+            'slug',
+            'description',
+            'owner',
+            'memberships',
+            'member_count',
+            'project_count',
+            'user_role',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'slug', 'owner', 'memberships', 'member_count', 'project_count', 'user_role', 'created_at', 'updated_at']
+
+    def get_member_count(self, obj):
+        return obj.memberships.count()
+
+    def get_project_count(self, obj):
+        return obj.projects.count()
+
+    def get_user_role(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+        membership = obj.memberships.filter(user=request.user).first()
+        if membership:
+            return membership.role
+        if obj.owner_id == request.user.id:
+            return 'owner'
+        return None
+
 class TeamSerializer(serializers.ModelSerializer):
+    organization = OrganizationSerializer(read_only=True)
+    organization_id = serializers.PrimaryKeyRelatedField(source='organization', queryset=Organization.objects.all(), write_only=True, required=False, allow_null=True)
     members = UserSerializer(many=True, read_only=True)
     member_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Team
-        fields = ['id', 'name', 'description', 'members', 'member_count', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'description', 'organization', 'organization_id', 'members', 'member_count', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def get_member_count(self, obj):
@@ -24,6 +91,8 @@ class ProjectSerializer(serializers.ModelSerializer):
     owner = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
     contributors = UserSerializer(many=True, read_only=True)
     team = TeamSerializer(read_only=True)
+    organization = OrganizationSerializer(read_only=True)
+    organization_id = serializers.PrimaryKeyRelatedField(source='organization', queryset=Organization.objects.all(), write_only=True, required=False, allow_null=True)
 
     class Meta:
         model = Project
@@ -37,11 +106,134 @@ class ProjectSerializer(serializers.ModelSerializer):
         return data
 
 
+class EnvironmentSerializer(serializers.ModelSerializer):
+    project = serializers.PrimaryKeyRelatedField(read_only=True)
+    project_id = serializers.PrimaryKeyRelatedField(source='project', queryset=Project.objects.all(), write_only=True)
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    organization_id = serializers.IntegerField(source='project.organization_id', read_only=True)
+    created_by = UserSerializer(read_only=True)
+    app_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Environment
+        fields = [
+            'id',
+            'project',
+            'project_id',
+            'project_name',
+            'organization_id',
+            'name',
+            'slug',
+            'description',
+            'environment_type',
+            'workspace_image',
+            'workspace_size',
+            'workspace_mode',
+            'domain',
+            'is_primary',
+            'created_by',
+            'app_count',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'slug', 'project', 'project_name', 'organization_id', 'created_by', 'app_count', 'created_at', 'updated_at']
+
+    def get_app_count(self, obj):
+        return obj.apps.count()
+
+
+class AppSerializer(serializers.ModelSerializer):
+    environment = serializers.PrimaryKeyRelatedField(read_only=True)
+    environment_id = serializers.PrimaryKeyRelatedField(source='environment', queryset=Environment.objects.all(), write_only=True)
+    environment_name = serializers.CharField(source='environment.name', read_only=True)
+    project_id = serializers.IntegerField(source='environment.project_id', read_only=True)
+    created_by = UserSerializer(read_only=True)
+    service_count = serializers.SerializerMethodField()
+    latest_deployment = serializers.SerializerMethodField()
+
+    class Meta:
+        model = App
+        fields = [
+            'id',
+            'environment',
+            'environment_id',
+            'environment_name',
+            'project_id',
+            'name',
+            'slug',
+            'description',
+            'source_type',
+            'repository_url',
+            'compose_path',
+            'status',
+            'config',
+            'created_by',
+            'service_count',
+            'latest_deployment',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'slug', 'environment', 'environment_name', 'project_id', 'created_by', 'service_count', 'latest_deployment', 'created_at', 'updated_at']
+
+    def get_service_count(self, obj):
+        return obj.services.count()
+
+    def get_latest_deployment(self, obj):
+        latest = obj.deployments.order_by('-created_at').first()
+        if not latest:
+            return None
+        return {
+            'id': latest.id,
+            'version': latest.version,
+            'status': latest.status,
+            'created_at': latest.created_at,
+        }
+
+
+class DeploymentSerializer(serializers.ModelSerializer):
+    environment = serializers.PrimaryKeyRelatedField(read_only=True)
+    environment_name = serializers.CharField(source='environment.name', read_only=True)
+    app = serializers.PrimaryKeyRelatedField(read_only=True)
+    app_id = serializers.PrimaryKeyRelatedField(source='app', queryset=App.objects.all(), write_only=True)
+    app_name = serializers.CharField(source='app.name', read_only=True)
+    deployed_by = UserSerializer(read_only=True)
+    rollback_of = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = Deployment
+        fields = [
+            'id',
+            'environment',
+            'environment_name',
+            'app',
+            'app_id',
+            'app_name',
+            'version',
+            'status',
+            'trigger_type',
+            'deployed_by',
+            'source_ref',
+            'compose_path',
+            'notes',
+            'config_snapshot',
+            'service_snapshot',
+            'rollback_of',
+            'started_at',
+            'completed_at',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'environment', 'environment_name', 'app', 'app_name', 'deployed_by', 'rollback_of', 'created_at', 'updated_at']
+
+
 class ProjectServiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProjectService
         fields = '__all__'
         read_only_fields = ['id', 'pod', 'created_at', 'updated_at']
+        extra_kwargs = {
+            'container_name': {'required': False, 'allow_blank': True},
+        }
 
 
 class ProjectPodSerializer(serializers.ModelSerializer):
@@ -49,7 +241,7 @@ class ProjectPodSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProjectPod
-        fields = ['id', 'project', 'pod_name', 'status', 'config', 'last_synced_at', 'created_at', 'updated_at', 'services']
+        fields = ['id', 'project', 'environment', 'pod_name', 'status', 'config', 'last_synced_at', 'created_at', 'updated_at', 'services']
         read_only_fields = ['id', 'project', 'pod_name', 'created_at', 'updated_at', 'services']
 
 

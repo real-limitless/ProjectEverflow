@@ -55,6 +55,7 @@ export interface User {
   first_name: string;
   last_name: string;
   role: string;
+  is_staff?: boolean;
   bio?: string;
   avatar?: string;
   teams?: any[];
@@ -67,8 +68,35 @@ export interface Team {
   id: number;
   name: string;
   description: string;
+  organization?: Organization | null;
   members: User[];
   member_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type OrganizationRole = 'owner' | 'admin' | 'member';
+
+export interface OrganizationMembership {
+  id: number;
+  organization: number;
+  organization_name: string;
+  user: User;
+  role: OrganizationRole;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Organization {
+  id: number;
+  name: string;
+  slug: string;
+  description: string;
+  owner: User;
+  memberships: OrganizationMembership[];
+  member_count: number;
+  project_count: number;
+  user_role?: OrganizationRole | null;
   created_at: string;
   updated_at: string;
 }
@@ -81,6 +109,7 @@ export interface Project {
   owner: User;
   contributors: User[];
   team?: Team;
+  organization?: Organization | null;
   status: 'draft' | 'in_development' | 'awaiting_approval' | 'published';
   // Workspace configuration
   workspace_image?: 'fedora:43' | 'registry.access.redhat.com/ubi9/ubi';
@@ -95,11 +124,79 @@ export interface Project {
   updated_at: string;
 }
 
+export interface ProjectEnvironment {
+  id: number;
+  project: number;
+  project_name: string;
+  organization_id?: number | null;
+  name: string;
+  slug: string;
+  description: string;
+  environment_type: 'production' | 'development' | 'staging' | 'demo' | 'custom';
+  workspace_image: 'fedora:43' | 'registry.access.redhat.com/ubi9/ubi';
+  workspace_size: string;
+  workspace_mode: 'personal' | 'shared';
+  domain?: string;
+  is_primary: boolean;
+  created_by?: User | null;
+  app_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectApp {
+  id: number;
+  environment: number;
+  environment_name: string;
+  project_id: number;
+  name: string;
+  slug: string;
+  description: string;
+  source_type: 'compose' | 'container' | 'repository' | 'custom';
+  repository_url?: string;
+  compose_path?: string;
+  status: 'draft' | 'active' | 'archived';
+  config: Record<string, any>;
+  created_by?: User | null;
+  service_count: number;
+  latest_deployment?: {
+    id: number;
+    version: string;
+    status: string;
+    created_at: string;
+  } | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeploymentRecord {
+  id: number;
+  environment: number;
+  environment_name: string;
+  app: number;
+  app_name: string;
+  version: string;
+  status: 'pending' | 'in_progress' | 'succeeded' | 'failed' | 'rolled_back';
+  trigger_type: 'manual' | 'push' | 'rollback';
+  deployed_by?: User | null;
+  source_ref?: string;
+  compose_path?: string;
+  notes?: string;
+  config_snapshot: Record<string, any>;
+  service_snapshot: Record<string, any>;
+  rollback_of?: number | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type ChatMode = 'ask' | 'plan' | 'agent' | 'persona' | 'deep';
 
 export interface ProjectService {
   id: number;
   pod: number;
+  app?: number | null;
   name: string;
   service_type: 'backend' | 'frontend' | 'tooling' | 'custom' | 'ai-workspace';
   image: string;
@@ -442,17 +539,23 @@ const getAuthHeaders = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
+interface ApiCallOptions extends RequestInit {
+  skipAuth?: boolean;
+}
+
 // Generic API call function
 export const apiCall = async <T = any>(
   endpoint: string,
-  options: RequestInit = {}
+  options: ApiCallOptions = {}
 ): Promise<ApiResponse<T>> => {
+  const { skipAuth = false, ...requestOptions } = options;
+
   const makeRequest = async (token?: string): Promise<ApiResponse<T>> => {
     try {
       const headers = {
         'Content-Type': 'application/json',
-        ...getAuthHeaders(),
-        ...options.headers,
+        ...(skipAuth ? {} : getAuthHeaders()),
+        ...requestOptions.headers,
       };
 
       if (token) {
@@ -461,13 +564,13 @@ export const apiCall = async <T = any>(
 
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         headers,
-        ...options,
+        ...requestOptions,
       });
 
       if (response.ok) {
         const data = await response.json();
         return { data };
-      } else if (response.status === 401) {
+      } else if (response.status === 401 && !skipAuth) {
         // Token expired, try to refresh
         if (isRefreshing) {
           // Queue the request if refresh is in progress
@@ -511,6 +614,7 @@ export const login = async (username: string, password: string): Promise<ApiResp
   return apiCall<LoginResponse>('/auth/login/', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
+    skipAuth: true,
   });
 };
 
@@ -572,6 +676,60 @@ export const getTeams = async (): Promise<ApiResponse<Team[]>> => {
   return apiCall<Team[]>('/teams/');
 };
 
+// Organization functions
+export const getOrganizations = async (): Promise<ApiResponse<Organization[]>> => {
+  return apiCall<Organization[]>('/organizations/');
+};
+
+export const getOrganization = async (id: number): Promise<ApiResponse<Organization>> => {
+  return apiCall<Organization>(`/organizations/${id}/`);
+};
+
+export const createOrganization = async (data: {
+  name: string;
+  description?: string;
+}): Promise<ApiResponse<Organization>> => {
+  return apiCall<Organization>('/organizations/', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const updateOrganization = async (id: number, data: Partial<Organization>): Promise<ApiResponse<Organization>> => {
+  return apiCall<Organization>(`/organizations/${id}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deleteOrganization = async (id: number): Promise<ApiResponse<null>> => {
+  return apiCall<null>(`/organizations/${id}/`, {
+    method: 'DELETE',
+  });
+};
+
+export const getOrganizationProjects = async (organizationId: number): Promise<ApiResponse<Project[]>> => {
+  return apiCall<Project[]>(`/organizations/${organizationId}/projects/`);
+};
+
+export const addOrganizationMember = async (
+  organizationId: number,
+  userId: number,
+  role: Exclude<OrganizationRole, 'owner'> = 'member'
+): Promise<ApiResponse<OrganizationMembership>> => {
+  return apiCall<OrganizationMembership>(`/organizations/${organizationId}/add_member/`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, role }),
+  });
+};
+
+export const removeOrganizationMember = async (organizationId: number, userId: number): Promise<ApiResponse<null>> => {
+  return apiCall<null>(`/organizations/${organizationId}/remove_member/`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+};
+
 export const getTeam = async (id: number): Promise<ApiResponse<Team>> => {
   return apiCall<Team>(`/teams/${id}/`);
 };
@@ -615,6 +773,127 @@ export const getProjects = async (): Promise<ApiResponse<Project[]>> => {
   return apiCall<Project[]>('/projects/');
 };
 
+export const getEnvironments = async (projectId?: number): Promise<ApiResponse<ProjectEnvironment[]>> => {
+  const query = projectId ? `?project=${projectId}` : '';
+  return apiCall<ProjectEnvironment[]>(`/environments/${query}`);
+};
+
+export const createEnvironment = async (data: {
+  project_id: number;
+  name: string;
+  description?: string;
+  environment_type?: ProjectEnvironment['environment_type'];
+  workspace_image?: ProjectEnvironment['workspace_image'];
+  workspace_size?: string;
+  workspace_mode?: ProjectEnvironment['workspace_mode'];
+  domain?: string;
+  is_primary?: boolean;
+}): Promise<ApiResponse<ProjectEnvironment>> => {
+  return apiCall<ProjectEnvironment>('/environments/', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const updateEnvironment = async (id: number, data: Partial<ProjectEnvironment>): Promise<ApiResponse<ProjectEnvironment>> => {
+  return apiCall<ProjectEnvironment>(`/environments/${id}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deleteEnvironment = async (id: number): Promise<ApiResponse<null>> => {
+  return apiCall<null>(`/environments/${id}/`, {
+    method: 'DELETE',
+  });
+};
+
+export const getApps = async (environmentId?: number): Promise<ApiResponse<ProjectApp[]>> => {
+  const query = environmentId ? `?environment=${environmentId}` : '';
+  return apiCall<ProjectApp[]>(`/apps/${query}`);
+};
+
+export const createApp = async (data: {
+  environment_id: number;
+  name: string;
+  description?: string;
+  source_type?: ProjectApp['source_type'];
+  repository_url?: string;
+  compose_path?: string;
+  status?: ProjectApp['status'];
+  config?: Record<string, any>;
+}): Promise<ApiResponse<ProjectApp>> => {
+  return apiCall<ProjectApp>('/apps/', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const updateApp = async (id: number, data: Partial<ProjectApp>): Promise<ApiResponse<ProjectApp>> => {
+  return apiCall<ProjectApp>(`/apps/${id}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deleteApp = async (id: number): Promise<ApiResponse<null>> => {
+  return apiCall<null>(`/apps/${id}/`, {
+    method: 'DELETE',
+  });
+};
+
+export const getDeployments = async (params?: {
+  environmentId?: number;
+  appId?: number;
+}): Promise<ApiResponse<DeploymentRecord[]>> => {
+  const searchParams = new URLSearchParams();
+  if (params?.environmentId) {
+    searchParams.set('environment', String(params.environmentId));
+  }
+  if (params?.appId) {
+    searchParams.set('app', String(params.appId));
+  }
+  const query = searchParams.toString();
+  return apiCall<DeploymentRecord[]>(`/deployments/${query ? `?${query}` : ''}`);
+};
+
+export const createDeployment = async (data: {
+  app_id: number;
+  version: string;
+  status?: DeploymentRecord['status'];
+  trigger_type?: DeploymentRecord['trigger_type'];
+  source_ref?: string;
+  compose_path?: string;
+  notes?: string;
+  config_snapshot?: Record<string, any>;
+  service_snapshot?: Record<string, any>;
+}): Promise<ApiResponse<DeploymentRecord>> => {
+  return apiCall<DeploymentRecord>('/deployments/', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const updateDeployment = async (id: number, data: Partial<DeploymentRecord>): Promise<ApiResponse<DeploymentRecord>> => {
+  return apiCall<DeploymentRecord>(`/deployments/${id}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deleteDeployment = async (id: number): Promise<ApiResponse<null>> => {
+  return apiCall<null>(`/deployments/${id}/`, {
+    method: 'DELETE',
+  });
+};
+
+export const rollbackDeployment = async (deploymentId: number, notes?: string): Promise<ApiResponse<DeploymentRecord>> => {
+  return apiCall<DeploymentRecord>(`/deployments/${deploymentId}/rollback/`, {
+    method: 'POST',
+    body: JSON.stringify({ notes }),
+  });
+};
+
 export const ensureProjectPod = async (projectId: number): Promise<ApiResponse<ProjectPod>> => {
   return apiCall<ProjectPod>('/project-pods/ensure/', {
     method: 'POST',
@@ -622,9 +901,59 @@ export const ensureProjectPod = async (projectId: number): Promise<ApiResponse<P
   });
 };
 
-export const getProjectServices = async (projectId: number, serviceType?: string): Promise<ApiResponse<ProjectService[]>> => {
-  const url = `/project-services/?project=${projectId}${serviceType ? `&service_type=${serviceType}` : ''}`;
-  return apiCall<ProjectService[]>(url);
+export const getProjectServices = async (
+  projectId: number,
+  serviceTypeOrOptions?: string | { serviceType?: string; appId?: number }
+): Promise<ApiResponse<ProjectService[]>> => {
+  const serviceType = typeof serviceTypeOrOptions === 'string'
+    ? serviceTypeOrOptions
+    : serviceTypeOrOptions?.serviceType;
+  const appId = typeof serviceTypeOrOptions === 'string'
+    ? undefined
+    : serviceTypeOrOptions?.appId;
+  const searchParams = new URLSearchParams({ project: String(projectId) });
+
+  if (serviceType) {
+    searchParams.set('service_type', serviceType);
+  }
+
+  if (appId !== undefined) {
+    searchParams.set('app', String(appId));
+  }
+
+  return apiCall<ProjectService[]>(`/project-services/?${searchParams.toString()}`);
+};
+
+export const createProjectService = async (data: {
+  app: number;
+  name: string;
+  service_type?: ProjectService['service_type'];
+  image: string;
+  container_name?: string;
+  ports?: string[];
+  environment?: Record<string, string>;
+  config?: Record<string, any>;
+  autostart?: boolean;
+  cpu_limit?: string;
+  memory_limit?: string;
+}): Promise<ApiResponse<ProjectService>> => {
+  return apiCall<ProjectService>('/project-services/', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const updateProjectServiceRecord = async (id: number, data: Partial<ProjectService>): Promise<ApiResponse<ProjectService>> => {
+  return apiCall<ProjectService>(`/project-services/${id}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deleteProjectServiceRecord = async (id: number): Promise<ApiResponse<null>> => {
+  return apiCall<null>(`/project-services/${id}/`, {
+    method: 'DELETE',
+  });
 };
 
 export const stopWorkspace = async (projectId: number): Promise<ApiResponse<{ status: string; message: string }>> => {
@@ -714,6 +1043,7 @@ export const createProject = async (data: {
   name: string;
   description: string;
   owner: number;
+  organization_id?: number;
   team?: number;
   contributors?: number[];
   creation_method?: 'blank' | 'clone' | 'chat' | 'template';

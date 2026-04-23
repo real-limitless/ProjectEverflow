@@ -52,7 +52,7 @@ const JoinApplication = () => {
               <div>
                 <CardTitle>Join Application Team</CardTitle>
                 <CardDescription>
-                  Submit a request to collaborate on this application
+                  Submit a request to collaborate on this project
                 </CardDescription>
               </div>
             </div>
@@ -69,7 +69,7 @@ const JoinApplication = () => {
                         Contributor
                       </Label>
                       <p className="text-sm text-muted-foreground">
-                        Contribute code, features, and bug fixes to the application
+                        Contribute code, features, and bug fixes to the project
                       </p>
                     </div>
                   </div>
@@ -91,7 +91,7 @@ const JoinApplication = () => {
                         Viewer
                       </Label>
                       <p className="text-sm text-muted-foreground">
-                        View the application and its development progress
+                        View the project and its development progress
                       </p>
                     </div>
                   </div>

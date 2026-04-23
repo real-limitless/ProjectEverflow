@@ -122,7 +122,7 @@ const ViewApplication = () => {
       >
         <PageSection variant="default">
           <div style={{ textAlign: 'center', padding: '2rem' }}>
-            Loading application details...
+            Loading project details...
           </div>
         </PageSection>
       </Page>
@@ -151,7 +151,7 @@ const ViewApplication = () => {
             </Badge>
           </div>
           <p style={{ fontSize: '1rem', color: 'var(--pf-v6-global--Color--200)' }}>
-            Application Details
+            Project Details
           </p>
         </div>
 
@@ -166,8 +166,8 @@ const ViewApplication = () => {
             <GitFork className="h-4 w-4 mr-2" />
             Fork
           </Button>
-          <Button variant="default" onClick={() => navigate(`/preview/${application.id}`)}>
-            Run Application
+          <Button variant="default" onClick={() => navigate(application.organization ? `/organizations/${application.organization.id}/projects/${application.id}` : '/organizations')}>
+            Run Project
           </Button>
           {isCurrentUserOwner && (
             <AlertDialog>

@@ -15,7 +15,7 @@ import { ArrowLeftIcon } from '@patternfly/react-icons';
 import applicationFormData from '@/data/applicationFormData.json';
 
 const formSchema = z.object({
-  name: z.string().min(3, 'Application name must be at least 3 characters').max(100, 'Application name must be less than 100 characters'),
+  name: z.string().min(3, 'Project name must be at least 3 characters').max(100, 'Project name must be less than 100 characters'),
   description: z.string().min(10, 'Description must be at least 10 characters').max(500, 'Description must be less than 500 characters'),
   version: z.string().regex(/^\d+\.\d+\.\d+$/, 'Version must be in format X.Y.Z (e.g., 1.0.0)'),
   category: z.string().min(1, 'Please select a category'),
@@ -42,9 +42,9 @@ const CreateApplication = () => {
   });
 
   const onSubmit = (data: FormValues) => {
-    console.log('Application data:', data);
+    console.log('Project data:', data);
     toast({
-      title: "Application Created!",
+      title: "Project Created!",
       description: `${data.name} has been successfully created and submitted for review.`,
     });
     navigate('/my-applications');
@@ -65,9 +65,9 @@ const CreateApplication = () => {
           >
             Back to My Projects
           </Button>
-          <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '0.5rem' }}>Create New Application</h1>
+          <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '0.5rem' }}>Create New Project</h1>
           <p style={{ fontSize: '1rem', color: 'var(--pf-v6-global--Color--200)' }}>
-            Publish your AI application to the Everflow platform.
+            Publish your AI project to the Everflow platform.
           </p>
         </div>
 
@@ -80,12 +80,12 @@ const CreateApplication = () => {
                   name="name"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Application Name *</FormLabel>
+                      <FormLabel>Project Name *</FormLabel>
                       <FormControl>
                         <Input placeholder="e.g., Smart Code Assistant" {...field} />
                       </FormControl>
                       <FormDescription>
-                        Choose a unique name for your application
+                        Choose a unique name for your project
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -100,13 +100,13 @@ const CreateApplication = () => {
                       <FormLabel>Description *</FormLabel>
                       <FormControl>
                         <Textarea 
-                          placeholder="Describe what your application does and its key features..."
+                          placeholder="Describe what your project does and its key features..."
                           className="min-h-[120px]"
                           {...field}
                         />
                       </FormControl>
                       <FormDescription>
-                        Provide a clear description of your application's purpose and functionality
+                        Provide a clear description of your project's purpose and functionality
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -151,7 +151,7 @@ const CreateApplication = () => {
                         </SelectContent>
                       </Select>
                       <FormDescription>
-                        Select the primary category for your application
+                        Select the primary category for your project
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -196,7 +196,7 @@ const CreateApplication = () => {
                         </SelectContent>
                       </Select>
                       <FormDescription>
-                        What AI technology or framework does your application use?
+                        What AI technology or framework does your project use?
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -205,7 +205,7 @@ const CreateApplication = () => {
 
                 <div style={{ display: 'flex', gap: '1rem', paddingTop: '1rem' }}>
                   <Button type="submit" variant="primary">
-                    Create Application
+                    Create Project
                   </Button>
                   <Button variant="secondary" onClick={() => navigate('/my-applications')}>
                     Cancel

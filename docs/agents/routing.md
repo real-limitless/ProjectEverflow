@@ -3,8 +3,9 @@
 **Main Routes**:
 - `/login` - User authentication
 - `/` - Main dashboard (home page)
-- `/my-teamspace` - Browse all team projects
-- `/my-applications` - My owned/contributed projects
+- `/organizations` - Primary organization hierarchy shell
+- `/my-teamspace` - Organization-first workspace directory
+- `/my-applications` - My projects grouped by organization
 - `/approval-queue` - PR review system
 - `/safety-compliance` - Compliance check library
 - `/marketplace` - Published applications
@@ -19,13 +20,19 @@
 - `/admin/workspace-settings` - Workspace tier configuration
 - `/admin/llm-usage` - LLM usage analytics & reporting
 
-**Teamspace Routes**:
+**Organization Hierarchy Routes**:
+- `/organizations/:orgId` - Organization summary
+- `/organizations/:orgId/projects/:projectId` - Project detail
+- `/organizations/:orgId/projects/:projectId/environments/:environmentId` - Environment detail
+- `/organizations/:orgId/projects/:projectId/environments/:environmentId/apps/:appId` - App detail and deployment history
+
+**Legacy Teamspace Compatibility Routes**:
 - `/my-teamspace/view/:appName` - View project details
 - `/my-teamspace/join/:appName` - Request to join project
 - `/my-teamspace/fork/:appName` - Fork project
 - `/my-teamspace/create` - Create new team project
 
-**Application Management Routes**:
+**Legacy Application Management Routes**:
 - `/my-applications/create` - Create new application
 - `/my-applications/edit/:appName` - Edit application
 - `/my-applications/run/:appName` - Preview/run application
@@ -65,6 +72,14 @@
 - `POST /api/projects/:id/update_workspace_image/` - Update workspace to latest image
 - `POST /api/projects/:id/reset_workspace/` - Reset workspace volume to clean state
 - `GET/POST /api/project-templates/` - Project template management
+
+*Organization Hierarchy*:
+- `GET/POST /api/organizations/` - Organization CRUD operations
+- `GET/POST /api/organization-memberships/` - Organization membership management
+- `GET/POST /api/environments/` - Environment CRUD operations
+- `GET/POST /api/apps/` - App CRUD operations
+- `GET/POST /api/deployments/` - Deployment CRUD operations
+- `POST /api/deployments/:id/rollback/` - Create rollback deployment record
 
 *Change Requests*:
 - `GET/POST /api/change-requests/` - Change request CRUD

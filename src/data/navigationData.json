@@ -8,8 +8,8 @@
     },
     {
       "id": 1,
-      "title": "My Teamspace",
-      "path": "/my-teamspace",
+      "title": "Organizations",
+      "path": "/organizations",
       "icon": "FolderIcon"
     },
     {

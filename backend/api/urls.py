@@ -13,8 +13,13 @@ from . import copilot_proxy_views
 
 router = DefaultRouter()
 router.register(r'users', views.UserViewSet)
+router.register(r'organizations', views.OrganizationViewSet, basename='organizations')
+router.register(r'organization-memberships', views.OrganizationMembershipViewSet, basename='organization-memberships')
 router.register(r'teams', views.TeamViewSet)
 router.register(r'projects', views.ProjectViewSet)
+router.register(r'environments', views.EnvironmentViewSet, basename='environments')
+router.register(r'apps', views.AppViewSet, basename='apps')
+router.register(r'deployments', views.DeploymentViewSet, basename='deployments')
 router.register(r'project-templates', views.ProjectTemplateViewSet)
 router.register(r'change-requests', views.ChangeRequestViewSet)
 router.register(r'compliance-checks', views.ComplianceCheckViewSet)

@@ -3,7 +3,7 @@ from django.utils import timezone
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from asgiref.sync import sync_to_async, async_to_sync
 import os
 import asyncio
@@ -18,7 +18,12 @@ from .compose_parser import load_compose_from_text, build_service_specs
 from .models import (
     User,
     Team,
+    Organization,
+    OrganizationMembership,
     Project,
+    Environment,
+    App,
+    Deployment,
     ProjectTemplate,
     ChangeRequest,
     Approval,
@@ -47,7 +52,12 @@ from .models import (
 from .serializers import (
     UserSerializer,
     TeamSerializer,
+    OrganizationSerializer,
+    OrganizationMembershipSerializer,
     ProjectSerializer,
+    EnvironmentSerializer,
+    AppSerializer,
+    DeploymentSerializer,
     ProjectTemplateSerializer,
     ChangeRequestSerializer,
     ApprovalSerializer,
@@ -78,19 +88,88 @@ from .podman_orchestrator import PodmanOrchestrator
 from .orchestrator import OrchestratorError, ServiceSpec
 
 
-def user_has_project_access(user, project: Project) -> bool:
-    if not project:
+ORGANIZATION_ROLE_ORDER = {
+    'member': 1,
+    'admin': 2,
+    'owner': 3,
+}
+
+
+def user_is_global_admin(user) -> bool:
+    return bool(user and user.is_authenticated and (user.is_staff or user.role == 'admin'))
+
+
+def get_accessible_projects_queryset(user):
+    if not user or not user.is_authenticated:
+        return Project.objects.none()
+    if user_is_global_admin(user):
+        return Project.objects.all()
+
+    user_teams = Team.objects.filter(members=user)
+    return Project.objects.filter(
+        models.Q(owner=user) |
+        models.Q(contributors=user) |
+        models.Q(team__in=user_teams) |
+        models.Q(organization__memberships__user=user)
+    ).distinct()
+
+
+def user_has_organization_access(user, organization: Organization, minimum_role: str = 'member') -> bool:
+    if not organization:
         return False
-    # Check owner - handle both ID and object cases
+    if user_is_global_admin(user):
+        return True
+
+    membership = organization.memberships.filter(user=user).first()
+    if not membership:
+        return False
+
+    return ORGANIZATION_ROLE_ORDER.get(membership.role, 0) >= ORGANIZATION_ROLE_ORDER.get(minimum_role, 0)
+
+
+def user_can_manage_project(user, project: Project) -> bool:
+    if not user or not user.is_authenticated or not project:
+        return False
+    if user_is_global_admin(user):
+        return True
+
     owner_id = project.owner.id if hasattr(project.owner, 'id') else project.owner_id
     if owner_id == user.id:
         return True
     if project.contributors.filter(id=user.id).exists():
         return True
-    # Check if user is in the project's team
     if project.team and project.team.members.filter(id=user.id).exists():
         return True
+    if project.organization and user_has_organization_access(user, project.organization, minimum_role='admin'):
+        return True
     return False
+
+
+def user_has_project_access(user, project: Project) -> bool:
+    if not project:
+        return False
+    if user_can_manage_project(user, project):
+        return True
+    if project.organization and user_has_organization_access(user, project.organization):
+        return True
+    return False
+
+
+def build_service_container_name(project_id: int, service_name: str) -> str:
+    normalized_name = ''.join(
+        character.lower() if character.isalnum() else '-'
+        for character in (service_name or 'service')
+    ).strip('-') or 'service'
+    base_name = f"proj-{project_id}-{normalized_name}"[:255]
+    container_name = base_name
+    suffix = 2
+
+    while ProjectService.objects.filter(container_name=container_name).exists():
+        suffix_text = f"-{suffix}"
+        container_name = f"{base_name[:255 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+
+    return container_name
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
@@ -117,6 +196,128 @@ class UserViewSet(viewsets.ModelViewSet):
             serializer.save()
             return Response(serializer.data)
 
+
+class OrganizationViewSet(viewsets.ModelViewSet):
+    queryset = Organization.objects.all()
+    serializer_class = OrganizationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = Organization.objects.select_related('owner').prefetch_related('memberships__user')
+        if user_is_global_admin(self.request.user):
+            return queryset
+        return queryset.filter(
+            models.Q(owner=self.request.user) |
+            models.Q(memberships__user=self.request.user)
+        ).distinct()
+
+    def perform_create(self, serializer):
+        if not user_is_global_admin(self.request.user):
+            raise PermissionDenied("Only administrators can create organizations")
+
+        organization = serializer.save(owner=self.request.user)
+        OrganizationMembership.objects.get_or_create(
+            organization=organization,
+            user=self.request.user,
+            defaults={'role': 'owner'},
+        )
+
+    def perform_update(self, serializer):
+        organization = self.get_object()
+        if not user_has_organization_access(self.request.user, organization, minimum_role='admin'):
+            raise PermissionDenied("You do not have permission to manage this organization")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not user_has_organization_access(self.request.user, instance, minimum_role='owner'):
+            raise PermissionDenied("Only organization owners or global administrators can delete organizations")
+        instance.delete()
+
+    @action(detail=True, methods=['get'])
+    def members(self, request, pk=None):
+        organization = self.get_object()
+        serializer = OrganizationMembershipSerializer(
+            organization.memberships.select_related('user'),
+            many=True,
+            context={'request': request},
+        )
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def projects(self, request, pk=None):
+        organization = self.get_object()
+        queryset = get_accessible_projects_queryset(request.user).filter(organization=organization)
+        serializer = ProjectSerializer(queryset, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def add_member(self, request, pk=None):
+        organization = self.get_object()
+        if not user_has_organization_access(request.user, organization, minimum_role='admin'):
+            raise PermissionDenied("You do not have permission to manage this organization")
+
+        user_id = request.data.get('user_id')
+        role = request.data.get('role', 'member')
+        if not user_id:
+            return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if role not in {'admin', 'member'}:
+            return Response({'error': 'role must be one of: admin, member'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            member = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        membership, created = OrganizationMembership.objects.get_or_create(
+            organization=organization,
+            user=member,
+            defaults={'role': role},
+        )
+        if not created and membership.role != role:
+            membership.role = role
+            membership.save(update_fields=['role', 'updated_at'])
+
+        serializer = OrganizationMembershipSerializer(membership, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def remove_member(self, request, pk=None):
+        organization = self.get_object()
+        if not user_has_organization_access(request.user, organization, minimum_role='admin'):
+            raise PermissionDenied("You do not have permission to manage this organization")
+
+        user_id = request.data.get('user_id')
+        if not user_id:
+            return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        membership = organization.memberships.filter(user_id=user_id).first()
+        if not membership:
+            return Response({'error': 'Membership not found'}, status=status.HTTP_404_NOT_FOUND)
+        if membership.role == 'owner':
+            return Response({'error': 'Organization owner cannot be removed'}, status=status.HTTP_400_BAD_REQUEST)
+
+        membership.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class OrganizationMembershipViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = OrganizationMembership.objects.all()
+    serializer_class = OrganizationMembershipSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = OrganizationMembership.objects.select_related('organization', 'user')
+        if not user_is_global_admin(self.request.user):
+            queryset = queryset.filter(
+                models.Q(organization__owner=self.request.user) |
+                models.Q(organization__memberships__user=self.request.user)
+            ).distinct()
+
+        organization_id = self.request.query_params.get('organization')
+        if organization_id:
+            queryset = queryset.filter(organization_id=organization_id)
+        return queryset
+
 class TeamViewSet(viewsets.ModelViewSet):
     queryset = Team.objects.all()
     serializer_class = TeamSerializer
@@ -125,7 +326,11 @@ class TeamViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         # Allow all authenticated users to see all teams in the workspace
         # This enables team discovery and joining functionality
-        return Team.objects.all()
+        queryset = Team.objects.all()
+        organization_id = self.request.query_params.get('organization')
+        if organization_id:
+            queryset = queryset.filter(organization_id=organization_id)
+        return queryset
 
     @action(detail=True, methods=['post'])
     def add_member(self, request, pk=None):
@@ -165,19 +370,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
     logger = logging.getLogger(__name__)
 
     def get_queryset(self):
-        # Users can see projects they own, contribute to, or that belong to teams they're in
-        user_teams = Team.objects.filter(members=self.request.user)
-        return Project.objects.filter(
-            models.Q(owner=self.request.user) |
-            models.Q(contributors=self.request.user) |
-            models.Q(team__in=user_teams)
-        ).distinct()
+        return get_accessible_projects_queryset(self.request.user)
 
     def create(self, request, *args, **kwargs):
         """Create project and automatically provision workspace for clone method."""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        project = serializer.save()
+
+        organization = serializer.validated_data.get('organization')
+        owner = serializer.validated_data.get('owner', request.user)
+
+        if organization and not user_has_organization_access(request.user, organization, minimum_role='admin'):
+            raise PermissionDenied("You do not have permission to create projects in this organization")
+        if owner != request.user and not user_is_global_admin(request.user):
+            raise PermissionDenied("Only administrators can assign another user as project owner")
+
+        project = serializer.save(owner=owner)
         # Default provisioning status
         project.provisioning_status = 'pending'
         project.save(update_fields=['provisioning_status'])
@@ -213,9 +421,27 @@ class ProjectViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def my_projects(self, request):
         """Get projects where user is owner or contributor"""
-        queryset = self.get_queryset()
+        queryset = Project.objects.filter(
+            models.Q(owner=request.user) |
+            models.Q(contributors=request.user)
+        ).distinct()
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+    def perform_update(self, serializer):
+        project = self.get_object()
+        if not user_can_manage_project(self.request.user, project):
+            raise PermissionDenied("You do not have permission to manage this project")
+
+        organization = serializer.validated_data.get('organization', project.organization)
+        if organization and not user_has_organization_access(self.request.user, organization, minimum_role='admin'):
+            raise PermissionDenied("You do not have permission to move this project into the selected organization")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not user_can_manage_project(self.request.user, instance):
+            raise PermissionDenied("You do not have permission to delete this project")
+        instance.delete()
     
     @action(detail=True, methods=['get'])
     def provisioning_status(self, request, pk=None):
@@ -1402,15 +1628,145 @@ class WorkflowExecutionViewSet(viewsets.ModelViewSet):
         )
 
 
+class EnvironmentViewSet(viewsets.ModelViewSet):
+    queryset = Environment.objects.all()
+    serializer_class = EnvironmentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = Environment.objects.select_related('project', 'project__organization', 'created_by')
+        if not user_is_global_admin(self.request.user):
+            queryset = queryset.filter(project__in=get_accessible_projects_queryset(self.request.user))
+
+        project_id = self.request.query_params.get('project')
+        if project_id:
+            queryset = queryset.filter(project_id=project_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        project = serializer.validated_data['project']
+        if not user_can_manage_project(self.request.user, project):
+            raise PermissionDenied("You do not have permission to create environments for this project")
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        project = serializer.validated_data.get('project', self.get_object().project)
+        if not user_can_manage_project(self.request.user, project):
+            raise PermissionDenied("You do not have permission to manage this environment")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not user_can_manage_project(self.request.user, instance.project):
+            raise PermissionDenied("You do not have permission to delete this environment")
+        instance.delete()
+
+
+class AppViewSet(viewsets.ModelViewSet):
+    queryset = App.objects.all()
+    serializer_class = AppSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = App.objects.select_related('environment', 'environment__project', 'created_by')
+        if not user_is_global_admin(self.request.user):
+            queryset = queryset.filter(environment__project__in=get_accessible_projects_queryset(self.request.user))
+
+        environment_id = self.request.query_params.get('environment')
+        if environment_id:
+            queryset = queryset.filter(environment_id=environment_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        environment = serializer.validated_data['environment']
+        if not user_can_manage_project(self.request.user, environment.project):
+            raise PermissionDenied("You do not have permission to create apps in this environment")
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        environment = serializer.validated_data.get('environment', self.get_object().environment)
+        if not user_can_manage_project(self.request.user, environment.project):
+            raise PermissionDenied("You do not have permission to manage this app")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not user_can_manage_project(self.request.user, instance.environment.project):
+            raise PermissionDenied("You do not have permission to delete this app")
+        instance.delete()
+
+
+class DeploymentViewSet(viewsets.ModelViewSet):
+    queryset = Deployment.objects.all()
+    serializer_class = DeploymentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = Deployment.objects.select_related('environment', 'app', 'deployed_by', 'app__environment__project')
+        if not user_is_global_admin(self.request.user):
+            queryset = queryset.filter(environment__project__in=get_accessible_projects_queryset(self.request.user))
+
+        environment_id = self.request.query_params.get('environment')
+        if environment_id:
+            queryset = queryset.filter(environment_id=environment_id)
+
+        app_id = self.request.query_params.get('app')
+        if app_id:
+            queryset = queryset.filter(app_id=app_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        app = serializer.validated_data['app']
+        if not user_can_manage_project(self.request.user, app.environment.project):
+            raise PermissionDenied("You do not have permission to deploy this app")
+        serializer.save(deployed_by=self.request.user, environment=app.environment)
+
+    def perform_update(self, serializer):
+        deployment = self.get_object()
+        app = serializer.validated_data.get('app', deployment.app)
+        if not user_can_manage_project(self.request.user, app.environment.project):
+            raise PermissionDenied("You do not have permission to manage this deployment")
+        serializer.save(environment=app.environment)
+
+    def perform_destroy(self, instance):
+        if not user_can_manage_project(self.request.user, instance.environment.project):
+            raise PermissionDenied("You do not have permission to delete this deployment")
+        instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def rollback(self, request, pk=None):
+        deployment = self.get_object()
+        if not user_can_manage_project(request.user, deployment.environment.project):
+            raise PermissionDenied("You do not have permission to roll back this deployment")
+
+        rollback_deployment = Deployment.objects.create(
+            environment=deployment.environment,
+            app=deployment.app,
+            version=deployment.version,
+            status='rolled_back',
+            trigger_type='rollback',
+            deployed_by=request.user,
+            source_ref=deployment.source_ref,
+            compose_path=deployment.compose_path,
+            notes=request.data.get('notes', ''),
+            config_snapshot=deployment.config_snapshot,
+            service_snapshot=deployment.service_snapshot,
+            rollback_of=deployment,
+            started_at=timezone.now(),
+            completed_at=timezone.now(),
+        )
+        serializer = self.get_serializer(rollback_deployment)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
 class ProjectPodViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ProjectPodSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ProjectPod.objects.filter(
-            models.Q(project__owner=self.request.user) |
-            models.Q(project__contributors=self.request.user)
-        )
+        queryset = ProjectPod.objects.filter(project__in=get_accessible_projects_queryset(self.request.user))
+        environment_id = self.request.query_params.get('environment')
+        if environment_id:
+            queryset = queryset.filter(environment_id=environment_id)
+        return queryset
 
     @action(detail=False, methods=['post'])
     def ensure(self, request):
@@ -1436,21 +1792,21 @@ class ProjectPodViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(serializer.data)
 
 
-class ProjectServiceViewSet(viewsets.ReadOnlyModelViewSet):
+class ProjectServiceViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectServiceSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        # Users can see services for projects they own, contribute to, or that belong to teams they're in
-        user_teams = Team.objects.filter(members=self.request.user)
         queryset = ProjectService.objects.filter(
-            models.Q(pod__project__owner=self.request.user) |
-            models.Q(pod__project__contributors=self.request.user) |
-            models.Q(pod__project__team__in=user_teams)
+            pod__project__in=get_accessible_projects_queryset(self.request.user)
         ).distinct()
         project_id = self.request.query_params.get('project')
         if project_id:
             queryset = queryset.filter(pod__project_id=project_id)
+
+        app_id = self.request.query_params.get('app')
+        if app_id:
+            queryset = queryset.filter(app_id=app_id)
         
         # Filter by service_type if provided
         service_type = self.request.query_params.get('service_type')
@@ -1523,6 +1879,57 @@ class ProjectServiceViewSet(viewsets.ReadOnlyModelViewSet):
         # Re-serialize with updated data
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+    def perform_create(self, serializer):
+        app = serializer.validated_data.get('app')
+        if not app:
+            raise ValidationError({'app': 'An application is required to create a service.'})
+
+        project = app.environment.project
+        if not user_can_manage_project(self.request.user, project):
+            raise PermissionDenied('You do not have permission to create services for this project')
+
+        pod, _ = ProjectPod.objects.get_or_create(
+            project=project,
+            defaults={
+                'environment': app.environment,
+                'pod_name': f'proj-{project.id}-pod',
+                'status': 'stopped',
+            },
+        )
+
+        if app.environment_id and pod.environment_id != app.environment_id:
+            pod.environment = app.environment
+            pod.save(update_fields=['environment'])
+
+        container_name = serializer.validated_data.get('container_name') or build_service_container_name(
+            project.id,
+            serializer.validated_data.get('name', ''),
+        )
+        serializer.save(pod=pod, container_name=container_name)
+
+    def perform_update(self, serializer):
+        service = self.get_object()
+        project = service.pod.project
+
+        if not user_can_manage_project(self.request.user, project):
+            raise PermissionDenied('You do not have permission to update services for this project')
+
+        app = serializer.validated_data.get('app', service.app)
+        if app and app.environment.project_id != project.id:
+            raise ValidationError({'app': 'The selected application must belong to the same project as this service.'})
+
+        serializer.save()
+
+        if app and service.pod.environment_id != app.environment_id:
+            service.pod.environment = app.environment
+            service.pod.save(update_fields=['environment'])
+
+    def perform_destroy(self, instance):
+        project = instance.pod.project
+        if not user_can_manage_project(self.request.user, project):
+            raise PermissionDenied('You do not have permission to delete services for this project')
+        instance.delete()
     
     @action(detail=True, methods=['post'])
     def start(self, request, pk=None):

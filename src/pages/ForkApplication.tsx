@@ -40,7 +40,7 @@ const ForkApplication = () => {
       <PageSection variant="default">
         <div style={{ marginBottom: '1.5rem' }}>
 
-          <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '0.5rem' }}>Fork Application</h1>
+          <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '0.5rem' }}>Fork Project</h1>
           <p style={{ fontSize: '1rem', color: 'var(--pf-v6-global--Color--200)' }}>
             {appName}
           </p>
@@ -54,7 +54,7 @@ const ForkApplication = () => {
               <div>
                 <CardTitle>Create a Fork</CardTitle>
                 <CardDescription>
-                  Create your own copy of this application to customize and modify
+                  Create your own copy of this project to customize and modify
                 </CardDescription>
               </div>
             </div>
@@ -62,7 +62,7 @@ const ForkApplication = () => {
           <CardContent>
             <form onSubmit={handleFork} className="space-y-6">
               <div className="space-y-2">
-                <Label htmlFor="forkName">Application Name *</Label>
+                <Label htmlFor="forkName">Project Name *</Label>
                 <Input
                   id="forkName"
                   value={forkName}
@@ -71,7 +71,7 @@ const ForkApplication = () => {
                   required
                 />
                 <p className="text-sm text-muted-foreground">
-                  Choose a descriptive name for your forked application
+                  Choose a descriptive name for your forked project
                 </p>
               </div>
 
@@ -92,7 +92,7 @@ const ForkApplication = () => {
                     Make this fork public
                   </Label>
                   <p className="text-sm text-muted-foreground">
-                    Allow others in your organization to view and fork this application
+                    Allow others in your organization to view and fork this project
                   </p>
                 </div>
                 <Switch
@@ -108,14 +108,14 @@ const ForkApplication = () => {
                   <div className="text-sm space-y-1">
                     <p className="font-medium">What is a fork?</p>
                     <p className="text-muted-foreground">
-                      A fork is an independent copy of an application. You can modify it freely without affecting the original application. Your changes won't sync back to the original.
+                      A fork is an independent copy of a project. You can modify it freely without affecting the original project. Your changes won't sync back to the original.
                     </p>
                   </div>
                 </div>
               </div>
 
               <div className="bg-accent/50 rounded-lg p-4 space-y-1">
-                <p className="text-sm font-medium">Source Application</p>
+                <p className="text-sm font-medium">Source Project</p>
                 <p className="text-sm text-muted-foreground">{appName}</p>
               </div>
 

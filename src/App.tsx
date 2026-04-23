@@ -7,6 +7,12 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthGuard } from "@/components/AuthGuard";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
+import Organizations from "./pages/Organizations";
+import OrganizationsOverview from "./pages/organizations/OrganizationsOverview";
+import OrganizationDetail from "./pages/organizations/OrganizationDetail";
+import ProjectDetail from "./pages/organizations/ProjectDetail";
+import EnvironmentDetail from "./pages/organizations/EnvironmentDetail";
+import AppDetail from "./pages/organizations/AppDetail";
 import MyTeamspace from "./pages/MyTeamspace";
 import ViewApplication from "./pages/ViewApplication";
 import JoinApplication from "./pages/JoinApplication";
@@ -45,6 +51,13 @@ const App = () => (
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/" element={<AuthGuard><Dashboard /></AuthGuard>} />
+          <Route path="/organizations" element={<AuthGuard><Organizations /></AuthGuard>}>
+            <Route index element={<OrganizationsOverview />} />
+            <Route path=":orgId" element={<OrganizationDetail />} />
+            <Route path=":orgId/projects/:projectId" element={<ProjectDetail />} />
+            <Route path=":orgId/projects/:projectId/environments/:environmentId" element={<EnvironmentDetail />} />
+            <Route path=":orgId/projects/:projectId/environments/:environmentId/apps/:appId" element={<AppDetail />} />
+          </Route>
           <Route path="/my-teamspace" element={<AuthGuard><MyTeamspace /></AuthGuard>} />
           <Route path="/my-teamspace/view/:appName" element={<AuthGuard><ViewApplication /></AuthGuard>} />
           <Route path="/my-teamspace/join/:appName" element={<AuthGuard><JoinApplication /></AuthGuard>} />

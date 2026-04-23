@@ -1,20 +1,13 @@
 ## Workflows
 
-### 1. Join a Project Workflow
+### 1. Navigate the Organization Hierarchy
 ```
-1. User navigates to "My Teamspace"
-2. Browses all team projects
-3. Finds project they want to join
-4. Clicks "Join" button
-5. System sends join request to project owner
-6. Toast notification: "Join request sent to [Owner Name]"
-7. Owner receives notification
-8. Owner reviews request and approves/rejects
-9. If approved:
-   - User becomes contributor
-   - User can now see project in "My Projects"
-   - User can submit PRs
-   - User can approve other PRs
+1. User navigates to "Organizations" or "My Teamspace"
+2. Selects an organization from the hierarchy or directory view
+3. Opens a project nested under that organization
+4. Drills into environment and app routes
+5. Reviews deployment history for the selected app
+6. If needed, triggers a rollback deployment from the app detail route
 ```
 
 ### 2. Submit and Approve Change Request Workflow
@@ -72,23 +65,28 @@
 - Full control over project
 - Can approve PRs
 - Can manage contributors
-- Can approve join requests
 - Sees all PRs for their projects in Approval Queue
+
+### Organization Owner / Organization Admin
+- Can create and manage projects inside the organization
+- Can create environments and apps under organization projects
+- Can create deployment records and rollbacks for managed apps
+- Acts as the delegated administrator for organization-scoped resources
 
 ### Project Contributor
 - Works on project code
 - Can submit PRs
 - Can approve others' PRs (not own)
 - Sees all PRs for projects they contribute to in Approval Queue
-- Can request to join additional projects
 
-### Team Member (Non-Contributor)
-- Can view all team projects in "My Teamspace"
-- Can request to join projects
-- Cannot see projects in "My Projects" until they join
-- Cannot see PRs in Approval Queue
+### Organization Member
+- Can browse organizations and projects they have access to
+- Can use "My Projects" to jump to projects they own or contribute to
+- Cannot manage organization-scoped resources unless elevated to admin or owner
 
 ### Administrator
+- Can create organizations
+- Has global access across the organization hierarchy
 - Can create/edit/delete compliance checks
 - Can create/edit/delete compliance templates
 - Can assign checks/templates to any project

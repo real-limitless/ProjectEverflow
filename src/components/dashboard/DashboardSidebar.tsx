@@ -38,11 +38,15 @@ export const DashboardSidebar = ({ isOpen }: DashboardSidebarProps) => {
           <NavList>
             {navigationData.menuItems.map((item) => {
               const IconComponent = iconMap[item.icon as keyof typeof iconMap];
+              const isActive =
+                item.path === '/'
+                  ? location.pathname === item.path
+                  : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
               return (
                 <NavItem 
                   key={item.id}
                   itemId={item.id} 
-                  isActive={location.pathname === item.path}
+                  isActive={isActive}
                   icon={item.isLucide ? <LucideIconWrapper Icon={IconComponent as any} /> : <IconComponent />}
                   onClick={() => navigate(item.path)}
                 >

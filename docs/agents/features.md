@@ -75,8 +75,9 @@
 
 **Examples**:
 - **Dashboard**: "Dashboard" with LayoutDashboard icon, "Overview of your projects and activities"
-- **My Projects**: "My Projects" with Package icon, "Projects you own or contribute to..."
-- **My Teamspace**: "My Teamspace" with FolderOpen icon, "Browse and discover all projects..."
+- **Organizations**: "Organizations" with a hierarchy icon, "Manage organizations, projects, environments, apps, and deployments"
+- **My Projects**: "My Projects" with Package icon, "Projects you own or contribute to, grouped around the organization hierarchy"
+- **My Teamspace**: "My Teamspace" with FolderTree icon, "Browse accessible organizations and jump into nested project routes"
 - **Marketplace**: "Marketplace" with Store icon, "Discover and integrate AI tools..."
 - **Settings**: "Settings" with Settings icon, "Manage your account and preferences"
 

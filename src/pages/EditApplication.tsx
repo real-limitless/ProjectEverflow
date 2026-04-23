@@ -14,7 +14,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import complianceData from '@/data/complianceChecks.json';
 
@@ -36,12 +36,14 @@ import { ProjectDetailsTab } from '@/components/project/ProjectDetailsTab';
 import { FileManagerTab } from '@/components/project/FileManagerTab';
 import { RepositoryGitTab } from '@/components/project/RepositoryGitTab';
 import { SafetyComplianceTab } from '@/components/project/SafetyComplianceTab';
+import { ServiceCreationWizard } from '../components/project/ServiceCreationWizard';
 import { WebtopTab } from '@/components/project/WebtopTab';
 import { ContainerLogsTab } from '@/components/project/ContainerLogsTab';
 import { BranchChatPanel } from '@/components/project/BranchChatPanel';
+import { LegacyHierarchyRouteRedirect } from '../components/project/LegacyHierarchyRouteRedirect';
 import { WorkspaceOrchestration } from '@/components/project/WorkspaceOrchestration';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getProjects, Project, getProjectServices, ProjectService, startService, stopService, restartService, killService, startAllServices, stopAllServices } from '@/lib/api';
+import { deleteProjectServiceRecord, getProjects, Project, getProjectServices, ProjectService, restartService, startAllServices, startService, stopAllServices, stopService, updateProjectServiceRecord, killService } from '@/lib/api';
 import { CheckCircle, AlertTriangle, XCircle, FileText, Layers, ListChecks, Target, Shield, Play, Square, ChevronDown, Terminal, RefreshCcw, ExternalLink, RotateCcw, Loader2, MessageSquare } from 'lucide-react';
 
 
@@ -52,26 +54,65 @@ interface Message {
 
 interface ServicesTabProps {
   project: Project;
+  appId?: number;
 }
 
-const ServicesTab: React.FC<ServicesTabProps> = ({ project }) => {
-  const storageKey = `livePreviewEnabled:${project.id}`;
+const ServicesTab: React.FC<ServicesTabProps> = ({ project, appId }) => {
+  const storageKey = `livePreviewEnabled:${project.id}:${appId ?? 'all'}`;
+  const servicesQueryKey = ['project-services', project.id, appId ?? 'all'];
   const queryClient = useQueryClient();
   const { data: services = [], isLoading, isError } = useQuery({
-    queryKey: ['project-services', project.id],
-    queryFn: () => getProjectServices(project.id),
+    queryKey: servicesQueryKey,
+    queryFn: () => getProjectServices(project.id, appId !== undefined ? { appId } : undefined),
     select: (response) => response?.data || [],
     refetchInterval: 5000,
   });
 
   const [enabledIds, setEnabledIds] = useState<number[] | null>(null);
   const [expandedService, setExpandedService] = useState<number | null>(null);
+  const [isCreateServiceOpen, setIsCreateServiceOpen] = useState(false);
+  const [editingServiceId, setEditingServiceId] = useState<number | null>(null);
+  const [deletingServiceId, setDeletingServiceId] = useState<number | null>(null);
+  const [serviceForm, setServiceForm] = useState({
+    name: '',
+    image: '',
+    serviceType: 'custom' as ProjectService['service_type'],
+    ports: '',
+    environmentText: '',
+    autostart: false,
+    cpuLimit: '',
+    memoryLimit: '',
+  });
+
+  const editingService = services.find((service: ProjectService) => service.id === editingServiceId) ?? null;
+  const deletingService = services.find((service: ProjectService) => service.id === deletingServiceId) ?? null;
+
+  const parseEnvironmentText = (environmentText: string) => {
+    return environmentText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .reduce<Record<string, string>>((result, line) => {
+        const separatorIndex = line.indexOf('=');
+        if (separatorIndex === -1) {
+          return result;
+        }
+        const key = line.slice(0, separatorIndex).trim();
+        const value = line.slice(separatorIndex + 1).trim();
+        if (key) {
+          result[key] = value;
+        }
+        return result;
+      }, {});
+  };
+
+  const parsePorts = (portsText: string) => portsText.split(',').map((value) => value.trim()).filter(Boolean);
 
   // Service action mutations
   const startServiceMutation = useMutation({
     mutationFn: (serviceId: number) => startService(project.id, serviceId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project-services', project.id] });
+      queryClient.invalidateQueries({ queryKey: servicesQueryKey });
       toast({ title: 'Service Starting', description: 'Service is being started...' });
     },
     onError: () => toast({ title: 'Error', description: 'Failed to start service', variant: 'destructive' }),
@@ -80,7 +121,7 @@ const ServicesTab: React.FC<ServicesTabProps> = ({ project }) => {
   const stopServiceMutation = useMutation({
     mutationFn: (serviceId: number) => stopService(serviceId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project-services', project.id] });
+      queryClient.invalidateQueries({ queryKey: servicesQueryKey });
       toast({ title: 'Service Stopped', description: 'Service has been stopped.' });
     },
     onError: () => toast({ title: 'Error', description: 'Failed to stop service', variant: 'destructive' }),
@@ -89,7 +130,7 @@ const ServicesTab: React.FC<ServicesTabProps> = ({ project }) => {
   const restartServiceMutation = useMutation({
     mutationFn: (serviceId: number) => restartService(serviceId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project-services', project.id] });
+      queryClient.invalidateQueries({ queryKey: servicesQueryKey });
       toast({ title: 'Service Restarting', description: 'Service is being restarted...' });
     },
     onError: () => toast({ title: 'Error', description: 'Failed to restart service', variant: 'destructive' }),
@@ -98,11 +139,57 @@ const ServicesTab: React.FC<ServicesTabProps> = ({ project }) => {
   const killServiceMutation = useMutation({
     mutationFn: (serviceId: number) => killService(serviceId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project-services', project.id] });
+      queryClient.invalidateQueries({ queryKey: servicesQueryKey });
       toast({ title: 'Service Killed', description: 'Service has been forcefully stopped.' });
     },
     onError: () => toast({ title: 'Error', description: 'Failed to kill service', variant: 'destructive' }),
   });
+
+  const updateServiceMutation = useMutation({
+    mutationFn: (payload: { id: number; data: Partial<ProjectService> }) => updateProjectServiceRecord(payload.id, payload.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: servicesQueryKey });
+      toast({ title: 'Service updated', description: 'Service configuration was saved.' });
+      setEditingServiceId(null);
+    },
+    onError: (error) => {
+      toast({
+        title: 'Update failed',
+        description: error instanceof Error ? error.message : 'Unable to update the service.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const deleteServiceMutation = useMutation({
+    mutationFn: (serviceId: number) => deleteProjectServiceRecord(serviceId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: servicesQueryKey });
+      toast({ title: 'Service deleted', description: 'The service was removed from this application.' });
+      setDeletingServiceId(null);
+    },
+    onError: (error) => {
+      toast({
+        title: 'Delete failed',
+        description: error instanceof Error ? error.message : 'Unable to delete the service.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const openEditServiceDialog = (service: ProjectService) => {
+    setServiceForm({
+      name: service.name,
+      image: service.image,
+      serviceType: service.service_type,
+      ports: service.ports.join(', '),
+      environmentText: Object.entries(service.environment || {}).map(([key, value]) => `${key}=${value}`).join('\n'),
+      autostart: Boolean(service.autostart),
+      cpuLimit: service.cpu_limit || '',
+      memoryLimit: service.memory_limit || '',
+    });
+    setEditingServiceId(service.id);
+  };
 
   useEffect(() => {
     if (!services.length) return;
@@ -161,8 +248,14 @@ const ServicesTab: React.FC<ServicesTabProps> = ({ project }) => {
       return (
         <div className="text-center py-12 space-y-3">
           <Layers className="h-10 w-10 mx-auto text-muted-foreground" />
-          <p className="text-muted-foreground">No services found for this project.</p>
-          <p className="text-sm text-muted-foreground">Provision your workspace in the AI Editor or Webtop tab to create services.</p>
+          <p className="text-muted-foreground">
+            {appId !== undefined ? 'No services found for this application.' : 'No services found for this project.'}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {appId !== undefined
+              ? 'Create the first service for this application to define its runtime.'
+              : 'Provision your workspace in the AI Editor or Webtop tab to create services.'}
+          </p>
         </div>
       );
     }
@@ -346,6 +439,19 @@ const ServicesTab: React.FC<ServicesTabProps> = ({ project }) => {
                       </span>
                       Rebuild
                     </Button>
+                    {appId !== undefined ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => openEditServiceDialog(service)}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', minWidth: 'auto' }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <Settings style={{ width: '0.875rem', height: '0.875rem' }} />
+                        </span>
+                        Edit
+                      </Button>
+                    ) : null}
                     <Button
                       variant="danger"
                       size="sm"
@@ -358,6 +464,19 @@ const ServicesTab: React.FC<ServicesTabProps> = ({ project }) => {
                       </span>
                       Force Kill
                     </Button>
+                    {appId !== undefined ? (
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => setDeletingServiceId(service.id)}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', minWidth: 'auto' }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <Trash2 style={{ width: '0.875rem', height: '0.875rem' }} />
+                        </span>
+                        Delete
+                      </Button>
+                    ) : null}
                     <div className="ml-auto flex items-center gap-2">
                       <Checkbox
                         id={`live-preview-${service.id}`}
@@ -374,7 +493,7 @@ const ServicesTab: React.FC<ServicesTabProps> = ({ project }) => {
         })}
       </div>
     );
-  }, [services, isLoading, isError, enabledIds, expandedService, startServiceMutation, stopServiceMutation, restartServiceMutation, killServiceMutation]);
+  }, [services, isLoading, isError, enabledIds, expandedService, startServiceMutation, stopServiceMutation, restartServiceMutation, killServiceMutation, appId]);
 
   return (
     <div className="space-y-4">
@@ -382,43 +501,226 @@ const ServicesTab: React.FC<ServicesTabProps> = ({ project }) => {
         <div>
           <h2 className="text-lg font-semibold">Container Services</h2>
           <p className="text-sm text-muted-foreground">
-            Manage your project's containerized services. Start, stop, restart, or access terminals.
+            {appId !== undefined
+              ? 'Manage services attached to this application. Start, stop, restart, or inspect the runtime here.'
+              : "Manage your project's containerized services. Start, stop, restart, or access terminals."}
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              startAllServices(project.id);
-              queryClient.invalidateQueries({ queryKey: ['project-services', project.id] });
-              toast({ title: 'Starting All', description: 'Starting all services...' });
-            }}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
-          >
-            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-              <Play style={{ width: '0.875rem', height: '0.875rem' }} />
-            </span>
-            Start All
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              stopAllServices(project.id);
-              queryClient.invalidateQueries({ queryKey: ['project-services', project.id] });
-              toast({ title: 'Stopping All', description: 'Stopping all services...' });
-            }}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
-          >
-            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-              <Square style={{ width: '0.875rem', height: '0.875rem' }} />
-            </span>
-            Stop All
-          </Button>
+          {appId !== undefined ? (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setIsCreateServiceOpen(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+            >
+              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                <Plus style={{ width: '0.875rem', height: '0.875rem' }} />
+              </span>
+              Create Service
+            </Button>
+          ) : null}
+          {appId === undefined ? (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  startAllServices(project.id);
+                  queryClient.invalidateQueries({ queryKey: servicesQueryKey });
+                  toast({ title: 'Starting All', description: 'Starting all services...' });
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                  <Play style={{ width: '0.875rem', height: '0.875rem' }} />
+                </span>
+                Start All
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  stopAllServices(project.id);
+                  queryClient.invalidateQueries({ queryKey: servicesQueryKey });
+                  toast({ title: 'Stopping All', description: 'Stopping all services...' });
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                  <Square style={{ width: '0.875rem', height: '0.875rem' }} />
+                </span>
+                Stop All
+              </Button>
+            </>
+          ) : null}
         </div>
       </div>
       {renderList}
+
+      {appId !== undefined ? (
+        <ServiceCreationWizard
+          appId={appId}
+          isOpen={isCreateServiceOpen}
+          onOpenChange={setIsCreateServiceOpen}
+          onCreated={() => {
+            queryClient.invalidateQueries({ queryKey: servicesQueryKey });
+          }}
+        />
+      ) : null}
+
+      <Dialog
+        open={editingServiceId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingServiceId(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit service</DialogTitle>
+            <DialogDescription>Update the runtime configuration for this application service.</DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-2 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="service-name">Name</Label>
+              <Input
+                id="service-name"
+                value={serviceForm.name}
+                onChange={(event) => setServiceForm((current) => ({ ...current, name: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="service-image">Container image</Label>
+              <Input
+                id="service-image"
+                value={serviceForm.image}
+                onChange={(event) => setServiceForm((current) => ({ ...current, image: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="service-type">Service type</Label>
+              <Input
+                id="service-type"
+                value={serviceForm.serviceType}
+                onChange={(event) => setServiceForm((current) => ({ ...current, serviceType: event.target.value as ProjectService['service_type'] }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="service-ports">Ports</Label>
+              <Input
+                id="service-ports"
+                placeholder="3000:3000, 9229:9229"
+                value={serviceForm.ports}
+                onChange={(event) => setServiceForm((current) => ({ ...current, ports: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="service-cpu-limit">CPU limit</Label>
+              <Input
+                id="service-cpu-limit"
+                value={serviceForm.cpuLimit}
+                onChange={(event) => setServiceForm((current) => ({ ...current, cpuLimit: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="service-memory-limit">Memory limit</Label>
+              <Input
+                id="service-memory-limit"
+                value={serviceForm.memoryLimit}
+                onChange={(event) => setServiceForm((current) => ({ ...current, memoryLimit: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="service-environment">Environment variables</Label>
+              <Textarea
+                id="service-environment"
+                rows={6}
+                placeholder="KEY=VALUE"
+                value={serviceForm.environmentText}
+                onChange={(event) => setServiceForm((current) => ({ ...current, environmentText: event.target.value }))}
+              />
+            </div>
+            <div className="flex items-center gap-3 rounded-lg border border-border/70 bg-muted/20 px-4 py-3 md:col-span-2">
+              <Checkbox
+                id="service-autostart-edit"
+                checked={serviceForm.autostart}
+                onCheckedChange={(checked) => setServiceForm((current) => ({ ...current, autostart: checked === true }))}
+              />
+              <Label htmlFor="service-autostart-edit">Start this service automatically when the workspace starts</Label>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setEditingServiceId(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (!editingService) {
+                  return;
+                }
+                updateServiceMutation.mutate({
+                  id: editingService.id,
+                  data: {
+                    name: serviceForm.name.trim(),
+                    image: serviceForm.image.trim(),
+                    service_type: serviceForm.serviceType,
+                    ports: parsePorts(serviceForm.ports),
+                    environment: parseEnvironmentText(serviceForm.environmentText),
+                    autostart: serviceForm.autostart,
+                    cpu_limit: serviceForm.cpuLimit.trim() || null,
+                    memory_limit: serviceForm.memoryLimit.trim() || null,
+                  },
+                });
+              }}
+              isDisabled={updateServiceMutation.isPending || !serviceForm.name.trim() || !serviceForm.image.trim()}
+            >
+              {updateServiceMutation.isPending ? 'Saving...' : 'Save changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deletingServiceId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeletingServiceId(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Delete service</DialogTitle>
+            <DialogDescription>
+              {deletingService
+                ? `Remove ${deletingService.name} from this application. This does not automatically remove external data volumes.`
+                : 'Remove this service from the application.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setDeletingServiceId(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (deletingServiceId !== null) {
+                  deleteServiceMutation.mutate(deletingServiceId);
+                }
+              }}
+              isDisabled={deleteServiceMutation.isPending}
+            >
+              {deleteServiceMutation.isPending ? 'Deleting...' : 'Delete service'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
@@ -432,10 +734,30 @@ const applicationFormSchema = z.object({
   repositoryUrl: z.string().url({ message: "Must be a valid URL" }).optional().or(z.literal('')),
 });
 
-const EditApplication = () => {
-  const { appName } = useParams();
-  const navigate = useNavigate();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+interface ApplicationWorkspaceProps {
+  project: Project | null;
+  applicationName?: string;
+  serviceAppId?: number;
+  headerTitle?: string;
+  subtitle?: string;
+  backLink?: {
+    label: string;
+    onClick: () => void;
+  };
+  embedded?: boolean;
+}
+
+export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
+  project,
+  applicationName,
+  serviceAppId,
+  headerTitle = 'Application workspace',
+  subtitle,
+  backLink,
+  embedded = false,
+}) => {
+  const workspaceLabel = applicationName || project?.name || 'Application';
+  const projectIdOrName = project ? project.id.toString() : applicationName || '';
   const [isChatCollapsed, setIsChatCollapsed] = useState(false);
   const [isBranchChatOpen, setIsBranchChatOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string | number>(0);
@@ -443,7 +765,7 @@ const EditApplication = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: `Hello! I'm your AI assistant for editing "${appName}". How can I help you modify your project today?`
+      content: `Hello! I'm your AI assistant for editing "${workspaceLabel}". How can I help you modify your project today?`
     }
   ]);
   const [input, setInput] = useState('');
@@ -473,17 +795,6 @@ const EditApplication = () => {
   const [chatSummary, setChatSummary] = useState('');
   const [todoOutline, setTodoOutline] = useState<string[]>([]); // New state for todo outline as array of strings
 
-  // Fetch project data
-  const { data: projectsResponse, isLoading: projectsLoading } = useQuery({
-    queryKey: ['projects'],
-    queryFn: getProjects,
-  });
-
-  const projects = projectsResponse?.data || [];
-
-  // Find the project
-  const project = projects.find(p => p.name === appName || p.id.toString() === appName);
-
   // Simulated compliance data (replace with actual data source)
   const complianceChecks = [
     { id: '1', name: 'Security Scan', status: 'Pass', remediation: 'No issues found.' },
@@ -508,7 +819,7 @@ const EditApplication = () => {
   const form = useForm<z.infer<typeof applicationFormSchema>>({
     resolver: zodResolver(applicationFormSchema),
     defaultValues: {
-      name: appName || '',
+      name: workspaceLabel,
       version: '1.0.0',
       description: '',
       category: '',
@@ -779,49 +1090,20 @@ const EditApplication = () => {
   };
 
   return (
-    <Page 
-      masthead={<DashboardHeader onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />} 
-      sidebar={<DashboardSidebar isOpen={isSidebarOpen} />}
-      className="edit-app-page"
-    >
-      <style>{`
-        .edit-app-page .pf-v6-c-page__main {
-          overflow: hidden !important;
-          display: flex !important;
-          flex-direction: column !important;
-        }
-        .edit-app-page .pf-v6-c-page__main-container {
-          align-self: stretch !important;
-          max-height: 100% !important;
-        }
-        .edit-app-page .pf-v6-c-page__main-section.pf-m-fill {
-          min-height: 0 !important;
-          overflow: hidden !important;
-        }
-        .edit-app-page .pf-v6-c-page__main-section.pf-m-fill > .pf-v6-c-page__main-body {
-          display: flex !important;
-          flex: 1 !important;
-          min-height: 0 !important;
-          overflow: hidden !important;
-          flex-direction: row !important;
-        }
-      `}</style>
+    <>
       <PageSection variant="default" style={{ paddingTop: 0, paddingBottom: 0 }}>
         <div style={{ 
-          position: 'sticky', 
+          position: embedded ? 'relative' : 'sticky', 
           top: 0, 
           zIndex: 100, 
           backgroundColor: 'var(--pf-v6-global--BackgroundColor--100)',
           borderBottom: '1px solid var(--pf-v6-global--BorderColor--100)',
-          paddingTop: '1rem'
+          paddingTop: embedded ? 0 : '1rem'
         }}>
           <CompactPageHeader
-            title="Edit Project"
-            subtitle={project?.name || appName || ''}
-            backLink={{
-              label: 'Back to My Projects',
-              onClick: () => navigate('/my-applications'),
-            }}
+            title={headerTitle}
+            subtitle={subtitle || workspaceLabel}
+            backLink={backLink}
             actions={
               <div className="flex items-center gap-2">
                 {project && <WorkspaceOrchestration project={project} />}
@@ -856,7 +1138,7 @@ const EditApplication = () => {
         )}
 
         {activeTab === 2 && (
-          project ? <ServicesTab project={project} /> : <div>Loading services...</div>
+          project ? <ServicesTab project={project} appId={serviceAppId} /> : <div>Loading services...</div>
         )}
 
         {activeTab === 3 && (
@@ -864,23 +1146,23 @@ const EditApplication = () => {
         )}
 
         {activeTab === 4 && (
-          project ? <RepositoryGitTab projectName={appName} projectId={project.id} /> : <div>Loading repository...</div>
+          project ? <RepositoryGitTab projectName={project.name} projectId={project.id} /> : <div>Loading repository...</div>
         )}
 
         {activeTab === 5 && (
-          <IssuesTab projectId={appName} projectName={appName} />
+          <IssuesTab projectId={projectIdOrName} projectName={project?.name || workspaceLabel} />
         )}
 
         {activeTab === 6 && (
-          <PullRequestsTab projectId={appName} projectName={appName} />
+          <PullRequestsTab projectId={projectIdOrName} projectName={project?.name || workspaceLabel} />
         )}
 
         {activeTab === 7 && (
-          <WorkflowTab projectId={appName} projectName={appName} />
+          <WorkflowTab projectId={projectIdOrName} projectName={project?.name || workspaceLabel} />
         )}
 
         {activeTab === 8 && (
-          <SafetyComplianceTab projectName={appName} />
+          <SafetyComplianceTab projectName={project?.name || workspaceLabel} />
         )}
 
         {activeTab === 9 && (
@@ -901,7 +1183,17 @@ const EditApplication = () => {
           />
         )}
       </PageSection>
-    </Page>
+    </>
+  );
+};
+
+const EditApplication = () => {
+  const { appName } = useParams();
+  return (
+    <LegacyHierarchyRouteRedirect
+      projectIdentifier={appName}
+      message="Redirecting to the canonical application workspace..."
+    />
   );
 };
 

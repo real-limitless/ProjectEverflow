@@ -1,391 +1,300 @@
-import { useState } from 'react';
-import { Page, PageSection, Card, CardBody, CardTitle, Button } from '@patternfly/react-core';
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Button, Page, PageSection } from '@patternfly/react-core';
+import { ArrowRight, FolderKanban, Package, Search, ShieldCheck, Users } from 'lucide-react';
+
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardSidebar } from '@/components/dashboard/DashboardSidebar';
-import { Table, Thead, Tr, Th, Tbody, Td } from '@patternfly/react-table';
-import { useNavigate } from 'react-router-dom';
-import { PlusCircleIcon, PlayIcon, EditIcon, CodeBranchIcon, DownloadIcon } from '@patternfly/react-icons';
-import { toast } from '@/hooks/use-toast';
-import { Package, CheckCircle2, Clock, Users, Search, BarChart3, Share2, MoreVertical, Loader2, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Card as ShadcnCard, CardContent, CardHeader, CardTitle as ShadcnCardTitle } from '@/components/ui/card';
-import { useQuery } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
-import { getMyProjects, Project } from '@/lib/api';
-import CreateWorkflowDialog from '@/components/CreateWorkflowDialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { getCurrentUser, getMyProjects, Project } from '@/lib/api';
+
+type RoleFilter = 'all' | 'owner' | 'contributor';
+type StatusFilter = 'all' | Project['status'];
+type SortMode = 'recent' | 'name' | 'organization';
+
+const statusVariantMap: Record<Project['status'], 'secondary' | 'warning' | 'info' | 'success'> = {
+  draft: 'secondary',
+  in_development: 'info',
+  awaiting_approval: 'warning',
+  published: 'success',
+};
 
 const MyApplications = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<string>('recent');
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [sortBy, setSortBy] = useState<SortMode>('recent');
   const navigate = useNavigate();
 
-  // Fetch user's projects
+  const { data: currentUserResponse } = useQuery({
+    queryKey: ['currentUser'],
+    queryFn: getCurrentUser,
+  });
+
   const { data: projectsResponse, isLoading, error } = useQuery({
     queryKey: ['myProjects'],
     queryFn: getMyProjects,
   });
 
-  const projects = projectsResponse?.data || [];
+  const currentUser = currentUserResponse?.data;
+  const projects = projectsResponse?.data ?? [];
 
-  // Transform projects to match the expected interface
-  const applications = projects.map(project => ({
-    id: project.id,
-    name: project.name,
-    version: '1.0.0', // Default version
-    status: project.status === 'published' ? 'Live' :
-            project.status === 'awaiting_approval' ? 'Under Review' :
-            project.status === 'in_development' ? 'In Development' : 'Draft',
-    users: project.contributors.length + 1,
-    approvalDate: project.status === 'published' ? new Date(project.updated_at).toLocaleDateString() : 'Pending',
-    role: 'Owner',
-    activePRs: 0,
-    description: project.description,
-  }));
+  const filteredProjects = useMemo(() => {
+    const normalizedSearch = searchQuery.trim().toLowerCase();
 
-  // Filter and sort applications
-  const filteredApplications = applications
-    .filter(app => {
-      const matchesSearch = app.name.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesRole = statusFilter === 'all' || app.role === statusFilter;
-      return matchesSearch && matchesRole;
-    })
-    .sort((a, b) => {
-      if (sortBy === 'users') return b.users - a.users;
-      if (sortBy === 'name') return a.name.localeCompare(b.name);
-      return new Date(b.approvalDate).getTime() - new Date(a.approvalDate).getTime(); // recent
-    });
+    return projects
+      .filter((project) => {
+        const role = currentUser && project.owner.id === currentUser.id ? 'owner' : 'contributor';
+        const matchesRole = roleFilter === 'all' || role === roleFilter;
+        const matchesStatus = statusFilter === 'all' || project.status === statusFilter;
 
-  // Calculate stats
+        if (!matchesRole || !matchesStatus) {
+          return false;
+        }
+
+        if (!normalizedSearch) {
+          return true;
+        }
+
+        const haystack = `${project.name} ${project.description} ${project.organization?.name ?? ''}`.toLowerCase();
+        return haystack.includes(normalizedSearch);
+      })
+      .sort((left, right) => {
+        if (sortBy === 'name') {
+          return left.name.localeCompare(right.name);
+        }
+        if (sortBy === 'organization') {
+          return (left.organization?.name ?? 'Independent').localeCompare(right.organization?.name ?? 'Independent');
+        }
+        return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+      });
+  }, [currentUser, projects, roleFilter, searchQuery, sortBy, statusFilter]);
+
+  const groupedProjects = useMemo(() => {
+    return filteredProjects.reduce<Record<string, Project[]>>((groups, project) => {
+      const key = project.organization?.name ?? 'Independent projects';
+      groups[key] = groups[key] ? [...groups[key], project] : [project];
+      return groups;
+    }, {});
+  }, [filteredProjects]);
+
   const stats = {
-    totalOwned: applications.filter(app => app.role === 'Owner').length,
-    totalContributing: applications.filter(app => app.role === 'Contributor').length,
-    activePRs: applications.reduce((sum, app) => sum + app.activePRs, 0),
-    pendingJoinRequests: 0, // Will be implemented later
+    owned: currentUser ? projects.filter((project) => project.owner.id === currentUser.id).length : 0,
+    contributing: currentUser ? projects.filter((project) => project.owner.id !== currentUser.id).length : 0,
+    awaitingApproval: projects.filter((project) => project.status === 'awaiting_approval').length,
+    published: projects.filter((project) => project.status === 'published').length,
   };
 
-  const handleRunApplication = (appId: number, status: string) => {
-    if (status !== 'Live') {
-      toast({
-        title: "Cannot Run Application",
-        description: `Application is not live yet. Only live applications can be run.`,
-        variant: "destructive",
-      });
+  const errorMessage = error instanceof Error ? error.message : 'Unable to load your projects.';
+
+  const openProject = (project: Project) => {
+    if (project.organization) {
+      navigate(`/organizations/${project.organization.id}/projects/${project.id}`);
       return;
     }
-
-    navigate(`/my-applications/run/${appId}`);
-  };
-
-  const handleEditApplication = (appId: number) => {
-    navigate(`/my-applications/edit/${appId}`);
-  };
-
-  const handleForkApplication = (appId: number) => {
-    toast({
-      title: "Forking Application",
-      description: `Creating a copy of application...`,
-    });
-  };
-
-  const handleDownloadApplication = (appId: number) => {
-    toast({
-      title: "Downloading",
-      description: `Preparing application for download...`,
-    });
-  };
-
-  const handleViewAnalytics = (appId: number) => {
-    toast({
-      title: "Analytics",
-      description: `Opening analytics for application...`,
-    });
-  };
-
-  const handleShareApplication = (appId: number) => {
-    toast({
-      title: "Share",
-      description: `Generating share link for application...`,
-    });
+    navigate('/organizations');
   };
 
   return (
-    <Page 
-      masthead={<DashboardHeader onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />} 
+    <Page
+      masthead={<DashboardHeader onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />}
       sidebar={<DashboardSidebar isOpen={isSidebarOpen} />}
     >
       <PageSection variant="default">
-        <PageHeader
-          title="My Projects"
-          description="Projects you own or contribute to. Manage versions, review changes, and monitor usage."
-          icon={<Package size={32} style={{ color: 'var(--pf-v6-global--primary-color--100)' }} />}
-          actions={
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <Button 
-                variant="secondary" 
-                icon={<PlusCircleIcon />}
-                onClick={() => navigate('/my-applications/create')}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              >
-                New Standalone Project
-              </Button>
-              <Button 
-                variant="primary" 
-                icon={<PlusCircleIcon />}
-                onClick={() => navigate('/my-teamspace')}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-              >
-                From Teamspace
-              </Button>
-            </div>
-          }
-        />
+        <div className="space-y-6">
+          <PageHeader
+            title="My Projects"
+            description="Projects you own or contribute to, grouped around the new organization hierarchy instead of the old standalone project view."
+            icon={<Package size={32} style={{ color: 'var(--pf-v6-global--primary-color--100)' }} />}
+            actions={
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => navigate('/my-teamspace')}>
+                  Workspace Directory
+                </Button>
+                <Button variant="primary" onClick={() => navigate('/organizations')}>
+                  Open Hierarchy
+                </Button>
+              </div>
+            }
+          />
 
-        {/* Quick Stats Dashboard */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-          <ShadcnCard>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <ShadcnCardTitle className="text-sm font-medium">Projects I Own</ShadcnCardTitle>
-              <Package className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.totalOwned}</div>
-            </CardContent>
-          </ShadcnCard>
-
-          <ShadcnCard>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <ShadcnCardTitle className="text-sm font-medium">Projects I Contribute To</ShadcnCardTitle>
-              <Users className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.totalContributing}</div>
-            </CardContent>
-          </ShadcnCard>
-
-          <ShadcnCard>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <ShadcnCardTitle className="text-sm font-medium">My Active PRs</ShadcnCardTitle>
-              <CheckCircle2 className="h-4 w-4 text-success" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.activePRs}</div>
-            </CardContent>
-          </ShadcnCard>
-
-          <ShadcnCard>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <ShadcnCardTitle className="text-sm font-medium">Pending Join Requests</ShadcnCardTitle>
-              <Clock className="h-4 w-4 text-warning" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.pendingJoinRequests}</div>
-            </CardContent>
-          </ShadcnCard>
-        </div>
-
-        {/* Search and Filter Controls */}
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ flex: '1 1 300px', position: 'relative' }}>
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search applications..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Owned</CardTitle>
+                <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.owned}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Contributing</CardTitle>
+                <Users className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.contributing}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Awaiting Approval</CardTitle>
+                <FolderKanban className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.awaitingApproval}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Published</CardTitle>
+                <Package className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.published}</div>
+              </CardContent>
+            </Card>
           </div>
-          
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Filter by role" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All My Projects</SelectItem>
-              <SelectItem value="Owner">Projects I Own</SelectItem>
-              <SelectItem value="Contributor">Projects I Contribute To</SelectItem>
-            </SelectContent>
-          </Select>
 
-          <Select value={sortBy} onValueChange={setSortBy}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Sort by" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="recent">Most Recent</SelectItem>
-              <SelectItem value="users">Most Users</SelectItem>
-              <SelectItem value="name">Name A-Z</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <p style={{ fontSize: '0.875rem', color: 'var(--pf-v6-global--Color--200)' }}>
-            Showing {filteredApplications.length} of {applications.length} projects
-          </p>
-        </div>
-        {/* Loading and Error States */}
-        {isLoading && (
-          <div className="flex justify-center items-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin" />
-            <span className="ml-2">Loading your projects...</span>
-          </div>
-        )}
-
-        {error && (
-          <div className="text-center py-12">
-            <p className="text-destructive">Error loading projects: {error.message}</p>
-          </div>
-        )}
-
-        {!isLoading && !error && (
-          <>
-            {filteredApplications.length === 0 ? (
-              <Card style={{ marginTop: '1.5rem' }}>
-                <CardBody style={{ textAlign: 'center', padding: '3rem' }}>
-                  <Package size={48} style={{ margin: '0 auto 1rem', color: 'var(--pf-v6-global--Color--200)' }} />
-                  <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>No projects found</h3>
-                  <p style={{ color: 'var(--pf-v6-global--Color--200)', marginBottom: '1.5rem' }}>
-                    {searchQuery || statusFilter !== 'all'
-                      ? 'Try adjusting your search or filters'
-                      : 'Get started by creating a new project or joining an existing one from your teamspace'}
-                  </p>
-                  <Button variant="primary" onClick={() => navigate('/my-teamspace')}>
-                    Go to Teamspace
-                  </Button>
-                </CardBody>
-              </Card>
-            ) : (
-              <Card>
-                <CardBody>
-                  <Table variant="compact">
-                    <Thead>
-                      <Tr>
-                        <Th>Project Name</Th>
-                        <Th>Version</Th>
-                        <Th>My Role</Th>
-                        <Th>Status</Th>
-                        <Th>Active Users</Th>
-                        <Th>Actions</Th>
-                      </Tr>
-                    </Thead>
-                    <Tbody>
-                      {filteredApplications.map((app, idx) => (
-                        <Tr key={idx}>
-                          <Td><strong>{app.name}</strong></Td>
-                          <Td>{app.version}</Td>
-                          <Td>
-                            <Badge variant={app.role === 'Owner' ? 'info' : 'secondary'} className="inline-flex items-center gap-1">
-                              {app.role}
-                            </Badge>
-                          </Td>
-                          <Td>
-                            <Badge variant={app.status === 'Live' ? 'success' : 'warning'} className="inline-flex items-center gap-1">
-                              {app.status === 'Live' ? (
-                                <CheckCircle2 className="h-3 w-3" />
-                              ) : (
-                                <Clock className="h-3 w-3" />
-                              )}
-                              {app.status}
-                            </Badge>
-                          </Td>
-                          <Td>{app.users > 0 ? app.users.toLocaleString() : '-'}</Td>
-                          <Td>
-                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                              <Button
-                                variant="primary"
-                                size="sm"
-                                onClick={() => handleEditApplication(app.id)}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '0.375rem',
-                                  minWidth: 'auto'
-                                }}
-                              >
-                                <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                                  <EditIcon />
-                                </span>
-                                Edit
-                              </Button>
-                              <Button
-                                variant={app.status === 'Live' ? 'secondary' : 'tertiary'}
-                                size="sm"
-                                onClick={() => handleRunApplication(app.id, app.status)}
-                                isDisabled={app.status !== 'Live'}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '0.375rem',
-                                  minWidth: 'auto'
-                                }}
-                          >
-                            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                              <PlayIcon />
-                            </span>
-                            Run
-                          </Button>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button 
-                                variant="plain" 
-                                size="sm" 
-                                style={{ 
-                                  padding: '0.375rem 0.5rem',
-                                  minWidth: 'auto',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center'
-                                }}
-                              >
-                                <MoreVertical className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent 
-                              align="end"
-                              className="bg-background border border-border shadow-lg z-[9999]"
-                            >
-                              <CreateWorkflowDialog
-                                projectId={app.id}
-                                projectName={app.name}
-                                trigger={
-                                  <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                                    <Plus className="mr-2 h-4 w-4" />
-                                    Create Workflow
-                                  </DropdownMenuItem>
-                                }
-                              />
-                              <DropdownMenuItem onClick={() => handleForkApplication(app.id)}>
-                                <CodeBranchIcon style={{ marginRight: '0.5rem', width: '1rem', height: '1rem' }} />
-                                Fork
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleDownloadApplication(app.id)}>
-                                <DownloadIcon style={{ marginRight: '0.5rem', width: '1rem', height: '1rem' }} />
-                                Download
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleViewAnalytics(app.id)}>
-                                <BarChart3 className="mr-2 h-4 w-4" />
-                                View Analytics
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleShareApplication(app.id)}>
-                                <Share2 className="mr-2 h-4 w-4" />
-                                Share
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                      </Td>
-                    </Tr>
-                  ))}
-                </Tbody>
-              </Table>
-            </CardBody>
+          <Card>
+            <CardHeader>
+              <CardTitle>Filter my projects</CardTitle>
+              <CardDescription>Search by project or organization, then jump directly into the nested organization routes.</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4 lg:flex-row">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search projects or organizations..."
+                  className="pl-10"
+                />
+              </div>
+              <Select value={roleFilter} onValueChange={(value) => setRoleFilter(value as RoleFilter)}>
+                <SelectTrigger className="w-full lg:w-[200px]">
+                  <SelectValue placeholder="Filter by role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All roles</SelectItem>
+                  <SelectItem value="owner">Owner</SelectItem>
+                  <SelectItem value="contributor">Contributor</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as StatusFilter)}>
+                <SelectTrigger className="w-full lg:w-[220px]">
+                  <SelectValue placeholder="Filter by status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="draft">Draft</SelectItem>
+                  <SelectItem value="in_development">In development</SelectItem>
+                  <SelectItem value="awaiting_approval">Awaiting approval</SelectItem>
+                  <SelectItem value="published">Published</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={sortBy} onValueChange={(value) => setSortBy(value as SortMode)}>
+                <SelectTrigger className="w-full lg:w-[220px]">
+                  <SelectValue placeholder="Sort projects" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="recent">Most recent</SelectItem>
+                  <SelectItem value="name">Name</SelectItem>
+                  <SelectItem value="organization">Organization</SelectItem>
+                </SelectContent>
+              </Select>
+            </CardContent>
           </Card>
-            )}
-          </>
-        )}
+
+          {isLoading && (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">Loading your projects...</CardContent>
+            </Card>
+          )}
+
+          {error && (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-destructive">{errorMessage}</CardContent>
+            </Card>
+          )}
+
+          {!isLoading && !error && (
+            <div className="space-y-6">
+              {Object.entries(groupedProjects).map(([groupName, groupProjects]) => (
+                <Card key={groupName}>
+                  <CardHeader>
+                    <CardTitle>{groupName}</CardTitle>
+                    <CardDescription>
+                      {groupProjects.length} project{groupProjects.length === 1 ? '' : 's'} in this group.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                    {groupProjects.map((project) => {
+                      const role = currentUser && project.owner.id === currentUser.id ? 'Owner' : 'Contributor';
+
+                      return (
+                        <div key={project.id} className="rounded-lg border border-border p-5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-lg font-semibold">{project.name}</div>
+                              <div className="mt-1 text-sm text-muted-foreground">{project.description || 'No project description yet.'}</div>
+                            </div>
+                            <Badge variant={statusVariantMap[project.status]}>{project.status.replaceAll('_', ' ')}</Badge>
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <Badge variant="outline">{role}</Badge>
+                            <Badge variant="outline">{project.organization?.name ?? 'No organization'}</Badge>
+                            <Badge variant="outline">{project.contributors.length + 1} collaborators</Badge>
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                            <span>Updated {new Date(project.updated_at).toLocaleDateString()}</span>
+                            <span>Workspace {project.workspace_image ?? 'fedora:43'}</span>
+                          </div>
+
+                          <div className="mt-5 flex flex-wrap gap-2">
+                            <Button variant="primary" onClick={() => openProject(project)}>
+                              Open Project
+                            </Button>
+                            {project.organization ? (
+                              <Button variant="secondary" onClick={() => navigate(`/organizations/${project.organization.id}`)}>
+                                Open Organization
+                              </Button>
+                            ) : (
+                              <Button variant="secondary" onClick={() => navigate('/organizations')}>
+                                Open Hierarchy
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              ))}
+
+              {filteredProjects.length === 0 && (
+                <Card>
+                  <CardContent className="py-10 text-center">
+                    <p className="text-sm text-muted-foreground">No projects matched the current filters.</p>
+                    <Button variant="link" isInline onClick={() => navigate('/organizations')}>
+                      Open organization hierarchy
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+        </div>
       </PageSection>
     </Page>
   );

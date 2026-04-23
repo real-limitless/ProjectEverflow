@@ -6,13 +6,13 @@
     "linkUrl": "/"
   },
   "applicationPreview": {
-    "title": "Application Preview",
+    "title": "Project Preview",
     "runningText": "Running:",
-    "placeholderText": "Application frontend will be displayed here"
+    "placeholderText": "Project frontend will be displayed here"
   },
   "forkApplication": {
-    "successTitle": "Application Forked Successfully",
-    "successDescription": "has been created and added to your applications.",
+    "successTitle": "Project Forked Successfully",
+    "successDescription": "has been created and added to your projects.",
     "defaultForkName": "-fork"
   },
   "joinApplication": {

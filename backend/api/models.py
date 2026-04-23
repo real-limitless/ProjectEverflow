@@ -20,12 +20,59 @@ class User(AbstractUser):
 class Team(models.Model):
     name = models.CharField(max_length=255, unique=True)
     description = models.TextField(blank=True)
+    organization = models.ForeignKey('Organization', on_delete=models.SET_NULL, related_name='teams', null=True, blank=True)
     members = models.ManyToManyField(User, related_name='user_teams', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.name
+
+
+class Organization(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    slug = models.SlugField(max_length=255, unique=True, blank=True)
+    description = models.TextField(blank=True)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='owned_organizations')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def save(self, *args, **kwargs):
+        base_slug = slugify(self.slug or self.name) or 'organization'
+        slug = base_slug
+        index = 1
+        while Organization.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+            index += 1
+            slug = f"{base_slug}-{index}"
+        self.slug = slug
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
+
+
+class OrganizationMembership(models.Model):
+    ROLE_CHOICES = [
+        ('owner', 'Owner'),
+        ('admin', 'Administrator'),
+        ('member', 'Member'),
+    ]
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='memberships')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='organization_memberships')
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='member')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('organization', 'user')
+        ordering = ['organization__name', 'user__username']
+
+    def __str__(self):
+        return f"{self.user.username} in {self.organization.name} ({self.role})"
 
 class Project(models.Model):
     STATUS_CHOICES = [
@@ -60,6 +107,7 @@ class Project(models.Model):
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='owned_projects')
     contributors = models.ManyToManyField(User, related_name='contributed_projects', blank=True)
     team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='projects', null=True, blank=True)
+    organization = models.ForeignKey(Organization, on_delete=models.SET_NULL, related_name='projects', null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     progress = models.IntegerField(default=0)  # 0-100
     
@@ -88,6 +136,91 @@ class Project(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class Environment(models.Model):
+    TYPE_CHOICES = [
+        ('production', 'Production'),
+        ('development', 'Development'),
+        ('staging', 'Staging'),
+        ('demo', 'Demo'),
+        ('custom', 'Custom'),
+    ]
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='environments')
+    name = models.CharField(max_length=255)
+    slug = models.SlugField(max_length=255, blank=True)
+    description = models.TextField(blank=True)
+    environment_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='development')
+    workspace_image = models.CharField(max_length=100, choices=Project.WORKSPACE_IMAGE_CHOICES, default='fedora:43')
+    workspace_size = models.CharField(max_length=20, default='standard')
+    workspace_mode = models.CharField(max_length=20, choices=Project.WORKSPACE_MODE_CHOICES, default='shared')
+    domain = models.CharField(max_length=255, blank=True)
+    is_primary = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_environments')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('project', 'slug')
+        ordering = ['project__name', 'name']
+
+    def save(self, *args, **kwargs):
+        base_slug = slugify(self.slug or self.name) or 'environment'
+        slug = base_slug
+        index = 1
+        while Environment.objects.filter(project=self.project, slug=slug).exclude(pk=self.pk).exists():
+            index += 1
+            slug = f"{base_slug}-{index}"
+        self.slug = slug
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.project.name} / {self.name}"
+
+
+class App(models.Model):
+    SOURCE_CHOICES = [
+        ('compose', 'Compose'),
+        ('container', 'Container Image'),
+        ('repository', 'Repository'),
+        ('custom', 'Custom'),
+    ]
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('active', 'Active'),
+        ('archived', 'Archived'),
+    ]
+
+    environment = models.ForeignKey(Environment, on_delete=models.CASCADE, related_name='apps')
+    name = models.CharField(max_length=255)
+    slug = models.SlugField(max_length=255, blank=True)
+    description = models.TextField(blank=True)
+    source_type = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='compose')
+    repository_url = models.CharField(max_length=500, blank=True)
+    compose_path = models.CharField(max_length=500, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    config = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_apps')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('environment', 'slug')
+        ordering = ['environment__name', 'name']
+
+    def save(self, *args, **kwargs):
+        base_slug = slugify(self.slug or self.name) or 'app'
+        slug = base_slug
+        index = 1
+        while App.objects.filter(environment=self.environment, slug=slug).exclude(pk=self.pk).exists():
+            index += 1
+            slug = f"{base_slug}-{index}"
+        self.slug = slug
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.environment.name} / {self.name}"
 
 
 class WorkspaceResourceTier(models.Model):
@@ -126,6 +259,7 @@ class ProjectPod(models.Model):
     ]
 
     project = models.OneToOneField(Project, on_delete=models.CASCADE, related_name='pod')
+    environment = models.ForeignKey(Environment, on_delete=models.SET_NULL, related_name='pods', null=True, blank=True)
     pod_name = models.CharField(max_length=255, unique=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='creating')
     config = models.JSONField(default=dict, blank=True)
@@ -147,6 +281,7 @@ class ProjectService(models.Model):
     ]
 
     pod = models.ForeignKey(ProjectPod, on_delete=models.CASCADE, related_name='services')
+    app = models.ForeignKey(App, on_delete=models.SET_NULL, related_name='services', null=True, blank=True)
     name = models.CharField(max_length=255)
     service_type = models.CharField(max_length=20, choices=SERVICE_CHOICES, default='custom')
     image = models.CharField(max_length=255)
@@ -167,6 +302,44 @@ class ProjectService(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.pod.project.name})"
+
+
+class Deployment(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('in_progress', 'In Progress'),
+        ('succeeded', 'Succeeded'),
+        ('failed', 'Failed'),
+        ('rolled_back', 'Rolled Back'),
+    ]
+    TRIGGER_CHOICES = [
+        ('manual', 'Manual'),
+        ('push', 'On Push'),
+        ('rollback', 'Rollback'),
+    ]
+
+    environment = models.ForeignKey(Environment, on_delete=models.CASCADE, related_name='deployments')
+    app = models.ForeignKey(App, on_delete=models.CASCADE, related_name='deployments')
+    version = models.CharField(max_length=100)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    trigger_type = models.CharField(max_length=20, choices=TRIGGER_CHOICES, default='manual')
+    deployed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='deployments')
+    source_ref = models.CharField(max_length=255, blank=True)
+    compose_path = models.CharField(max_length=500, blank=True)
+    notes = models.TextField(blank=True)
+    config_snapshot = models.JSONField(default=dict, blank=True)
+    service_snapshot = models.JSONField(default=dict, blank=True)
+    rollback_of = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='rollback_deployments')
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.app.name} {self.version} ({self.status})"
 
 
 class ProvisioningLog(models.Model):

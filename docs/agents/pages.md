@@ -70,73 +70,86 @@ Main overview page showing:
 
 ---
 
-#### 3. **My Teamspace** (`/my-teamspace`)
+#### 3. **Organizations** (`/organizations`)
+**Files**:
+- `src/pages/Organizations.tsx`
+- `src/pages/organizations/OrganizationsOverview.tsx`
+- `src/pages/organizations/OrganizationDetail.tsx`
+- `src/pages/organizations/ProjectDetail.tsx`
+- `src/pages/organizations/EnvironmentDetail.tsx`
+- `src/pages/organizations/AppDetail.tsx`
+
+**Purpose**: Primary workspace shell for the Dokploy-style hierarchy: Organization → Project → Environment → App → Deployment.
+
+**Features**:
+- PatternFly Tree View for hierarchy navigation
+- Route-driven detail panes using nested React Router routes
+- Creation flows for organizations, projects, environments, apps, and deployment records
+- Summary cards for organization and project health
+- Deployment history with rollback action at the app route level
+
+**Route Structure**:
+- `/organizations` - Overview of accessible organizations
+- `/organizations/:orgId` - Organization summary and project list
+- `/organizations/:orgId/projects/:projectId` - Project detail and environments
+- `/organizations/:orgId/projects/:projectId/environments/:environmentId` - Environment detail and apps
+- `/organizations/:orgId/projects/:projectId/environments/:environmentId/apps/:appId` - App detail and deployments
+
+**Workflow**:
+1. User selects an organization from the hierarchy tree
+2. User drills into a project, environment, and app through nested routes
+3. Deployment history and rollback are handled within the app detail route
+
+---
+
+#### 4. **My Teamspace** (`/my-teamspace`)
 **File**: `src/pages/MyTeamspace.tsx`
 
-**Purpose**: Discover and browse ALL projects within the team for collaboration.
+**Purpose**: Organization-first directory page for discovering accessible organizations and jumping into the nested hierarchy.
 
 **Features**:
-- View all team projects (not just user's own projects)
-- Filter by:
-  - Status (All, Draft, In Development, Published, etc.)
-  - Membership (All Projects, Member Of, Available to Join)
-  - Search by name
-- Visual indicators showing which projects user is already a member of
-- "Join" button to send join request to project owner
-- "Collaborate" button for projects user is already in
+- Aggregated organization cards with project previews
+- Filters for organization role, search text, and sort order
+- Stats for organizations, accessible projects, owned projects, and admin roles
+- Deep links into `/organizations/:orgId` and `/organizations/:orgId/projects/:projectId`
+- Legacy standalone project callout for projects not yet attached to an organization
 
-**Data Source**: `src/data/teamProjects.json`
-
-**Key Fields**:
-- `currentUserIsMember`: Boolean indicating if user is owner/contributor
-- `currentUserRole`: "Owner", "Contributor", or null
-- `owner`: Project creator
-- `contributors`: List of team members working on the project
+**Data Sources**:
+- `getOrganizations()`
+- `getProjects()`
+- `getCurrentUser()`
 
 **Workflow**:
-1. User browses team projects
-2. Finds interesting project
-3. Clicks "Join" → sends request to owner
-4. Owner approves → user becomes contributor
-5. User can now access project and submit PRs
+1. User browses organizations they can access
+2. User opens an organization or a specific project route
+3. User continues into environments and apps through the hierarchy shell
 
 ---
 
-#### 4. **My Projects** (`/my-applications`)
+#### 5. **My Projects** (`/my-applications`)
 **File**: `src/pages/MyApplications.tsx`
 
-**Purpose**: View projects where user is an owner OR contributor (active involvement).
+**Purpose**: Project-centric view of the work a user owns or contributes to, grouped by organization.
 
 **Features**:
-- Displays only projects user is part of
-- Shows role badge (Owner or Contributor)
-- Stats section:
-  - Projects I Own
-  - Projects I Contribute To
-  - My Active PRs
-  - Pending Join Requests (for owners)
-- Filter by:
-  - All My Projects
-  - Projects I Own
-  - Projects I Contribute To
-  - Status
-- Search functionality
+- Groups projects by organization name
+- Filters by ownership role, project status, search text, and sort order
+- Stats for owned, contributing, awaiting approval, and published projects
+- Deep links into organization and project detail routes
+- Fallback handling for projects that are still independent of an organization
 
-**Actions**:
-- Edit application
-- View application
-- Fork application
-- Preview application
+**Data Sources**:
+- `getMyProjects()`
+- `getCurrentUser()`
 
 **Workflow**:
-1. User sees their owned and contributed projects
-2. Can filter to see only owned or contributed
-3. Access project management features
-4. Track their active PRs
+1. User filters to the projects they care about
+2. User opens the relevant project route inside the organization hierarchy
+3. User manages deployments, environments, and downstream tooling from the project path
 
 ---
 
-#### 5. **Approval Queue** (`/approval-queue`)
+#### 6. **Approval Queue** (`/approval-queue`)
 **File**: `src/pages/ApprovalQueue.tsx`
 
 **Purpose**: Review and approve pull requests (code changes) for projects where user is owner or contributor.
@@ -175,7 +188,7 @@ Main overview page showing:
 
 ---
 
-#### 6. **Safety & Compliance** (`/safety-compliance`)
+#### 7. **Safety & Compliance** (`/safety-compliance`)
 **File**: `src/pages/SafetyCompliance.tsx`
 
 **Purpose**: Administrator check library for creating, browsing, and assigning compliance checks to projects.
@@ -246,7 +259,7 @@ Checks run automatically when:
 
 ---
 
-#### 7. **Edit Application** (`/my-applications/edit/:appName`)
+#### 8. **Edit Application** (`/my-applications/edit/:appName`)
 **File**: `src/pages/EditApplication.tsx`
 
 **Purpose**: Comprehensive application editing interface with AI assistance, file management, collaborative features, and space-optimized headers.
@@ -306,27 +319,27 @@ View and participate in discussion threads.
 
 #### **Create Workspace Project** (`/my-teamspace/create`)
 **File**: `src/pages/CreateWorkspaceProject.tsx`
-Create new projects within the team workspace via the backend API. Supports multiple creation methods: blank projects, repository cloning, AI-assisted planning, and template-based creation.
+Legacy create route for project creation. It still supports blank projects, repository cloning, AI-assisted planning, and template-based creation, but the primary hierarchy entry point is now the Organizations page.
 
 #### **View Application** (`/my-teamspace/view/:appName`)
 **File**: `src/pages/ViewApplication.tsx`
-View details of a specific team project.
+Legacy compatibility page from the pre-organization Teamspace model.
 
 #### **Join Application** (`/my-teamspace/join/:appName`)
 **File**: `src/pages/JoinApplication.tsx`
-Request to join existing team projects.
+Legacy compatibility page from the pre-organization Teamspace model.
 
 #### **Fork Application** (`/my-teamspace/fork/:appName`)
 **File**: `src/pages/ForkApplication.tsx`
-Create a copy of an existing project.
+Legacy compatibility page for copying an existing project outside the new hierarchy shell.
 
 #### **Create Application** (`/my-applications/create`)
 **File**: `src/pages/CreateApplication.tsx`
-Create a new application from scratch.
+Legacy standalone create route that remains available alongside the organization-first hierarchy.
 
 #### **Application Preview** (`/my-applications/run/:appName`)
 **File**: `src/pages/ApplicationPreview.tsx`
-Preview and run applications.
+Legacy preview route retained for older project/application flows.
 
 #### **Create Team** (`/create-team`)
 **File**: `src/pages/CreateTeam.tsx`
