@@ -32,7 +32,7 @@ import {
 } from '@/lib/api';
 import { useOrganizationHierarchyData } from '@/hooks/useOrganizationHierarchyData';
 import {
-  buildAppWorkspacePath,
+  buildAppOverviewPath,
   buildEnvironmentPath,
   buildOrganizationPath,
   buildProjectPath,
@@ -273,9 +273,9 @@ const Organizations = () => {
       });
       setDialogMode(null);
       if (selectedOrgId && selectedProjectId && selectedEnvironmentId && response.data?.id) {
-        navigate(buildAppWorkspacePath(selectedOrgId, selectedProjectId, selectedEnvironmentId, response.data.id));
+        navigate(buildAppOverviewPath(selectedOrgId, selectedProjectId, selectedEnvironmentId, response.data.id));
       }
-      toast({ title: 'Application created', description: 'Open the application workspace to manage services and deployment history.' });
+      toast({ title: 'Application created', description: 'Application details are ready to review before opening the workspace.' });
     },
   });
 
@@ -347,7 +347,7 @@ const Organizations = () => {
     } else if (type === 'environment' && selectedOrgId && selectedProjectId) {
       navigate(buildEnvironmentPath(selectedOrgId, selectedProjectId, id));
     } else if (type === 'app' && selectedOrgId && selectedProjectId && selectedEnvironmentId) {
-      navigate(buildAppWorkspacePath(selectedOrgId, selectedProjectId, selectedEnvironmentId, id));
+      navigate(buildAppOverviewPath(selectedOrgId, selectedProjectId, selectedEnvironmentId, id));
     }
   };
 

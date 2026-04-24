@@ -29,7 +29,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
 import { deleteEnvironment, ProjectEnvironment, updateEnvironment } from '@/lib/api';
-import { buildAppWorkspacePath } from '@/lib/organizationPaths';
+import { buildAppOverviewPath } from '@/lib/organizationPaths';
 import type { OrganizationHierarchyOutletContext } from '@/pages/Organizations';
 
 const EnvironmentDetail = () => {
@@ -173,7 +173,7 @@ const EnvironmentDetail = () => {
                 key={app.id}
                 type="button"
                 onClick={() =>
-                  navigate(buildAppWorkspacePath(selectedOrganization.id, selectedProject.id, selectedEnvironment.id, app.id))
+                  navigate(buildAppOverviewPath(selectedOrganization.id, selectedProject.id, selectedEnvironment.id, app.id))
                 }
                 className="rounded-lg border border-border bg-background p-5 text-left transition hover:border-primary/40 hover:bg-primary/5"
               >

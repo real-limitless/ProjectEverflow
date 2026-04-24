@@ -16,8 +16,12 @@ import {
   Avatar,
 } from "@patternfly/react-core";
 import { BarsIcon } from "@patternfly/react-icons";
+import { MessageSquare } from "lucide-react";
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+
+import { EnterpriseChatbotShell } from "@/components/chatbot/EnterpriseChatbotShell";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { logout } from "@/lib/api";
 
 interface DashboardHeaderProps {
@@ -25,9 +29,12 @@ interface DashboardHeaderProps {
 }
 
 export const DashboardHeader = ({ onToggleSidebar }: DashboardHeaderProps) => {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isGlobalChatOpen, setIsGlobalChatOpen] = useState(false);
   const [username, setUsername] = useState("User");
   const navigate = useNavigate();
+  const location = useLocation();
+  const isEnterpriseChatbotPage = location.pathname === '/enterprise-chatbot';
 
   useEffect(() => {
     // Get username from localStorage (set during login)
@@ -66,14 +73,25 @@ export const DashboardHeader = ({ onToggleSidebar }: DashboardHeaderProps) => {
         <Toolbar>
           <ToolbarContent>
             <ToolbarGroup align={{ default: "alignEnd" }}>
+              {!isEnterpriseChatbotPage && (
+                <ToolbarItem>
+                  <Button
+                    variant="plain"
+                    onClick={() => setIsGlobalChatOpen(true)}
+                    aria-label="Open global chat"
+                    title="Open global chat"
+                    icon={<MessageSquare size={18} aria-hidden="true" />}
+                  />
+                </ToolbarItem>
+              )}
               <ToolbarItem>
                 <Dropdown
-                  isOpen={isOpen}
-                  onOpenChange={setIsOpen}
+                  isOpen={isUserMenuOpen}
+                  onOpenChange={setIsUserMenuOpen}
                   toggle={(toggleRef) => (
                     <MenuToggle
                       ref={toggleRef}
-                      onClick={() => setIsOpen(!isOpen)}
+                      onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
                       icon={
                         <Avatar
                           src="https://www.patternfly.org/v4/images/img_avatar.svg"
@@ -97,6 +115,27 @@ export const DashboardHeader = ({ onToggleSidebar }: DashboardHeaderProps) => {
           </ToolbarContent>
         </Toolbar>
       </MastheadContent>
+
+      {!isEnterpriseChatbotPage && (
+        <Dialog open={isGlobalChatOpen} onOpenChange={setIsGlobalChatOpen}>
+          <DialogContent className="w-[96vw] max-w-[1400px] overflow-hidden p-0">
+            <div className="border-b border-border px-6 py-4">
+              <DialogHeader>
+                <DialogTitle>Global Chat</DialogTitle>
+                <DialogDescription>
+                  Continue conversations, switch personas, and launch templates from anywhere in the workspace.
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+            <div className="px-6 pb-6 pt-4">
+              <EnterpriseChatbotShell
+                showPageHeader={false}
+                containerClassName="h-[min(78vh,820px)] min-h-[560px]"
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </Masthead>
   );
 };

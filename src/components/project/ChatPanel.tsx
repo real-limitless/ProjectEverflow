@@ -7,7 +7,6 @@
  * sub-components (MessageEdit, ToolOutput, AnalysisStreamModal).
  */
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
 
 // ── PatternFly Chatbot ────────────────────────────────────────────────
 import Chatbot, { ChatbotDisplayMode } from '@patternfly/chatbot/dist/dynamic/Chatbot';
@@ -41,8 +40,6 @@ import {
   FlexItem,
   Label as PFLabel,
   MenuToggle,
-  Select,
-  SelectOption,
   Spinner,
   Tab,
   Tabs,
@@ -63,6 +60,7 @@ import { ToggleGroup as ModeToggleGroup, ToggleGroupItem as ModeToggleGroupItem 
 import { MessageEdit } from '@/components/editor/MessageEdit';
 import { FileContextSelector } from '@/components/editor/FileContextSelector';
 import { ToolSelector } from '@/components/editor/ToolSelector';
+import { ModelSelectorDialog } from '@/components/project/ModelSelectorDialog';
 import ToolOutput from '@/components/project/ToolOutput';
 import AnalysisStreamModal from '@/components/project/AnalysisStreamModal';
 
@@ -89,6 +87,7 @@ import {
 
 // ── Types ────────────────────────────────────────────────────────────
 import type { ChatMessage, ChatMode, ChatSession, ChatbotPersona, Project, ProjectTool } from '@/lib/api';
+import type { LLMModelOption } from '@/hooks/use-llm-models';
 
 // Bot / user avatar SVGs (inline data-URIs for simplicity)
 const BOT_AVATAR =
@@ -159,7 +158,7 @@ export interface ChatPanelProps {
   selectedLLM: string;
   onSelectedLLMChange: (llm: string) => void;
   selectedModelLabel: string;
-  llmOptions: Array<{ id: string; label: string }>;
+  llmOptions: LLMModelOption[];
   getModelLabel: (id: string | null) => string;
 
   // Settings
@@ -307,10 +306,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
   const [historySearch, setHistorySearch] = useState('');
   const historyRef = useRef<HTMLButtonElement>(null);
 
-  // ── Model selector for PF header ───────────────────────────────
-  const [isHeaderModelOpen, setIsHeaderModelOpen] = useState(false);
   const [isAgentModeMenuOpen, setIsAgentModeMenuOpen] = useState(false);
-  const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [isUtilityDialogOpen, setIsUtilityDialogOpen] = useState(false);
   const [isPersonaDialogOpen, setIsPersonaDialogOpen] = useState(false);
@@ -409,20 +405,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
       onSend(text);
     },
     [onSend]
-  );
-
-  // ── Handler: select model from PF header dropdown ──────────────
-  const handleModelSelect = useCallback(
-    (_event: ReactMouseEvent | undefined, value: string | number | undefined) => {
-      const val = String(value ?? '');
-      if (val === '__default__') {
-        onSelectedLLMChange('');
-      } else {
-        onSelectedLLMChange(val);
-      }
-      setIsHeaderModelOpen(false);
-    },
-    [onSelectedLLMChange]
   );
 
   // ── Handler: history item select ────────────────────────────────
@@ -538,59 +520,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
                   >
                     Preview
                   </Button>
-                  <Dropdown
-                    isOpen={isUtilityMenuOpen}
-                    onSelect={() => setIsUtilityMenuOpen(false)}
-                    toggle={(toggleRef) => (
-                      <MenuToggle
-                        ref={toggleRef}
-                        isExpanded={isUtilityMenuOpen}
-                        onClick={() => setIsUtilityMenuOpen((prev) => !prev)}
-                        variant="secondary"
-                        size="sm"
-                        icon={<Settings size={14} />}
-                        className="text-xs"
-                      >
-                        Utilities
-                      </MenuToggle>
-                    )}
-                    popperProps={{ position: 'end' }}
-                  >
-                    <DropdownList>
-                      <DropdownItem onClick={() => openUtilityDialog('summary')}>Summary</DropdownItem>
-                      <DropdownItem onClick={() => openUtilityDialog('memory')}>Memory</DropdownItem>
-                      <DropdownItem onClick={() => openUtilityDialog('agent-todos')}>Tasks</DropdownItem>
-                    </DropdownList>
-                  </Dropdown>
-                  <Select
-                    isOpen={isHeaderModelOpen}
-                    selected={selectedLLM || '__default__'}
-                    onSelect={handleModelSelect}
-                    onOpenChange={setIsHeaderModelOpen}
-                    toggle={(toggleRef) => (
-                      <MenuToggle
-                        ref={toggleRef}
-                        isExpanded={isHeaderModelOpen}
-                        onClick={() => setIsHeaderModelOpen((prev) => !prev)}
-                        variant="secondary"
-                        size="sm"
-                        icon={<Bot size={14} />}
-                        className="max-w-[12rem] text-xs"
-                        isPlaceholder={!selectedLLM}
-                      >
-                        <span className="truncate">{selectedModelLabel}</span>
-                      </MenuToggle>
-                    )}
-                  >
-                    <SelectOption key="default" value="__default__">
-                      ⭐ {getModelLabel(null)}
-                    </SelectOption>
-                    {llmOptions.map((option) => (
-                      <SelectOption key={option.id} value={option.id}>
-                        {option.label}
-                      </SelectOption>
-                    ))}
-                  </Select>
                   <Dropdown
                     isOpen={isAgentModeMenuOpen}
                     onSelect={() => setIsAgentModeMenuOpen(false)}
@@ -823,6 +752,22 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
                           ))}
                         </ModeToggleGroup>
                         <div className="ml-auto flex items-center gap-2">
+                            <Button
+                              variant="plainText"
+                              size="sm"
+                              onClick={() => openUtilityDialog('summary')}
+                              className="h-8 rounded-full border border-input bg-muted/70 px-3 text-xs font-medium text-foreground hover:bg-background"
+                            >
+                              Utilities
+                            </Button>
+                            <Button
+                              variant="plainText"
+                              size="sm"
+                              onClick={() => onModelSelectOpenChange(true)}
+                              className="max-w-[14rem] h-8 rounded-full border border-input bg-muted/70 px-3 text-xs font-medium text-foreground hover:bg-background"
+                            >
+                              <span className="truncate">{selectedModelLabel}</span>
+                            </Button>
                           <Dropdown
                             isOpen={isMoreMenuOpen}
                             onSelect={() => setIsMoreMenuOpen(false)}
@@ -1074,36 +1019,17 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
                         <div>
                           <FieldLabel>AI Model</FieldLabel>
                           <div className="mt-2">
-                            <Select
-                              isOpen={isModelSelectOpen}
-                              selected={selectedLLM || undefined}
-                              onSelect={(_, value) => {
-                                onSelectedLLMChange((value as string) || '');
-                                onModelSelectOpenChange(false);
-                              }}
-                              onOpenChange={onModelSelectOpenChange}
-                              toggle={(toggleRef) => (
-                                <MenuToggle
-                                  ref={toggleRef}
-                                  isExpanded={isModelSelectOpen}
-                                  isFullWidth
-                                  onClick={() => onModelSelectOpenChange(!isModelSelectOpen)}
-                                  isPlaceholder={!selectedLLM}
-                                >
-                                  {selectedModelLabel}
-                                </MenuToggle>
-                              )}
+                            <Button
+                              variant="outline"
+                              className="w-full justify-start text-left font-normal"
+                              onClick={() => onModelSelectOpenChange(true)}
                             >
-                              <SelectOption key="default" value="">
-                                ⭐ {getModelLabel(null)}
-                              </SelectOption>
-                              {llmOptions.map((option) => (
-                                <SelectOption key={option.id} value={option.id}>
-                                  {option.label}
-                                </SelectOption>
-                              ))}
-                            </Select>
+                              {selectedModelLabel}
+                            </Button>
                           </div>
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Search across all available providers from the model picker.
+                          </p>
                         </div>
                         <div>
                           <div className="flex justify-between mb-2">
@@ -1145,6 +1071,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = (props) => {
                   </Tabs>
                 </DialogContent>
               </Dialog>
+
+              <ModelSelectorDialog
+                isOpen={isModelSelectOpen}
+                onOpenChange={onModelSelectOpenChange}
+                selectedModelId={selectedLLM}
+                defaultModelLabel={getModelLabel(null)}
+                models={llmOptions}
+                onSelectModel={onSelectedLLMChange}
+              />
 
               <AnalysisStreamModal
                 isOpen={isAnalysisModalOpen}

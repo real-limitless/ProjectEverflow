@@ -398,11 +398,7 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
     return () => clearInterval(interval);
   }, [project.id]);
 
-  // Convert available models to the format expected by dropdowns
-  const llmOptions = availableModels.map((model) => ({
-    id: model.id,
-    label: `${model.label} (${model.providerName})${model.isDefault ? ' ⭐' : ''}`,
-  }));
+  const llmOptions = availableModels;
 
   const selectedModelLabel = selectedLLM
     ? llmOptions.find((option) => option.id === selectedLLM)?.label || getModelLabel(selectedLLM)

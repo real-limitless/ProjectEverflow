@@ -39,12 +39,11 @@ import { SafetyComplianceTab } from '@/components/project/SafetyComplianceTab';
 import { ServiceCreationWizard } from '../components/project/ServiceCreationWizard';
 import { WebtopTab } from '@/components/project/WebtopTab';
 import { ContainerLogsTab } from '@/components/project/ContainerLogsTab';
-import { BranchChatPanel } from '@/components/project/BranchChatPanel';
 import { LegacyHierarchyRouteRedirect } from '../components/project/LegacyHierarchyRouteRedirect';
 import { WorkspaceOrchestration } from '@/components/project/WorkspaceOrchestration';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { deleteProjectServiceRecord, getProjects, Project, getProjectServices, ProjectService, restartService, startAllServices, startService, stopAllServices, stopService, updateProjectServiceRecord, killService } from '@/lib/api';
-import { CheckCircle, AlertTriangle, XCircle, FileText, Layers, ListChecks, Target, Shield, Play, Square, ChevronDown, Terminal, RefreshCcw, ExternalLink, RotateCcw, Loader2, MessageSquare } from 'lucide-react';
+import { CheckCircle, AlertTriangle, XCircle, FileText, Layers, ListChecks, Target, Shield, Play, Square, ChevronDown, Terminal, RefreshCcw, ExternalLink, RotateCcw, Loader2 } from 'lucide-react';
 
 
 interface Message {
@@ -763,7 +762,6 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
   const workspaceLabel = applicationName || project?.name || 'Application';
   const projectIdOrName = project ? project.id.toString() : applicationName || '';
   const [isChatCollapsed, setIsChatCollapsed] = useState(false);
-  const [isBranchChatOpen, setIsBranchChatOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string | number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [messages, setMessages] = useState<Message[]>([
@@ -1113,17 +1111,6 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
             actions={
               <div className="flex items-center gap-2">
                 {project && <WorkspaceOrchestration project={project} showStatusSummary={layoutMode !== 'full-page'} />}
-                <button
-                  onClick={() => setIsBranchChatOpen(!isBranchChatOpen)}
-                  className={`p-2 rounded-md border transition-colors ${
-                    isBranchChatOpen
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'bg-background hover:bg-muted border-border'
-                  }`}
-                  title="Toggle branch chat"
-                >
-                  <MessageSquare className="h-4 w-4" />
-                </button>
               </div>
             }
             tabs={renderTabs()}
@@ -1181,15 +1168,6 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
           project ? <ContainerLogsTab project={project} /> : <div>Loading logs...</div>
         )}
         </div>
-
-        {project && (
-          <BranchChatPanel
-            projectId={project.id}
-            projectName={project.name}
-            isOpen={isBranchChatOpen}
-            onClose={() => setIsBranchChatOpen(false)}
-          />
-        )}
       </PageSection>
     </>
   );

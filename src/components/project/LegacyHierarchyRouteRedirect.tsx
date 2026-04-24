@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Spinner } from '@patternfly/react-core';
 
 import { getApps, getEnvironments, getProjects } from '@/lib/api';
-import { buildAppWorkspacePath, buildEnvironmentPath, buildProjectPath } from '@/lib/organizationPaths';
+import { buildAppOverviewPath, buildEnvironmentPath, buildProjectPath } from '@/lib/organizationPaths';
 
 interface LegacyHierarchyRouteRedirectProps {
   projectIdentifier?: string;
@@ -13,7 +13,7 @@ interface LegacyHierarchyRouteRedirectProps {
 
 export const LegacyHierarchyRouteRedirect = ({
   projectIdentifier,
-  message = 'Redirecting to the hierarchy workspace...',
+  message = 'Redirecting to the application details...',
 }: LegacyHierarchyRouteRedirectProps) => {
   const navigate = useNavigate();
 
@@ -86,7 +86,7 @@ export const LegacyHierarchyRouteRedirect = ({
       return;
     }
 
-    navigate(buildAppWorkspacePath(project.organization.id, project.id, environment.id, apps[0].id), { replace: true });
+    navigate(buildAppOverviewPath(project.organization.id, project.id, environment.id, apps[0].id), { replace: true });
   }, [apps, appsLoading, appsResponse, environments, environmentsLoading, navigate, project, projectsLoading]);
 
   return (
