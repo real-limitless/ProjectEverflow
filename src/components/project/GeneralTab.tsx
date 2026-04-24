@@ -603,39 +603,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
               (connection) => connection.id === settings.connectionId && connection.scope === settings.connectionScope,
             )
           : undefined;
-      const legacyRepositoryUrl = isGitSourceKind(settings.sourceKind) || settings.sourceKind === 'container-image'
-        ? normalizedSourceLocation
-        : '';
-      const legacyComposePath = isGitSourceKind(settings.sourceKind)
-        ? normalizedComposePath
-        : RAW_SOURCE_KINDS.includes(settings.sourceKind)
-          ? normalizedSourceLocation
-          : '';
-
-      await updateApp(app!.id, {
-        repository_url: legacyRepositoryUrl,
-        compose_path: legacyComposePath,
-        config: {
-          ...app!.config,
-          deploymentSettings: {
-            ...settings,
-            sourceKind: settings.sourceKind,
-            sourceLocation: normalizedSourceLocation,
-            sourceReference: normalizedSourceLocation,
-            sourceRef: normalizedSourceRef,
-            composePath: normalizedComposePath,
-            buildContextPath: normalizedBuildContextPath,
-            watchPaths: isGitSourceKind(settings.sourceKind) ? settings.watchPaths : '',
-            triggerType: normalizedTriggerType,
-            submodulesEnabled: isGitSourceKind(settings.sourceKind) ? settings.submodulesEnabled : false,
-            connectionName: selectedConnection?.name || '',
-            organizationConnectionName:
-              settings.connectionScope === 'organization' ? selectedConnection?.name || settings.connectionName : '',
-          },
-        },
-      });
-
-      await updateAppSourceSettings(app!.id, {
+      const sourceSettingsUpdateResponse = await updateAppSourceSettings(app!.id, {
         connection_scope: isGitSourceKind(settings.sourceKind) ? settings.connectionScope : '',
         organization_connection_id:
           isGitSourceKind(settings.sourceKind) && settings.connectionScope === 'organization' ? settings.connectionId : null,
@@ -651,6 +619,47 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
         auto_deploy_enabled: settings.autoDeployEnabled,
         submodules_enabled: isGitSourceKind(settings.sourceKind) ? settings.submodulesEnabled : false,
         schedule: settings.schedule.trim(),
+      });
+
+      const persistedSourceSettings = sourceSettingsUpdateResponse.data;
+      const persistedSourceKind = persistedSourceSettings?.source_kind || settings.sourceKind;
+      const persistedSourceLocation = persistedSourceSettings?.source_location || normalizedSourceLocation;
+      const persistedSourceRef = persistedSourceSettings?.source_ref || normalizedSourceRef;
+      const persistedBuildContextPath = persistedSourceSettings?.build_context_path || normalizedBuildContextPath;
+      const persistedTriggerType = persistedSourceSettings?.trigger_type || normalizedTriggerType;
+      const persistedWatchPaths = persistedSourceSettings?.watch_paths || (isGitSourceKind(persistedSourceKind) ? normalizedWatchPaths : []);
+      const persistedSubmodulesEnabled = persistedSourceSettings?.submodules_enabled
+        ?? (isGitSourceKind(persistedSourceKind) ? settings.submodulesEnabled : false);
+      const legacyRepositoryUrl = isGitSourceKind(persistedSourceKind) || persistedSourceKind === 'container-image'
+        ? persistedSourceLocation
+        : '';
+      const legacyComposePath = isGitSourceKind(persistedSourceKind)
+        ? normalizedComposePath
+        : RAW_SOURCE_KINDS.includes(persistedSourceKind)
+          ? persistedSourceLocation
+          : '';
+
+      await updateApp(app!.id, {
+        repository_url: legacyRepositoryUrl,
+        compose_path: legacyComposePath,
+        config: {
+          ...app!.config,
+          deploymentSettings: {
+            ...settings,
+            sourceKind: persistedSourceKind,
+            sourceLocation: persistedSourceLocation,
+            sourceReference: persistedSourceLocation,
+            sourceRef: persistedSourceRef,
+            composePath: normalizedComposePath,
+            buildContextPath: persistedBuildContextPath,
+            watchPaths: isGitSourceKind(persistedSourceKind) ? persistedWatchPaths.join('\n') : '',
+            triggerType: persistedTriggerType,
+            submodulesEnabled: persistedSubmodulesEnabled,
+            connectionName: selectedConnection?.name || '',
+            organizationConnectionName:
+              settings.connectionScope === 'organization' ? selectedConnection?.name || settings.connectionName : '',
+          },
+        },
       });
     },
     onSuccess: () => {
@@ -847,6 +856,11 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
           ? 'No tags were returned for this image. Manual tag entry still works.'
           : 'Enter or select an image repository to browse tags.'
         : `Choose from ${discoveredRegistryTags.length} discovered tags or keep the tag manual.`;
+  const publicRepositoryMessage = isGitSourceKind(settings.sourceKind)
+    && supportsRepositoryBrowsing(settings.providerType)
+    && !selectedGitConnection
+      ? 'No saved connection is required for a public repository. Enter an HTTPS URL, an owner/repo slug, or a hosted git@ URL and the backend will normalize it for public clone access.'
+      : '';
 
   return (
     <div className="space-y-6">
@@ -1032,10 +1046,12 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                 {isGitSourceKind(settings.sourceKind) ? (
                   <p className="text-xs text-muted-foreground">
                     {matchingGitConnections.length === 0
-                      ? 'No matching Git connections exist for this provider yet. Add one from organization settings.'
+                      ? 'No matching Git connections exist for this provider yet. Public repositories can still be entered manually below.'
                       : settings.providerType === 'generic-git'
                         ? `Current selection: ${selectedConnectionLabel}. Generic Git uses saved credentials but keeps repository and ref entry manual.`
-                      : `Current selection: ${selectedConnectionLabel}`}
+                      : selectedGitConnection
+                        ? `Current selection: ${selectedConnectionLabel}`
+                        : 'Leave this empty to use a public repository without a saved connection.'}
                   </p>
                 ) : null}
               </div>
@@ -1048,6 +1064,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                   onChange={(event) => setSettings((current) => ({ ...current, sourceLocation: event.target.value }))}
                   placeholder={getSourceLocationPlaceholder(settings.providerType, settings.sourceKind)}
                 />
+                {publicRepositoryMessage ? <p className="text-xs text-muted-foreground">{publicRepositoryMessage}</p> : null}
                 {manualGuidanceMessage ? <p className="text-xs text-muted-foreground">{manualGuidanceMessage}</p> : null}
               </div>
 

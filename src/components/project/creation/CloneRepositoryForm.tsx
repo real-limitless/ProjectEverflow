@@ -12,7 +12,7 @@ import { ArrowLeftIcon } from '@patternfly/react-icons';
 import { createProject, getCurrentUser } from '@/lib/api';
 
 const cloneSchema = z.object({
-  repositoryUrl: z.string().url("Must be a valid URL"),
+  repositoryUrl: z.string().trim().min(1, "Enter a repository URL, SSH clone URL, or supported owner/repo slug"),
   projectName: z.string().min(3, "Project name must be at least 3 characters"),
   branch: z.string().optional(),
   provider: z.enum(["github", "gitlab", "bitbucket", "other"]),
@@ -41,6 +41,8 @@ export function CloneRepositoryForm({ onCancel, onComplete }: CloneRepositoryFor
     setIsCloning(true);
 
     try {
+      const normalizedProviderHint = data.provider === 'other' ? undefined : data.provider;
+
       // Get current user
       const userResponse = await getCurrentUser();
       if (userResponse.error || !userResponse.data) {
@@ -58,6 +60,7 @@ export function CloneRepositoryForm({ onCancel, onComplete }: CloneRepositoryFor
         owner: userResponse.data.id,
         creation_method: 'clone',
         git_repo_url: data.repositoryUrl,
+        git_provider_hint: normalizedProviderHint,
         branch: data.branch || 'main',
       });
 
@@ -150,12 +153,12 @@ export function CloneRepositoryForm({ onCancel, onComplete }: CloneRepositoryFor
                     <FormLabel>Repository URL *</FormLabel>
                     <FormControl>
                       <Input
-                        placeholder="https://github.com/username/repo.git"
+                        placeholder="https://github.com/username/repo, username/repo, or git@github.com:username/repo.git"
                         {...field}
                       />
                     </FormControl>
                     <FormDescription>
-                      Enter the full URL of the repository you want to clone
+                      Public repositories do not need a saved connection. For GitHub, GitLab, and Bitbucket you can enter a full HTTPS URL, an owner/repo slug, or a hosted git@ URL.
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

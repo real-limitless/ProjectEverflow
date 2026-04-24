@@ -16,6 +16,7 @@ from .llm_config import get_llm_manager
 from .podman_orchestrator import PodmanOrchestrator
 from .compose_parser import load_compose_from_text, build_service_specs
 from .git_connection_discovery import GitProviderDiscoveryError, list_connection_repositories, list_repository_branches
+from .git_source_normalization import GitRepositoryNormalizationError, normalize_public_git_repository_input
 from .source_discovery import SourceDiscoveryError, get_source_discovery_payload
 from .models import (
     User,
@@ -580,7 +581,26 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         """Create project and automatically provision workspace for clone method."""
-        serializer = self.get_serializer(data=request.data)
+        data = request.data.copy()
+
+        if data.get('creation_method') == 'clone' and data.get('git_repo_url'):
+            provider_hint = data.pop('git_provider_hint', None)
+            if isinstance(provider_hint, list):
+                provider_hint = provider_hint[0] if provider_hint else None
+            if provider_hint == 'other':
+                provider_hint = None
+
+            try:
+                normalized_repository = normalize_public_git_repository_input(
+                    data.get('git_repo_url'),
+                    provider_hint=provider_hint,
+                )
+            except GitRepositoryNormalizationError as exc:
+                raise ValidationError({'git_repo_url': str(exc)}) from exc
+
+            data['git_repo_url'] = normalized_repository.clone_url
+
+        serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
 
         organization = serializer.validated_data.get('organization')

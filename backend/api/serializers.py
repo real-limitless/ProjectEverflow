@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from .git_source_normalization import GitRepositoryNormalizationError, normalize_public_git_repository_input
 from .models import User, Team, Organization, OrganizationMembership, OrganizationGitConnection, PersonalGitConnection, Project, Environment, App, AppSourceSettings, Deployment, ProjectTemplate, ChangeRequest, Approval, ComplianceCheck, ComplianceTemplate, ProjectAssignment, Discussion, DiscussionReply, MarketplaceItem, MarketplaceCategory, ChatbotPersona, ChatbotTemplate, ChatSession, ChatMessage, Issue, IssueReply, Workflow, WorkflowExecution, LLMProvider
 from .models import ProjectPod, ProjectService, ProjectTool, ToolExecution, WorkspaceResourceTier
 
@@ -465,6 +466,22 @@ class AppSourceSettingsSerializer(serializers.ModelSerializer):
         if source_provider in self.GIT_SOURCE_PROVIDERS:
             if source_kind != 'git-repository':
                 raise serializers.ValidationError({'source_kind': 'Git providers must use the git-repository source kind.'})
+
+            if not source_location:
+                raise serializers.ValidationError({'source_location': 'Enter the repository URL or slug.'})
+
+            if not connection_scope and not organization_connection and not personal_connection:
+                try:
+                    normalized_repository = normalize_public_git_repository_input(
+                        source_location,
+                        provider_hint=source_provider,
+                    )
+                except GitRepositoryNormalizationError as exc:
+                    raise serializers.ValidationError({'source_location': str(exc)}) from exc
+
+                data['source_location'] = normalized_repository.clone_url
+            else:
+                data['source_location'] = source_location
 
             data['build_context_path'] = ''
         elif source_provider == 'raw-compose':

@@ -1377,6 +1377,7 @@ export const createProject = async (data: {
   contributors?: number[];
   creation_method?: 'blank' | 'clone' | 'chat' | 'template';
   git_repo_url?: string;
+  git_provider_hint?: GitProviderType | 'other';
   branch?: string;
   template?: number;
   workspace_image?: string;

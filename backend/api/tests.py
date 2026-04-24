@@ -274,6 +274,85 @@ class HierarchyApiTests(APITestCase):
 		self.assertEqual(create_response.status_code, status.HTTP_403_FORBIDDEN)
 
 
+class ProjectPublicGitInputApiTests(APITestCase):
+	def setUp(self):
+		self.user = User.objects.create_user(
+			username='project-clone-user',
+			password='test-pass',
+		)
+
+	@mock.patch('api.views.initialize_project_workspace')
+	@mock.patch('api.views.PodmanOrchestrator.ensure_workspace_service')
+	def test_clone_project_normalizes_provider_slug_to_public_https_url(self, mock_ensure_workspace_service, mock_initialize):
+		self.client.force_authenticate(self.user)
+
+		response = self.client.post(
+			'/api/projects/',
+			{
+				'name': 'Portal Workspace',
+				'description': 'Clone from public slug',
+				'owner': self.user.id,
+				'creation_method': 'clone',
+				'git_repo_url': 'acme/portal',
+				'git_provider_hint': 'github',
+				'branch': 'main',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		project = Project.objects.get(id=response.data['id'])
+		self.assertEqual(project.git_repo_url, 'https://github.com/acme/portal')
+		self.assertEqual(project.provisioning_status, 'completed')
+		mock_ensure_workspace_service.assert_called_once()
+		mock_initialize.assert_called_once_with(project)
+
+	@mock.patch('api.views.initialize_project_workspace')
+	@mock.patch('api.views.PodmanOrchestrator.ensure_workspace_service')
+	def test_clone_project_normalizes_public_ssh_url_to_https(self, mock_ensure_workspace_service, mock_initialize):
+		self.client.force_authenticate(self.user)
+
+		response = self.client.post(
+			'/api/projects/',
+			{
+				'name': 'SSH Workspace',
+				'description': 'Clone from public ssh input',
+				'owner': self.user.id,
+				'creation_method': 'clone',
+				'git_repo_url': 'git@github.com:acme/portal.git',
+				'branch': 'main',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		project = Project.objects.get(id=response.data['id'])
+		self.assertEqual(project.git_repo_url, 'https://github.com/acme/portal')
+		self.assertEqual(project.provisioning_status, 'completed')
+		mock_ensure_workspace_service.assert_called_once()
+		mock_initialize.assert_called_once_with(project)
+
+	def test_clone_project_rejects_slug_without_supported_provider_hint(self):
+		self.client.force_authenticate(self.user)
+
+		response = self.client.post(
+			'/api/projects/',
+			{
+				'name': 'Unsupported Slug Workspace',
+				'description': 'Clone from unsupported slug input',
+				'owner': self.user.id,
+				'creation_method': 'clone',
+				'git_repo_url': 'acme/portal',
+				'git_provider_hint': 'other',
+				'branch': 'main',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn('git_repo_url', response.data)
+
+
 class OrganizationGitConnectionApiTests(APITestCase):
 	def setUp(self):
 		self.global_admin = User.objects.create_user(
@@ -808,6 +887,70 @@ class AppSourceSettingsApiTests(APITestCase):
 		self.assertEqual(settings.personal_connection_id, self.personal_connection.id)
 		self.assertEqual(settings.source_ref, 'feature/ai-updates')
 		self.assertEqual(settings.watch_paths, ['src/**', 'tests/**'])
+
+	def test_public_git_source_without_connection_normalizes_hosted_inputs(self):
+		self.client.force_authenticate(self.org_admin)
+
+		response = self.client.patch(
+			f'/api/apps/{self.app.id}/source_settings/',
+			{
+				'connection_scope': '',
+				'organization_connection_id': None,
+				'personal_connection_id': None,
+				'source_provider': 'github',
+				'source_kind': 'git-repository',
+				'source_location': 'acme/public-portal',
+				'source_ref': 'main',
+				'watch_paths': ['src/**'],
+				'trigger_type': 'manual',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertEqual(response.data['connection_scope'], '')
+		self.assertEqual(response.data['source_location'], 'https://github.com/acme/public-portal')
+
+		ssh_response = self.client.patch(
+			f'/api/apps/{self.app.id}/source_settings/',
+			{
+				'connection_scope': '',
+				'organization_connection_id': None,
+				'personal_connection_id': None,
+				'source_provider': 'github',
+				'source_kind': 'git-repository',
+				'source_location': 'git@github.com:acme/public-portal.git',
+				'source_ref': 'main',
+				'watch_paths': ['src/**'],
+				'trigger_type': 'manual',
+			},
+			format='json',
+		)
+
+		self.assertEqual(ssh_response.status_code, status.HTTP_200_OK)
+		self.assertEqual(ssh_response.data['source_location'], 'https://github.com/acme/public-portal')
+
+	def test_generic_git_without_connection_requires_full_repository_url(self):
+		self.client.force_authenticate(self.org_admin)
+
+		response = self.client.patch(
+			f'/api/apps/{self.app.id}/source_settings/',
+			{
+				'connection_scope': '',
+				'organization_connection_id': None,
+				'personal_connection_id': None,
+				'source_provider': 'generic-git',
+				'source_kind': 'git-repository',
+				'source_location': 'acme/public-portal',
+				'source_ref': 'main',
+				'watch_paths': ['src/**'],
+				'trigger_type': 'manual',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn('source_location', response.data)
 
 	def test_user_cannot_attach_another_users_personal_connection(self):
 		self.client.force_authenticate(self.org_admin)

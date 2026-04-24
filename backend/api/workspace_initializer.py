@@ -25,6 +25,7 @@ from .compose_parser import (
     extract_dependency_order,
     ComposeParseError,
 )
+from .git_source_normalization import GitRepositoryNormalizationError, normalize_public_git_repository_input
 from .podman_orchestrator import PodmanOrchestrator
 
 
@@ -528,8 +529,19 @@ def initialize_project_workspace(project) -> None:
             initializer._log('info', 'init_method', "Initializing blank workspace")
             initializer.init_blank_workspace()
         elif project.creation_method == 'clone' and project.git_repo_url:
-            initializer._log('info', 'init_method', f"Cloning repository: {project.git_repo_url}")
-            initializer.init_from_clone(project.git_repo_url, project.branch)
+            normalized_git_url = project.git_repo_url
+            try:
+                normalized_repository = normalize_public_git_repository_input(project.git_repo_url)
+                normalized_git_url = normalized_repository.clone_url
+            except GitRepositoryNormalizationError:
+                pass
+
+            if normalized_git_url != project.git_repo_url:
+                project.git_repo_url = normalized_git_url
+                project.save(update_fields=['git_repo_url'])
+
+            initializer._log('info', 'init_method', f"Cloning repository: {normalized_git_url}")
+            initializer.init_from_clone(normalized_git_url, project.branch)
             # After cloning, attempt to provision compose-defined services
             try:
                 initializer.provision_compose_services(project)
