@@ -25,9 +25,13 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
 import {
+  AppSourceKind,
+  AppSourceProviderType,
+  AppSourceSettings,
   createDeployment,
   GitConnectionBranch,
   GitConnectionRepository,
+  getAppSourceDiscovery,
   getAppSourceSettings,
   getDeployments,
   getOrganizationGitConnectionBranches,
@@ -49,25 +53,24 @@ import {
   updateAppSourceSettings,
 } from '@/lib/api';
 
-type SourceProviderType =
-  | 'github'
-  | 'gitlab'
-  | 'bitbucket'
-  | 'gitea'
-  | 'generic-git'
-  | 'raw-compose'
-  | 'docker-registry';
+type SourceProviderType = AppSourceProviderType;
+type SourceKind = AppSourceKind;
 
 type TriggerType = 'manual' | 'push' | 'schedule';
 
+const HOSTED_REPOSITORY_BROWSING_PROVIDERS: SourceProviderType[] = ['github', 'gitlab', 'bitbucket', 'gitea'];
+const RAW_SOURCE_KINDS: SourceKind[] = ['raw-compose', 'raw-dockerfile'];
+
 interface DeploymentSettingsFormState {
   providerType: SourceProviderType;
+  sourceKind: SourceKind;
   connectionScope: GitConnectionScope | '';
   connectionId: number | null;
   connectionName: string;
-  sourceReference: string;
+  sourceLocation: string;
   sourceRef: string;
   composePath: string;
+  buildContextPath: string;
   watchPaths: string;
   triggerType: TriggerType;
   autoDeployEnabled: boolean;
@@ -92,12 +95,14 @@ interface GeneralTabProps {
 
 const defaultSettings: DeploymentSettingsFormState = {
   providerType: 'github',
+  sourceKind: 'git-repository',
   connectionScope: '',
   connectionId: null,
   connectionName: '',
-  sourceReference: '',
+  sourceLocation: '',
   sourceRef: 'main',
   composePath: './docker-compose.yml',
+  buildContextPath: '.',
   watchPaths: 'src/**',
   triggerType: 'manual',
   autoDeployEnabled: false,
@@ -105,32 +110,193 @@ const defaultSettings: DeploymentSettingsFormState = {
   schedule: '0 */6 * * *',
 };
 
-function isGitProvider(providerType: SourceProviderType) {
-  return providerType !== 'raw-compose' && providerType !== 'docker-registry';
+function isGitSourceKind(sourceKind: SourceKind) {
+  return sourceKind === 'git-repository';
 }
 
-function buildSettingsFromApp(
-  app: ProjectApp,
-  sourceSettings?: {
-    connection_scope: GitConnectionScope | '';
-    organization_connection?: number | null;
-    personal_connection?: number | null;
-    selected_connection_name?: string | null;
-    source_provider: SourceProviderType;
-    source_ref: string;
-    watch_paths: string[];
-    trigger_type: TriggerType;
-    auto_deploy_enabled: boolean;
-    submodules_enabled: boolean;
-    schedule: string;
-    repository_url: string;
-    compose_path: string;
-  } | null,
-): DeploymentSettingsFormState {
-  const config = app.config?.deploymentSettings as Partial<DeploymentSettingsFormState> | undefined;
+function supportsRepositoryBrowsing(providerType: SourceProviderType) {
+  return HOSTED_REPOSITORY_BROWSING_PROVIDERS.includes(providerType);
+}
+
+function getAllowedSourceKinds(providerType: SourceProviderType): SourceKind[] {
+  if (providerType === 'raw-compose') {
+    return RAW_SOURCE_KINDS;
+  }
+  if (providerType === 'docker-registry') {
+    return ['container-image'];
+  }
+  return ['git-repository'];
+}
+
+function getDefaultSourceKind(providerType: SourceProviderType, currentSourceKind?: SourceKind): SourceKind {
+  if (providerType === 'raw-compose' && currentSourceKind === 'raw-dockerfile') {
+    return 'raw-dockerfile';
+  }
+  return getAllowedSourceKinds(providerType)[0];
+}
+
+function normalizeTriggerTypeForKind(sourceKind: SourceKind, triggerType: TriggerType): TriggerType {
+  if (!isGitSourceKind(sourceKind) && triggerType === 'push') {
+    return 'manual';
+  }
+  return triggerType;
+}
+
+function getDefaultSourceRef(sourceKind: SourceKind, currentValue: string, previousSourceKind?: SourceKind) {
+  const trimmedValue = currentValue.trim();
+
+  if (sourceKind === 'container-image') {
+    return previousSourceKind === 'container-image' ? trimmedValue || 'latest' : 'latest';
+  }
+  if (sourceKind === 'git-repository') {
+    return previousSourceKind === 'git-repository' ? trimmedValue || 'main' : 'main';
+  }
+  return '';
+}
+
+function splitWatchPaths(value: string) {
+  return value
+    .split('\n')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function splitContainerImageReference(value: string, fallbackRef = '') {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return { sourceLocation: '', sourceRef: fallbackRef || 'latest' };
+  }
+
+  if (trimmedValue.includes('@')) {
+    return { sourceLocation: trimmedValue, sourceRef: fallbackRef || 'latest' };
+  }
+
+  const lastSlashIndex = trimmedValue.lastIndexOf('/');
+  const lastColonIndex = trimmedValue.lastIndexOf(':');
+  if (lastColonIndex > lastSlashIndex) {
+    return {
+      sourceLocation: trimmedValue.slice(0, lastColonIndex),
+      sourceRef: fallbackRef || trimmedValue.slice(lastColonIndex + 1) || 'latest',
+    };
+  }
+
+  return { sourceLocation: trimmedValue, sourceRef: fallbackRef || 'latest' };
+}
+
+function normalizeRegistryRepositoryValue(value: string) {
+  const { sourceLocation } = splitContainerImageReference(value, '');
+  const normalizedValue = sourceLocation.trim().replace(/^docker\.io\//i, '').replace(/\/+$/g, '').toLowerCase();
+  if (!normalizedValue) {
+    return '';
+  }
+  return normalizedValue.includes('/') ? normalizedValue : `library/${normalizedValue}`;
+}
+
+function resolveSourceKind(
+  providerType: SourceProviderType,
+  sourceKind?: SourceKind | null,
+  buildContextPath?: string,
+): SourceKind {
+  if (sourceKind && getAllowedSourceKinds(providerType).includes(sourceKind)) {
+    return sourceKind;
+  }
+  if (providerType === 'raw-compose' && buildContextPath) {
+    return 'raw-dockerfile';
+  }
+  return getDefaultSourceKind(providerType, sourceKind || undefined);
+}
+
+function getSourceKindLabel(sourceKind: SourceKind) {
+  if (sourceKind === 'container-image') {
+    return 'Container image';
+  }
+  if (sourceKind === 'raw-dockerfile') {
+    return 'Raw Dockerfile';
+  }
+  if (sourceKind === 'raw-compose') {
+    return 'Raw compose';
+  }
+  return 'Git repository';
+}
+
+function getSourceLocationLabel(providerType: SourceProviderType, sourceKind: SourceKind) {
+  if (sourceKind === 'container-image') {
+    return 'Image repository';
+  }
+  if (sourceKind === 'raw-dockerfile') {
+    return 'Dockerfile URL or location';
+  }
+  if (sourceKind === 'raw-compose') {
+    return 'Compose file URL or location';
+  }
+  if (providerType === 'generic-git') {
+    return 'Repository URL or slug';
+  }
+  return 'Repository URL or slug';
+}
+
+function getSourceLocationPlaceholder(providerType: SourceProviderType, sourceKind: SourceKind) {
+  if (sourceKind === 'container-image') {
+    return 'library/nginx or ghcr.io/team/image';
+  }
+  if (sourceKind === 'raw-dockerfile') {
+    return 'https://example.com/Dockerfile';
+  }
+  if (sourceKind === 'raw-compose') {
+    return 'https://example.com/docker-compose.yml';
+  }
+  if (providerType === 'generic-git') {
+    return 'git@example.com:team/repo.git';
+  }
+  return 'org/repo or clone URL';
+}
+
+function getSourceRefLabel(sourceKind: SourceKind) {
+  if (sourceKind === 'container-image') {
+    return 'Image tag';
+  }
+  return 'Branch / source ref';
+}
+
+function buildSettingsFromApp(app: ProjectApp, sourceSettings?: AppSourceSettings | null): DeploymentSettingsFormState {
+  const config = app.config?.deploymentSettings as
+    | (Partial<DeploymentSettingsFormState> & {
+        organizationConnectionName?: string;
+        sourceKind?: SourceKind;
+        sourceLocation?: string;
+        sourceReference?: string;
+        buildContextPath?: string;
+        watchPaths?: string | string[];
+      })
+    | undefined;
   const rawConnectionId = config?.connectionId;
   const connectionId = typeof rawConnectionId === 'number' ? rawConnectionId : null;
   const legacyConnectionName = (config as { organizationConnectionName?: string } | undefined)?.organizationConnectionName || '';
+  const providerType = sourceSettings?.source_provider || config?.providerType || 'github';
+  const sourceKind = resolveSourceKind(
+    providerType,
+    sourceSettings?.source_kind || config?.sourceKind || null,
+    sourceSettings?.build_context_path || config?.buildContextPath || '',
+  );
+  const rawSourceLocation = sourceSettings
+    ? sourceSettings.source_location
+      || (isGitSourceKind(sourceKind) || sourceKind === 'container-image'
+        ? sourceSettings.repository_url || app.repository_url || ''
+        : sourceSettings.compose_path || app.compose_path || '')
+    : config?.sourceLocation
+      || config?.sourceReference
+      || (isGitSourceKind(sourceKind) || sourceKind === 'container-image' ? app.repository_url || '' : app.compose_path || '');
+
+  const resolvedContainerSource = sourceKind === 'container-image'
+    ? splitContainerImageReference(rawSourceLocation, sourceSettings?.source_ref || config?.sourceRef || '')
+    : null;
+  const normalizedWatchPaths = sourceSettings
+    ? sourceSettings.watch_paths
+    : Array.isArray(config?.watchPaths)
+      ? config.watchPaths
+      : typeof config?.watchPaths === 'string'
+        ? splitWatchPaths(config.watchPaths)
+        : [];
 
   if (sourceSettings) {
     const selectedConnectionId = sourceSettings.connection_scope === 'organization'
@@ -140,45 +306,51 @@ function buildSettingsFromApp(
         : null;
 
     return {
-      providerType: sourceSettings.source_provider,
+      providerType,
+      sourceKind,
       connectionScope: sourceSettings.connection_scope || '',
       connectionId: selectedConnectionId,
       connectionName: sourceSettings.selected_connection_name || '',
-      sourceReference: sourceSettings.repository_url || app.repository_url || '',
-      sourceRef: sourceSettings.source_ref || 'main',
-      composePath: sourceSettings.compose_path || app.compose_path || './docker-compose.yml',
-      watchPaths: sourceSettings.watch_paths.length > 0 ? sourceSettings.watch_paths.join('\n') : 'src/**',
-      triggerType: sourceSettings.trigger_type || 'manual',
+      sourceLocation: resolvedContainerSource ? resolvedContainerSource.sourceLocation : rawSourceLocation,
+      sourceRef: isGitSourceKind(sourceKind)
+        ? sourceSettings.source_ref || 'main'
+        : sourceKind === 'container-image'
+          ? resolvedContainerSource?.sourceRef || 'latest'
+          : '',
+      composePath: isGitSourceKind(sourceKind)
+        ? sourceSettings.compose_path || app.compose_path || './docker-compose.yml'
+        : config?.composePath || './docker-compose.yml',
+      buildContextPath: sourceKind === 'raw-dockerfile'
+        ? sourceSettings.build_context_path || config?.buildContextPath || '.'
+        : '',
+      watchPaths: isGitSourceKind(sourceKind) ? normalizedWatchPaths.join('\n') : '',
+      triggerType: normalizeTriggerTypeForKind(sourceKind, sourceSettings.trigger_type || 'manual'),
       autoDeployEnabled: Boolean(sourceSettings.auto_deploy_enabled),
-      submodulesEnabled: Boolean(sourceSettings.submodules_enabled),
+      submodulesEnabled: isGitSourceKind(sourceKind) ? Boolean(sourceSettings.submodules_enabled) : false,
       schedule: sourceSettings.schedule || '0 */6 * * *',
     };
   }
 
   return {
-    providerType: config?.providerType || 'github',
+    providerType,
+    sourceKind,
     connectionScope: config?.connectionScope || (connectionId !== null ? 'organization' : ''),
     connectionId,
     connectionName: config?.connectionName || legacyConnectionName,
-    sourceReference: config?.sourceReference || app.repository_url || '',
-    sourceRef: config?.sourceRef || 'main',
+    sourceLocation: resolvedContainerSource ? resolvedContainerSource.sourceLocation : rawSourceLocation,
+    sourceRef: isGitSourceKind(sourceKind)
+      ? config?.sourceRef || 'main'
+      : sourceKind === 'container-image'
+        ? resolvedContainerSource?.sourceRef || 'latest'
+        : '',
     composePath: config?.composePath || app.compose_path || './docker-compose.yml',
-    watchPaths: config?.watchPaths || 'src/**',
-    triggerType: config?.triggerType || 'manual',
+    buildContextPath: sourceKind === 'raw-dockerfile' ? config?.buildContextPath || '.' : '',
+    watchPaths: isGitSourceKind(sourceKind) ? normalizedWatchPaths.join('\n') : '',
+    triggerType: normalizeTriggerTypeForKind(sourceKind, (config?.triggerType as TriggerType | undefined) || 'manual'),
     autoDeployEnabled: Boolean(config?.autoDeployEnabled),
-    submodulesEnabled: Boolean(config?.submodulesEnabled),
+    submodulesEnabled: isGitSourceKind(sourceKind) ? Boolean(config?.submodulesEnabled) : false,
     schedule: config?.schedule || '0 */6 * * *',
   };
-}
-
-function getSourceReferenceLabel(providerType: SourceProviderType) {
-  if (providerType === 'docker-registry') {
-    return 'Image reference';
-  }
-  if (providerType === 'raw-compose') {
-    return 'Raw source location';
-  }
-  return 'Repository URL or slug';
 }
 
 function normalizeRepositoryValue(value: string) {
@@ -212,7 +384,8 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
   const queryClient = useQueryClient();
   const [settings, setSettings] = useState<DeploymentSettingsFormState>(defaultSettings);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const deferredSourceReference = useDeferredValue(settings.sourceReference.trim());
+  const [registrySearch, setRegistrySearch] = useState('');
+  const deferredRegistrySearch = useDeferredValue(registrySearch.trim());
 
   const { data: sourceSettingsResponse, isLoading: sourceSettingsLoading } = useQuery({
     queryKey: ['app-source-settings', app?.id],
@@ -223,6 +396,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
   useEffect(() => {
     if (!app) {
       setSettings(defaultSettings);
+      setRegistrySearch('');
       return;
     }
 
@@ -292,8 +466,10 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
     [availableGitConnections, settings.connectionId, settings.connectionScope],
   );
 
+  const canBrowseHostedRepositories = isGitSourceKind(settings.sourceKind) && supportsRepositoryBrowsing(settings.providerType);
+
   const { data: repositoryDiscoveryResponse, isLoading: repositoriesLoading, error: repositoriesError } = useQuery({
-    queryKey: ['git-connection-repositories', settings.connectionScope, settings.connectionId],
+    queryKey: ['git-connection-repositories', settings.providerType, settings.connectionScope, settings.connectionId],
     queryFn: () => {
       if (!selectedGitConnection) {
         throw new Error('A Git connection is required before repository discovery can run.');
@@ -303,14 +479,14 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
         ? getOrganizationGitConnectionRepositories(selectedGitConnection.id)
         : getPersonalGitConnectionRepositories(selectedGitConnection.id);
     },
-    enabled: app !== null && isGitProvider(settings.providerType) && Boolean(selectedGitConnection),
+    enabled: app !== null && canBrowseHostedRepositories && Boolean(selectedGitConnection),
   });
 
   const discoveredRepositories = repositoryDiscoveryResponse?.data?.repositories || [];
 
   const selectedDiscoveredRepository = useMemo(
-    () => discoveredRepositories.find((repository) => repositoryMatches(repository, settings.sourceReference)),
-    [discoveredRepositories, settings.sourceReference],
+    () => discoveredRepositories.find((repository) => repositoryMatches(repository, settings.sourceLocation)),
+    [discoveredRepositories, settings.sourceLocation],
   );
 
   const deferredSelectedRepository = useDeferredValue(
@@ -318,7 +494,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
   );
 
   const { data: branchDiscoveryResponse, isLoading: branchesLoading, error: branchesError } = useQuery({
-    queryKey: ['git-connection-branches', settings.connectionScope, settings.connectionId, deferredSelectedRepository],
+    queryKey: ['git-connection-branches', settings.providerType, settings.connectionScope, settings.connectionId, deferredSelectedRepository],
     queryFn: () => {
       if (!selectedGitConnection) {
         throw new Error('A Git connection is required before branch discovery can run.');
@@ -330,15 +506,56 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
     },
     enabled:
       app !== null &&
-      isGitProvider(settings.providerType) &&
+      canBrowseHostedRepositories &&
       Boolean(selectedGitConnection) &&
       Boolean(deferredSelectedRepository),
   });
 
   const discoveredBranches = branchDiscoveryResponse?.data?.branches || [];
 
+  const { data: sourceDiscoveryResponse, isLoading: sourceDiscoveryLoading, error: sourceDiscoveryError } = useQuery({
+    queryKey: [
+      'app-source-discovery',
+      app?.id,
+      settings.providerType,
+      settings.sourceKind,
+      deferredRegistrySearch,
+      settings.providerType === 'docker-registry' ? settings.sourceLocation.trim() : '',
+    ],
+    queryFn: () =>
+      getAppSourceDiscovery(app!.id, {
+        provider: settings.providerType,
+        source_kind: settings.sourceKind,
+        search: settings.providerType === 'docker-registry' && deferredRegistrySearch ? deferredRegistrySearch : undefined,
+        repository: settings.providerType === 'docker-registry' ? settings.sourceLocation.trim() || undefined : undefined,
+      }),
+    enabled:
+      app !== null
+      && (settings.providerType === 'generic-git'
+        || settings.providerType === 'raw-compose'
+        || settings.providerType === 'docker-registry'),
+  });
+
+  const sourceDiscovery = sourceDiscoveryResponse?.data || null;
+  const discoveredRegistryRepositories = sourceDiscovery?.repositories || [];
+  const discoveredRegistryTags = sourceDiscovery?.tags || [];
+  const selectedRegistryRepository = useMemo(
+    () =>
+      discoveredRegistryRepositories.find(
+        (repository) => normalizeRegistryRepositoryValue(repository.full_name) === normalizeRegistryRepositoryValue(settings.sourceLocation)
+          || normalizeRegistryRepositoryValue(repository.name) === normalizeRegistryRepositoryValue(settings.sourceLocation),
+      ),
+    [discoveredRegistryRepositories, settings.sourceLocation],
+  );
+
   useEffect(() => {
-    if (!isGitProvider(settings.providerType)) {
+    if (settings.providerType !== 'docker-registry' && registrySearch) {
+      setRegistrySearch('');
+    }
+  }, [registrySearch, settings.providerType]);
+
+  useEffect(() => {
+    if (!isGitSourceKind(settings.sourceKind)) {
       if (settings.connectionId !== null || settings.connectionScope || settings.connectionName) {
         setSettings((current) => ({
           ...current,
@@ -364,30 +581,54 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
         connectionName: '',
       }));
     }
-  }, [matchingGitConnections, settings.connectionId, settings.connectionName, settings.connectionScope, settings.providerType]);
+  }, [matchingGitConnections, settings.connectionId, settings.connectionName, settings.connectionScope, settings.sourceKind]);
 
   const saveSettingsMutation = useMutation({
     mutationFn: async () => {
-      const normalizedWatchPaths = settings.watchPaths
-        .split('\n')
-        .map((value) => value.trim())
-        .filter(Boolean);
+      const normalizedWatchPaths = splitWatchPaths(settings.watchPaths);
+      const normalizedSourceLocation = settings.sourceLocation.trim();
+      const normalizedComposePath = settings.composePath.trim();
+      const normalizedBuildContextPath = settings.sourceKind === 'raw-dockerfile'
+        ? settings.buildContextPath.trim() || '.'
+        : '';
+      const normalizedSourceRef = isGitSourceKind(settings.sourceKind)
+        ? settings.sourceRef.trim() || 'main'
+        : settings.sourceKind === 'container-image'
+          ? settings.sourceRef.trim() || 'latest'
+          : '';
+      const normalizedTriggerType = normalizeTriggerTypeForKind(settings.sourceKind, settings.triggerType);
       const selectedConnection =
         settings.connectionId !== null && settings.connectionScope
           ? availableGitConnections.find(
               (connection) => connection.id === settings.connectionId && connection.scope === settings.connectionScope,
             )
           : undefined;
+      const legacyRepositoryUrl = isGitSourceKind(settings.sourceKind) || settings.sourceKind === 'container-image'
+        ? normalizedSourceLocation
+        : '';
+      const legacyComposePath = isGitSourceKind(settings.sourceKind)
+        ? normalizedComposePath
+        : RAW_SOURCE_KINDS.includes(settings.sourceKind)
+          ? normalizedSourceLocation
+          : '';
 
       await updateApp(app!.id, {
-        repository_url: settings.sourceReference.trim() || undefined,
-        compose_path: settings.composePath.trim() || undefined,
+        repository_url: legacyRepositoryUrl,
+        compose_path: legacyComposePath,
         config: {
           ...app!.config,
           deploymentSettings: {
             ...settings,
+            sourceKind: settings.sourceKind,
+            sourceLocation: normalizedSourceLocation,
+            sourceReference: normalizedSourceLocation,
+            sourceRef: normalizedSourceRef,
+            composePath: normalizedComposePath,
+            buildContextPath: normalizedBuildContextPath,
+            watchPaths: isGitSourceKind(settings.sourceKind) ? settings.watchPaths : '',
+            triggerType: normalizedTriggerType,
+            submodulesEnabled: isGitSourceKind(settings.sourceKind) ? settings.submodulesEnabled : false,
             connectionName: selectedConnection?.name || '',
-            watchPaths: settings.watchPaths,
             organizationConnectionName:
               settings.connectionScope === 'organization' ? selectedConnection?.name || settings.connectionName : '',
           },
@@ -395,17 +636,20 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
       });
 
       await updateAppSourceSettings(app!.id, {
-        connection_scope: isGitProvider(settings.providerType) ? settings.connectionScope : '',
+        connection_scope: isGitSourceKind(settings.sourceKind) ? settings.connectionScope : '',
         organization_connection_id:
-          isGitProvider(settings.providerType) && settings.connectionScope === 'organization' ? settings.connectionId : null,
+          isGitSourceKind(settings.sourceKind) && settings.connectionScope === 'organization' ? settings.connectionId : null,
         personal_connection_id:
-          isGitProvider(settings.providerType) && settings.connectionScope === 'personal' ? settings.connectionId : null,
+          isGitSourceKind(settings.sourceKind) && settings.connectionScope === 'personal' ? settings.connectionId : null,
         source_provider: settings.providerType,
-        source_ref: settings.sourceRef.trim() || 'main',
-        watch_paths: normalizedWatchPaths,
-        trigger_type: settings.triggerType,
+        source_kind: settings.sourceKind,
+        source_location: normalizedSourceLocation,
+        build_context_path: normalizedBuildContextPath,
+        source_ref: normalizedSourceRef,
+        watch_paths: isGitSourceKind(settings.sourceKind) ? normalizedWatchPaths : [],
+        trigger_type: normalizedTriggerType,
         auto_deploy_enabled: settings.autoDeployEnabled,
-        submodules_enabled: settings.submodulesEnabled,
+        submodules_enabled: isGitSourceKind(settings.sourceKind) ? settings.submodulesEnabled : false,
         schedule: settings.schedule.trim(),
       });
     },
@@ -427,19 +671,31 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
   });
 
   const deployMutation = useMutation({
-    mutationFn: () =>
-      createDeployment({
+    mutationFn: () => {
+      const normalizedSourceRef = isGitSourceKind(settings.sourceKind)
+        ? settings.sourceRef.trim() || 'main'
+        : settings.sourceKind === 'container-image'
+          ? settings.sourceRef.trim() || 'latest'
+          : undefined;
+      const normalizedComposePath = isGitSourceKind(settings.sourceKind)
+        ? settings.composePath.trim() || undefined
+        : RAW_SOURCE_KINDS.includes(settings.sourceKind)
+          ? settings.sourceLocation.trim() || undefined
+          : undefined;
+
+      return createDeployment({
         app_id: app!.id,
         version: `manual-${new Date().toISOString()}`,
         status: 'pending',
         trigger_type: 'manual',
-        source_ref: settings.sourceRef.trim() || undefined,
-        compose_path: settings.composePath.trim() || undefined,
-        notes: `Manual deploy requested from General tab using ${settings.providerType}.`,
+        source_ref: normalizedSourceRef,
+        compose_path: normalizedComposePath,
+        notes: `Manual deploy requested from General tab using ${settings.providerType} (${settings.sourceKind}).`,
         config_snapshot: {
           deploymentSettings: settings,
         },
-      }),
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deployments', app!.id] });
       queryClient.invalidateQueries({ queryKey: ['apps'] });
@@ -499,18 +755,22 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
   const previewData = useMemo(
     () => ({
       provider: settings.providerType,
+      sourceKind: settings.sourceKind,
       connection: settings.connectionName || 'Not configured',
       connectionScope: settings.connectionScope || 'none',
-      sourceReference: settings.sourceReference || 'Not configured',
-      sourceRef: settings.sourceRef || 'main',
-      composePath: settings.composePath || './docker-compose.yml',
-      watchPaths: settings.watchPaths
-        .split('\n')
-        .map((value) => value.trim())
-        .filter(Boolean),
+      sourceLocation: settings.sourceLocation || 'Not configured',
+      sourceRef:
+        isGitSourceKind(settings.sourceKind)
+          ? settings.sourceRef || 'main'
+          : settings.sourceKind === 'container-image'
+            ? settings.sourceRef || 'latest'
+            : null,
+      composePath: isGitSourceKind(settings.sourceKind) ? settings.composePath || './docker-compose.yml' : null,
+      buildContextPath: settings.sourceKind === 'raw-dockerfile' ? settings.buildContextPath || '.' : null,
+      watchPaths: isGitSourceKind(settings.sourceKind) ? splitWatchPaths(settings.watchPaths) : [],
       triggerType: settings.triggerType,
       autoDeployEnabled: settings.autoDeployEnabled,
-      submodulesEnabled: settings.submodulesEnabled,
+      submodulesEnabled: isGitSourceKind(settings.sourceKind) ? settings.submodulesEnabled : false,
       schedule: settings.triggerType === 'schedule' ? settings.schedule : null,
     }),
     [settings],
@@ -528,6 +788,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
   }
 
   const recentDeployments = deployments.slice(0, 10);
+  const sourceKindOptions = getAllowedSourceKinds(settings.providerType);
   const gitConnectionValue = settings.connectionScope && settings.connectionId !== null
     ? `${settings.connectionScope}:${settings.connectionId}`
     : 'none';
@@ -537,8 +798,14 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
   const discoveredBranchValue = discoveredBranches.some((branch) => branch.name === settings.sourceRef)
     ? settings.sourceRef
     : 'manual';
+  const discoveredRegistryRepositoryValue = selectedRegistryRepository ? selectedRegistryRepository.full_name : 'manual';
+  const discoveredRegistryTagValue = discoveredRegistryTags.some((tag) => tag.name === settings.sourceRef)
+    ? settings.sourceRef
+    : 'manual';
   const gitConnectionsLoading = organizationConnectionsLoading || personalConnectionsLoading;
   const selectedConnectionLabel = settings.connectionName || 'Not configured';
+  const sourceLocationLabel = getSourceLocationLabel(settings.providerType, settings.sourceKind);
+  const sourceRefLabel = getSourceRefLabel(settings.sourceKind);
   const repositoryDiscoveryMessage = repositoriesLoading
     ? 'Loading repositories from the selected Git connection...'
     : repositoriesError instanceof Error
@@ -555,6 +822,31 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
       : discoveredBranches.length === 0
         ? 'No branches were returned for this repository. Manual branch entry still works.'
         : `Default branch: ${branchDiscoveryResponse?.data?.default_branch || 'unknown'}`;
+  const manualGuidanceMessage = sourceDiscoveryLoading
+    ? 'Loading provider-specific source guidance...'
+    : sourceDiscoveryError instanceof Error
+      ? sourceDiscoveryError.message
+      : sourceDiscovery?.lookup_error || sourceDiscovery?.manual_guidance || '';
+  const registryRepositoryMessage = sourceDiscoveryLoading && deferredRegistrySearch
+    ? 'Searching public Docker Hub repositories...'
+    : sourceDiscovery?.lookup_error
+      ? sourceDiscovery.lookup_error
+      : discoveredRegistryRepositories.length === 0
+        ? deferredRegistrySearch
+          ? 'No public Docker Hub repositories matched that search. Manual image entry still works.'
+          : 'Search public Docker Hub repositories or enter an image repository manually.'
+        : selectedRegistryRepository
+          ? `Selected repository: ${selectedRegistryRepository.full_name}`
+          : 'Choose a discovered repository to fill the image name, or keep using manual entry.';
+  const registryTagMessage = sourceDiscoveryLoading && settings.sourceLocation.trim()
+    ? 'Loading tags for the selected image...'
+    : sourceDiscovery?.lookup_error
+      ? sourceDiscovery.lookup_error
+      : discoveredRegistryTags.length === 0
+        ? settings.sourceLocation.trim()
+          ? 'No tags were returned for this image. Manual tag entry still works.'
+          : 'Enter or select an image repository to browse tags.'
+        : `Choose from ${discoveredRegistryTags.length} discovered tags or keep the tag manual.`;
 
   return (
     <div className="space-y-6">
@@ -611,7 +903,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
               Core Deployment & Git Integration
             </CardTitle>
             <CardDescription>
-              Configure provider, repository, branch, compose path, triggers, and autodeploy. Connection selection is persisted as app source-of-truth.
+              Configure provider, source kind, repository or image location, branch or tag, compose or build context, triggers, and autodeploy. Connection selection is persisted as app source-of-truth.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -620,7 +912,20 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                 <Label htmlFor="provider-type">Source provider</Label>
                 <Select
                   value={settings.providerType}
-                  onValueChange={(value) => setSettings((current) => ({ ...current, providerType: value as SourceProviderType }))}
+                  onValueChange={(value) => {
+                    const nextProvider = value as SourceProviderType;
+                    setSettings((current) => {
+                      const nextSourceKind = getDefaultSourceKind(nextProvider, current.sourceKind);
+                      return {
+                        ...current,
+                        providerType: nextProvider,
+                        sourceKind: nextSourceKind,
+                        sourceRef: getDefaultSourceRef(nextSourceKind, current.sourceRef, current.sourceKind),
+                        triggerType: normalizeTriggerTypeForKind(nextSourceKind, current.triggerType),
+                        buildContextPath: nextSourceKind === 'raw-dockerfile' ? current.buildContextPath || '.' : '',
+                      };
+                    });
+                  }}
                 >
                   <SelectTrigger id="provider-type">
                     <SelectValue placeholder="Choose provider" />
@@ -638,6 +943,42 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="source-kind">Source kind</Label>
+                <Select
+                  value={settings.sourceKind}
+                  onValueChange={(value) => {
+                    const nextSourceKind = value as SourceKind;
+                    setSettings((current) => ({
+                      ...current,
+                      sourceKind: nextSourceKind,
+                      sourceRef: getDefaultSourceRef(nextSourceKind, current.sourceRef, current.sourceKind),
+                      triggerType: normalizeTriggerTypeForKind(nextSourceKind, current.triggerType),
+                      buildContextPath: nextSourceKind === 'raw-dockerfile' ? current.buildContextPath || '.' : '',
+                    }));
+                  }}
+                  disabled={sourceKindOptions.length === 1}
+                >
+                  <SelectTrigger id="source-kind">
+                    <SelectValue placeholder="Choose source kind" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sourceKindOptions.map((sourceKind) => (
+                      <SelectItem key={sourceKind} value={sourceKind}>
+                        {getSourceKindLabel(sourceKind)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {settings.providerType === 'raw-compose'
+                    ? 'Choose whether this app consumes a raw compose file or a raw Dockerfile.'
+                    : settings.sourceKind === 'container-image'
+                      ? 'Container image sources persist repository and tag separately.'
+                      : 'Git-backed providers persist repository location and source ref explicitly.'}
+                </p>
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
                 <Label htmlFor="connection-name">Git connection</Label>
                 <Select
                   value={gitConnectionValue}
@@ -666,12 +1007,12 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                       connectionName: selectedConnection?.name || '',
                     }));
                   }}
-                  disabled={!isGitProvider(settings.providerType) || gitConnectionsLoading}
+                  disabled={!isGitSourceKind(settings.sourceKind) || gitConnectionsLoading}
                 >
                   <SelectTrigger id="connection-name">
                     <SelectValue
                       placeholder={
-                        !isGitProvider(settings.providerType)
+                        !isGitSourceKind(settings.sourceKind)
                           ? 'Not required for this source provider'
                           : gitConnectionsLoading
                             ? 'Loading Git connections...'
@@ -688,26 +1029,29 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                     ))}
                   </SelectContent>
                 </Select>
-                {isGitProvider(settings.providerType) ? (
+                {isGitSourceKind(settings.sourceKind) ? (
                   <p className="text-xs text-muted-foreground">
                     {matchingGitConnections.length === 0
                       ? 'No matching Git connections exist for this provider yet. Add one from organization settings.'
+                      : settings.providerType === 'generic-git'
+                        ? `Current selection: ${selectedConnectionLabel}. Generic Git uses saved credentials but keeps repository and ref entry manual.`
                       : `Current selection: ${selectedConnectionLabel}`}
                   </p>
                 ) : null}
               </div>
 
               <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="source-reference">{getSourceReferenceLabel(settings.providerType)}</Label>
+                <Label htmlFor="source-location">{sourceLocationLabel}</Label>
                 <Input
-                  id="source-reference"
-                  value={settings.sourceReference}
-                  onChange={(event) => setSettings((current) => ({ ...current, sourceReference: event.target.value }))}
-                  placeholder="org/repo, clone URL, image:tag, or raw file location"
+                  id="source-location"
+                  value={settings.sourceLocation}
+                  onChange={(event) => setSettings((current) => ({ ...current, sourceLocation: event.target.value }))}
+                  placeholder={getSourceLocationPlaceholder(settings.providerType, settings.sourceKind)}
                 />
+                {manualGuidanceMessage ? <p className="text-xs text-muted-foreground">{manualGuidanceMessage}</p> : null}
               </div>
 
-              {isGitProvider(settings.providerType) && selectedGitConnection ? (
+              {canBrowseHostedRepositories && selectedGitConnection ? (
                 <div className="space-y-2 md:col-span-2">
                   <Label htmlFor="discovered-repository">Discovered repositories</Label>
                   <Select
@@ -726,7 +1070,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
 
                       setSettings((current) => ({
                         ...current,
-                        sourceReference: getRepositoryOptionValue(repository),
+                        sourceLocation: getRepositoryOptionValue(repository),
                         sourceRef: repository.default_branch || current.sourceRef || 'main',
                       }));
                     }}
@@ -751,32 +1095,99 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                 </div>
               ) : null}
 
-              <div className="space-y-2">
-                <Label htmlFor="source-ref">Branch / source ref</Label>
-                <Input
-                  id="source-ref"
-                  value={settings.sourceRef}
-                  onChange={(event) => setSettings((current) => ({ ...current, sourceRef: event.target.value }))}
-                  placeholder="main"
-                />
-                {isGitProvider(settings.providerType) && selectedGitConnection && !selectedDiscoveredRepository ? (
-                  <p className="text-xs text-muted-foreground">
-                    Choose one of the discovered repositories to browse branches, or keep entering a branch manually.
-                  </p>
-                ) : null}
-              </div>
+              {settings.providerType === 'docker-registry' ? (
+                <>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label htmlFor="registry-search">Search Docker Hub</Label>
+                    <Input
+                      id="registry-search"
+                      value={registrySearch}
+                      onChange={(event) => setRegistrySearch(event.target.value)}
+                      placeholder="nginx, postgres, redis..."
+                    />
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="compose-path">Compose path</Label>
-                <Input
-                  id="compose-path"
-                  value={settings.composePath}
-                  onChange={(event) => setSettings((current) => ({ ...current, composePath: event.target.value }))}
-                  placeholder="./docker-compose.yml"
-                />
-              </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label htmlFor="discovered-registry-repository">Docker Hub repositories</Label>
+                    <Select
+                      value={discoveredRegistryRepositoryValue}
+                      onValueChange={(value) => {
+                        if (value === 'manual') {
+                          return;
+                        }
 
-              {selectedDiscoveredRepository ? (
+                        const repository = discoveredRegistryRepositories.find((candidate) => candidate.full_name === value);
+                        if (!repository) {
+                          return;
+                        }
+
+                        setSettings((current) => ({
+                          ...current,
+                          sourceLocation: repository.full_name,
+                          sourceRef: current.sourceRef || 'latest',
+                        }));
+                      }}
+                      disabled={sourceDiscoveryLoading || discoveredRegistryRepositories.length === 0}
+                    >
+                      <SelectTrigger id="discovered-registry-repository">
+                        <SelectValue placeholder="Choose a Docker Hub repository" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="manual">Keep manual image repository</SelectItem>
+                        {discoveredRegistryRepositories.map((repository) => (
+                          <SelectItem key={repository.full_name} value={repository.full_name}>
+                            {repository.full_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">{registryRepositoryMessage}</p>
+                  </div>
+                </>
+              ) : null}
+
+              {isGitSourceKind(settings.sourceKind) || settings.sourceKind === 'container-image' ? (
+                <div className="space-y-2">
+                  <Label htmlFor="source-ref">{sourceRefLabel}</Label>
+                  <Input
+                    id="source-ref"
+                    value={settings.sourceRef}
+                    onChange={(event) => setSettings((current) => ({ ...current, sourceRef: event.target.value }))}
+                    placeholder={settings.sourceKind === 'container-image' ? 'latest' : 'main'}
+                  />
+                  {canBrowseHostedRepositories && selectedGitConnection && !selectedDiscoveredRepository ? (
+                    <p className="text-xs text-muted-foreground">
+                      Choose one of the discovered repositories to browse branches, or keep entering a branch manually.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {isGitSourceKind(settings.sourceKind) ? (
+                <div className="space-y-2">
+                  <Label htmlFor="compose-path">Compose path</Label>
+                  <Input
+                    id="compose-path"
+                    value={settings.composePath}
+                    onChange={(event) => setSettings((current) => ({ ...current, composePath: event.target.value }))}
+                    placeholder="./docker-compose.yml"
+                  />
+                </div>
+              ) : null}
+
+              {settings.sourceKind === 'raw-dockerfile' ? (
+                <div className="space-y-2">
+                  <Label htmlFor="build-context-path">Build context path</Label>
+                  <Input
+                    id="build-context-path"
+                    value={settings.buildContextPath}
+                    onChange={(event) => setSettings((current) => ({ ...current, buildContextPath: event.target.value }))}
+                    placeholder="."
+                  />
+                </div>
+              ) : null}
+
+              {canBrowseHostedRepositories && selectedDiscoveredRepository ? (
                 <div className="space-y-2 md:col-span-2">
                   <Label htmlFor="discovered-branch">Discovered branches</Label>
                   <Select
@@ -806,32 +1217,73 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                 </div>
               ) : null}
 
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="watch-paths">Watch paths</Label>
-                <Textarea
-                  id="watch-paths"
-                  value={settings.watchPaths}
-                  onChange={(event) => setSettings((current) => ({ ...current, watchPaths: event.target.value }))}
-                  placeholder={"src/**\ncompose/**"}
-                  rows={4}
-                />
-              </div>
+              {settings.sourceKind === 'container-image' ? (
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="discovered-registry-tag">Discovered tags</Label>
+                  <Select
+                    value={discoveredRegistryTagValue}
+                    onValueChange={(value) => {
+                      if (value === 'manual') {
+                        return;
+                      }
+
+                      setSettings((current) => ({ ...current, sourceRef: value }));
+                    }}
+                    disabled={sourceDiscoveryLoading || discoveredRegistryTags.length === 0}
+                  >
+                    <SelectTrigger id="discovered-registry-tag">
+                      <SelectValue placeholder="Choose a discovered tag" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="manual">Keep manual tag value</SelectItem>
+                      {discoveredRegistryTags.map((tag) => (
+                        <SelectItem key={tag.full_name} value={tag.name}>
+                          {tag.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">{registryTagMessage}</p>
+                </div>
+              ) : null}
+
+              {isGitSourceKind(settings.sourceKind) ? (
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="watch-paths">Watch paths</Label>
+                  <Textarea
+                    id="watch-paths"
+                    value={settings.watchPaths}
+                    onChange={(event) => setSettings((current) => ({ ...current, watchPaths: event.target.value }))}
+                    placeholder={"src/**\ncompose/**"}
+                    rows={4}
+                  />
+                </div>
+              ) : null}
 
               <div className="space-y-2">
                 <Label htmlFor="trigger-type">Trigger type</Label>
                 <Select
                   value={settings.triggerType}
-                  onValueChange={(value) => setSettings((current) => ({ ...current, triggerType: value as TriggerType }))}
+                  onValueChange={(value) =>
+                    setSettings((current) => ({
+                      ...current,
+                      triggerType: normalizeTriggerTypeForKind(current.sourceKind, value as TriggerType),
+                    }))}
                 >
                   <SelectTrigger id="trigger-type">
                     <SelectValue placeholder="Choose trigger" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="manual">Manual deploy</SelectItem>
-                    <SelectItem value="push">On push</SelectItem>
+                    {isGitSourceKind(settings.sourceKind) ? <SelectItem value="push">On push</SelectItem> : null}
                     <SelectItem value="schedule">Schedule</SelectItem>
                   </SelectContent>
                 </Select>
+                {!isGitSourceKind(settings.sourceKind) ? (
+                  <p className="text-xs text-muted-foreground">
+                    Push triggers are not available for non-Git source kinds yet.
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-2">
@@ -861,17 +1313,26 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
               <div className="flex items-center justify-between gap-3 rounded-lg border bg-background px-4 py-3">
                 <div>
                   <div className="text-sm font-medium">Git submodules</div>
-                  <div className="text-xs text-muted-foreground">Pull submodules during deployment preparation.</div>
+                  <div className="text-xs text-muted-foreground">
+                    {isGitSourceKind(settings.sourceKind)
+                      ? 'Pull submodules during deployment preparation.'
+                      : 'Available only for Git-backed source kinds.'}
+                  </div>
                 </div>
                 <Switch
-                  checked={settings.submodulesEnabled}
+                  checked={isGitSourceKind(settings.sourceKind) ? settings.submodulesEnabled : false}
                   onCheckedChange={(checked) => setSettings((current) => ({ ...current, submodulesEnabled: checked }))}
+                  disabled={!isGitSourceKind(settings.sourceKind)}
                 />
               </div>
             </div>
 
             <div className="rounded-lg border border-dashed border-border/80 bg-background px-4 py-3 text-sm text-muted-foreground">
-              The selected connection becomes the app source-of-truth for future AIEditor commit-back and deploy-from-source flows. Use a shared connection for team-owned repos and a personal connection for user-owned credentials.
+              {isGitSourceKind(settings.sourceKind)
+                ? 'The selected connection becomes the app source-of-truth for future AIEditor commit-back and deploy-from-source flows. Use a shared connection for team-owned repos and a personal connection for user-owned credentials.'
+                : settings.sourceKind === 'container-image'
+                  ? 'Container-image sources now persist the image repository and tag explicitly, so deploy-from-source does not have to infer registry behavior from a loose image string.'
+                  : 'Raw source settings now persist the exact source kind, location, and optional build context explicitly so non-hosted deploys do not depend on repository assumptions.'}
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -881,7 +1342,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
               </Button>
               <Button variant="outline" onClick={() => setIsPreviewOpen(true)}>
                 <Eye className="mr-2 h-4 w-4" />
-                Preview Compose
+                Preview source payload
               </Button>
             </div>
           </CardContent>
@@ -959,9 +1420,9 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
       <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Compose preview</DialogTitle>
+            <DialogTitle>Source preview</DialogTitle>
             <DialogDescription>
-              This preview shows the current deployment source settings that will feed the compose/runtime pipeline.
+              This preview shows the current deployment source settings that will feed the source and runtime pipeline.
             </DialogDescription>
           </DialogHeader>
           <pre className="max-h-[420px] overflow-auto rounded-lg border border-border bg-muted/30 p-4 text-xs">

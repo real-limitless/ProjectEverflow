@@ -1157,7 +1157,14 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
         )}
 
         {activeTab === 4 && (
-          project ? <RepositoryGitTab projectName={project.name} projectId={project.id} /> : <div>Loading repository...</div>
+          project ? (
+            <RepositoryGitTab
+              app={app ?? null}
+              projectName={project.name}
+              projectId={project.id}
+              onOpenGeneral={() => setActiveTab(1)}
+            />
+          ) : <div>Loading repository...</div>
         )}
 
         {activeTab === 5 && (

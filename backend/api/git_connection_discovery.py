@@ -22,7 +22,7 @@ def list_connection_repositories(connection, search: Optional[str] = None) -> Li
     elif provider_type == 'gitea':
         repositories = _list_gitea_repositories(connection, token)
     elif provider_type == 'bitbucket':
-        raise GitProviderDiscoveryError('Bitbucket repository discovery is not supported yet for this connection type.')
+        repositories = _list_bitbucket_repositories(connection, token)
     else:
         raise GitProviderDiscoveryError('Repository discovery is not supported for this provider yet.')
 
@@ -54,7 +54,7 @@ def list_repository_branches(connection, repository_identifier: str) -> Dict[str
     elif provider_type == 'gitea':
         branches = _list_gitea_branches(connection, token, repository)
     elif provider_type == 'bitbucket':
-        raise GitProviderDiscoveryError('Bitbucket branch discovery is not supported yet for this connection type.')
+        branches = _list_bitbucket_branches(connection, token, repository)
     else:
         raise GitProviderDiscoveryError('Branch discovery is not supported for this provider yet.')
 
@@ -108,6 +108,22 @@ def _gitea_api_root(base_url: Optional[str]) -> str:
     if normalized.endswith('/api/v1'):
         return normalized
     return f'{normalized}/api/v1'
+
+
+def _bitbucket_api_root(base_url: Optional[str]) -> str:
+    if not base_url:
+        return 'https://api.bitbucket.org/2.0'
+
+    normalized = base_url.rstrip('/')
+    if 'api.bitbucket.org' in normalized:
+        if normalized.endswith('/2.0'):
+            return normalized
+        return f'{normalized}/2.0'
+
+    if 'bitbucket.org' in normalized:
+        return 'https://api.bitbucket.org/2.0'
+
+    raise GitProviderDiscoveryError('Bitbucket discovery currently supports Bitbucket Cloud URLs only.')
 
 
 def _request_json(url: str, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None) -> Any:
@@ -244,6 +260,43 @@ def _list_gitea_repositories(connection, token: str) -> List[Dict[str, Any]]:
     return repositories
 
 
+def _list_bitbucket_repositories(connection, token: str) -> List[Dict[str, Any]]:
+    url = f"{_bitbucket_api_root(connection.base_url)}/repositories"
+    headers = {
+        'Accept': 'application/json',
+        'Authorization': f'Bearer {token}',
+    }
+
+    repositories: List[Dict[str, Any]] = []
+    params: Optional[Dict[str, Any]] = {
+        'pagelen': 100,
+        'role': 'member',
+        'sort': '-updated_on',
+        'q': 'scm="git"',
+    }
+
+    while url:
+        payload = _request_json(url, headers, params=params)
+        items = payload.get('values', []) if isinstance(payload, dict) else []
+        repositories.extend(
+            {
+                'id': item.get('uuid') or item.get('full_name') or item.get('slug') or '',
+                'name': item.get('name') or item.get('slug') or '',
+                'full_name': item.get('full_name') or '',
+                'clone_url': _extract_bitbucket_clone_url(item, 'https'),
+                'ssh_url': _extract_bitbucket_clone_url(item, 'ssh'),
+                'web_url': (((item.get('links') or {}).get('html') or {}).get('href')) or '',
+                'default_branch': ((item.get('mainbranch') or {}).get('name')) or '',
+                'private': bool(item.get('is_private', False)),
+            }
+            for item in items
+        )
+        url = payload.get('next') if isinstance(payload, dict) else None
+        params = None
+
+    return repositories
+
+
 def _list_github_branches(connection, token: str, repository: Dict[str, Any]) -> List[Dict[str, Any]]:
     full_name = repository.get('full_name')
     if not full_name:
@@ -333,6 +386,59 @@ def _list_gitea_branches(connection, token: str, repository: Dict[str, Any]) -> 
         page += 1
 
     return branches
+
+
+def _list_bitbucket_branches(connection, token: str, repository: Dict[str, Any]) -> List[Dict[str, Any]]:
+    workspace, repo_slug = _split_bitbucket_full_name(repository)
+    url = f"{_bitbucket_api_root(connection.base_url)}/repositories/{quote(workspace, safe='')}/{quote(repo_slug, safe='')}/refs/branches"
+    headers = {
+        'Accept': 'application/json',
+        'Authorization': f'Bearer {token}',
+    }
+
+    branches: List[Dict[str, Any]] = []
+    params: Optional[Dict[str, Any]] = {'pagelen': 100, 'sort': 'name'}
+    while url:
+        payload = _request_json(url, headers, params=params)
+        items = payload.get('values', []) if isinstance(payload, dict) else []
+        branches.extend(
+            {
+                'name': item.get('name', ''),
+                'is_default': item.get('name') == repository.get('default_branch'),
+                'protected': bool(item.get('protected', False)),
+            }
+            for item in items
+            if item.get('name')
+        )
+        url = payload.get('next') if isinstance(payload, dict) else None
+        params = None
+
+    return branches
+
+
+def _extract_bitbucket_clone_url(repository: Dict[str, Any], link_name: str) -> str:
+    clone_links = ((repository.get('links') or {}).get('clone')) or []
+    for link in clone_links:
+        if link.get('name') == link_name:
+            return link.get('href') or ''
+    return ''
+
+
+def _split_bitbucket_full_name(repository: Dict[str, Any]) -> tuple[str, str]:
+    full_name = (repository.get('full_name') or '').strip().strip('/')
+    workspace, _, repo_slug = full_name.partition('/')
+    if workspace and repo_slug:
+        return workspace, repo_slug
+
+    web_url = (repository.get('web_url') or '').strip().rstrip('/')
+    if web_url:
+        path = web_url.split('://', 1)[-1].split('/', 1)
+        if len(path) == 2:
+            segments = [segment for segment in path[1].split('/') if segment]
+            if len(segments) >= 2:
+                return segments[0], segments[1]
+
+    raise GitProviderDiscoveryError('The selected Bitbucket repository is missing its workspace and slug.')
 
 
 def _resolve_repository(connection, repository_identifier: str) -> Dict[str, Any]:

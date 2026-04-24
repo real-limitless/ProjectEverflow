@@ -356,6 +356,12 @@ class AppSourceSettings(models.Model):
         ('organization', 'Shared organization connection'),
         ('personal', 'Personal connection'),
     ]
+    SOURCE_KIND_CHOICES = [
+        ('git-repository', 'Git repository'),
+        ('raw-compose', 'Raw compose'),
+        ('raw-dockerfile', 'Raw Dockerfile'),
+        ('container-image', 'Container image'),
+    ]
     SOURCE_PROVIDER_CHOICES = [
         ('github', 'GitHub'),
         ('gitlab', 'GitLab'),
@@ -376,6 +382,9 @@ class AppSourceSettings(models.Model):
     organization_connection = models.ForeignKey(OrganizationGitConnection, on_delete=models.SET_NULL, null=True, blank=True, related_name='app_sources')
     personal_connection = models.ForeignKey(PersonalGitConnection, on_delete=models.SET_NULL, null=True, blank=True, related_name='app_sources')
     source_provider = models.CharField(max_length=20, choices=SOURCE_PROVIDER_CHOICES, default='github')
+    source_kind = models.CharField(max_length=30, choices=SOURCE_KIND_CHOICES, default='git-repository')
+    source_location = models.CharField(max_length=500, blank=True)
+    build_context_path = models.CharField(max_length=500, blank=True)
     source_ref = models.CharField(max_length=255, blank=True, default='main')
     watch_paths = models.JSONField(default=list, blank=True)
     trigger_type = models.CharField(max_length=20, choices=TRIGGER_TYPE_CHOICES, default='manual')

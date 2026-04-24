@@ -16,6 +16,7 @@ from .llm_config import get_llm_manager
 from .podman_orchestrator import PodmanOrchestrator
 from .compose_parser import load_compose_from_text, build_service_specs
 from .git_connection_discovery import GitProviderDiscoveryError, list_connection_repositories, list_repository_branches
+from .source_discovery import SourceDiscoveryError, get_source_discovery_payload
 from .models import (
     User,
     Team,
@@ -1900,22 +1901,83 @@ class AppViewSet(viewsets.ModelViewSet):
 
     def _build_source_settings_defaults(self, app):
         deployment_settings = (app.config or {}).get('deploymentSettings', {})
+        source_provider = deployment_settings.get('providerType', 'github')
+        requested_source_kind = deployment_settings.get('sourceKind')
+
+        if source_provider == 'docker-registry':
+            source_kind = 'container-image'
+        elif source_provider == 'raw-compose':
+            source_kind = 'raw-dockerfile' if requested_source_kind == 'raw-dockerfile' or deployment_settings.get('buildContextPath') else 'raw-compose'
+        else:
+            source_kind = 'git-repository'
+
+        if source_kind == 'git-repository':
+            source_location = deployment_settings.get('sourceLocation') or deployment_settings.get('sourceReference') or app.repository_url or ''
+            source_ref = deployment_settings.get('sourceRef', 'main')
+            normalized_watch_paths_default = 'src/**'
+            normalized_submodules_enabled = bool(deployment_settings.get('submodulesEnabled'))
+            normalized_trigger_type = deployment_settings.get('triggerType', 'manual')
+        elif source_kind == 'container-image':
+            source_location = deployment_settings.get('sourceLocation') or deployment_settings.get('sourceReference') or app.repository_url or ''
+            source_ref = deployment_settings.get('sourceRef') or 'latest'
+            normalized_watch_paths_default = []
+            normalized_submodules_enabled = False
+            normalized_trigger_type = deployment_settings.get('triggerType', 'manual')
+            if normalized_trigger_type == 'push':
+                normalized_trigger_type = 'manual'
+        else:
+            source_location = deployment_settings.get('sourceLocation') or deployment_settings.get('sourceReference') or app.compose_path or ''
+            source_ref = ''
+            normalized_watch_paths_default = []
+            normalized_submodules_enabled = False
+            normalized_trigger_type = deployment_settings.get('triggerType', 'manual')
+            if normalized_trigger_type == 'push':
+                normalized_trigger_type = 'manual'
+
         watch_paths = deployment_settings.get('watchPaths', 'src/**')
+        if normalized_watch_paths_default == []:
+            watch_paths = []
         if isinstance(watch_paths, str):
             watch_paths = [path.strip() for path in watch_paths.splitlines() if path.strip()]
         elif not isinstance(watch_paths, list):
             watch_paths = []
 
         return {
-            'source_provider': deployment_settings.get('providerType', 'github'),
-            'source_ref': deployment_settings.get('sourceRef', 'main'),
+            'source_provider': source_provider,
+            'source_kind': source_kind,
+            'source_location': source_location,
+            'build_context_path': deployment_settings.get('buildContextPath', ''),
+            'source_ref': source_ref,
             'watch_paths': watch_paths,
-            'trigger_type': deployment_settings.get('triggerType', 'manual'),
+            'trigger_type': normalized_trigger_type,
             'auto_deploy_enabled': bool(deployment_settings.get('autoDeployEnabled')),
-            'submodules_enabled': bool(deployment_settings.get('submodulesEnabled')),
+            'submodules_enabled': normalized_submodules_enabled,
             'schedule': deployment_settings.get('schedule', '0 */6 * * *'),
             'created_by': app.created_by,
         }
+
+    @action(detail=True, methods=['get'])
+    def source_discovery(self, request, pk=None):
+        app = self.get_object()
+
+        provider = (request.query_params.get('provider') or '').strip()
+        source_kind = (request.query_params.get('source_kind') or '').strip()
+        if not provider:
+            raise ValidationError({'provider': 'A source provider is required.'})
+        if not source_kind:
+            raise ValidationError({'source_kind': 'A source kind is required.'})
+
+        try:
+            payload = get_source_discovery_payload(
+                provider,
+                source_kind,
+                search=request.query_params.get('search'),
+                repository=request.query_params.get('repository'),
+            )
+        except SourceDiscoveryError as exc:
+            raise ValidationError({'detail': str(exc)}) from exc
+
+        return Response(payload)
 
     @action(detail=True, methods=['get', 'patch'])
     def source_settings(self, request, pk=None):

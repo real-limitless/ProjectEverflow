@@ -416,6 +416,76 @@ class OrganizationGitConnectionApiTests(APITestCase):
 		connection.refresh_from_db()
 		self.assertEqual(connection.repository_cache[0]['clone_url'], 'https://github.com/acme/portal.git')
 
+	@mock.patch('api.git_connection_discovery._get_connection_token', return_value='bb_repo_discovery_token')
+	@mock.patch('api.git_connection_discovery.requests.get')
+	def test_org_member_can_discover_shared_bitbucket_repositories(self, mock_get, _mock_token):
+		connection = OrganizationGitConnection.objects.create(
+			organization=self.organization,
+			name='Shared Bitbucket',
+			provider_type='bitbucket',
+			auth_type='pat',
+			created_by=self.org_admin,
+		)
+
+		first_page = mock.Mock()
+		first_page.raise_for_status.return_value = None
+		first_page.json.return_value = {
+			'values': [
+				{
+					'uuid': '{repo-1}',
+					'name': 'portal',
+					'slug': 'portal',
+					'full_name': 'acme/portal',
+					'is_private': True,
+					'mainbranch': {'name': 'main'},
+					'links': {
+						'html': {'href': 'https://bitbucket.org/acme/portal'},
+						'clone': [
+							{'name': 'https', 'href': 'https://bitbucket.org/acme/portal.git'},
+							{'name': 'ssh', 'href': 'git@bitbucket.org:acme/portal.git'},
+						],
+					},
+				},
+			],
+			'next': 'https://api.bitbucket.org/2.0/repositories?page=2',
+		}
+
+		second_page = mock.Mock()
+		second_page.raise_for_status.return_value = None
+		second_page.json.return_value = {
+			'values': [
+				{
+					'uuid': '{repo-2}',
+					'name': 'docs',
+					'slug': 'docs',
+					'full_name': 'acme/docs',
+					'is_private': False,
+					'mainbranch': {'name': 'develop'},
+					'links': {
+						'html': {'href': 'https://bitbucket.org/acme/docs'},
+						'clone': [
+							{'name': 'https', 'href': 'https://bitbucket.org/acme/docs.git'},
+							{'name': 'ssh', 'href': 'git@bitbucket.org:acme/docs.git'},
+						],
+					},
+				},
+			],
+		}
+
+		mock_get.side_effect = [first_page, second_page]
+
+		self.client.force_authenticate(self.org_member)
+
+		response = self.client.get(f'/api/organization-git-connections/{connection.id}/repositories/')
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertEqual(response.data['count'], 2)
+		self.assertEqual(response.data['repositories'][0]['full_name'], 'acme/portal')
+		self.assertEqual(response.data['repositories'][1]['default_branch'], 'develop')
+
+		connection.refresh_from_db()
+		self.assertEqual(connection.repository_cache[0]['ssh_url'], 'git@bitbucket.org:acme/portal.git')
+
 
 class PersonalGitConnectionApiTests(APITestCase):
 	def setUp(self):
@@ -528,6 +598,62 @@ class PersonalGitConnectionApiTests(APITestCase):
 		self.assertEqual(response.data['branches'][0]['name'], 'main')
 		self.assertTrue(response.data['branches'][0]['is_default'])
 
+	@mock.patch('api.git_connection_discovery._get_connection_token', return_value='bb_branch_discovery_token')
+	@mock.patch('api.git_connection_discovery.requests.get')
+	def test_user_can_discover_personal_bitbucket_repository_branches(self, mock_get, _mock_token):
+		connection = PersonalGitConnection.objects.create(
+			user=self.user,
+			name='My Bitbucket',
+			provider_type='bitbucket',
+			auth_type='pat',
+		)
+
+		repositories_response = mock.Mock()
+		repositories_response.raise_for_status.return_value = None
+		repositories_response.json.return_value = {
+			'values': [
+				{
+					'uuid': '{repo-1}',
+					'name': 'portal',
+					'slug': 'portal',
+					'full_name': 'acme/portal',
+					'is_private': True,
+					'mainbranch': {'name': 'main'},
+					'links': {
+						'html': {'href': 'https://bitbucket.org/acme/portal'},
+						'clone': [
+							{'name': 'https', 'href': 'https://bitbucket.org/acme/portal.git'},
+							{'name': 'ssh', 'href': 'git@bitbucket.org:acme/portal.git'},
+						],
+					},
+				},
+			],
+		}
+
+		branches_response = mock.Mock()
+		branches_response.raise_for_status.return_value = None
+		branches_response.json.return_value = {
+			'values': [
+				{'name': 'release/2026.04'},
+				{'name': 'main'},
+			],
+		}
+
+		mock_get.side_effect = [repositories_response, branches_response]
+
+		self.client.force_authenticate(self.user)
+
+		response = self.client.get(
+			f'/api/personal-git-connections/{connection.id}/branches/',
+			{'repository': 'acme/portal'},
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertEqual(response.data['default_branch'], 'main')
+		self.assertEqual(response.data['count'], 2)
+		self.assertEqual(response.data['branches'][0]['name'], 'main')
+		self.assertTrue(response.data['branches'][0]['is_default'])
+
 
 class AppSourceSettingsApiTests(APITestCase):
 	def setUp(self):
@@ -623,6 +749,8 @@ class AppSourceSettingsApiTests(APITestCase):
 
 		self.assertEqual(response.status_code, status.HTTP_200_OK)
 		self.assertEqual(response.data['source_provider'], 'github')
+		self.assertEqual(response.data['source_kind'], 'git-repository')
+		self.assertEqual(response.data['source_location'], self.app.repository_url)
 		self.assertEqual(response.data['source_ref'], 'main')
 		self.assertEqual(response.data['trigger_type'], 'push')
 		self.assertEqual(response.data['watch_paths'], ['src/**', 'compose/**'])
@@ -641,6 +769,8 @@ class AppSourceSettingsApiTests(APITestCase):
 				'organization_connection_id': self.organization_connection.id,
 				'personal_connection_id': None,
 				'source_provider': 'github',
+				'source_kind': 'git-repository',
+				'source_location': 'https://github.com/acme/portal',
 				'source_ref': 'release',
 				'watch_paths': ['src/**'],
 				'trigger_type': 'manual',
@@ -660,6 +790,8 @@ class AppSourceSettingsApiTests(APITestCase):
 				'organization_connection_id': None,
 				'personal_connection_id': self.personal_connection.id,
 				'source_provider': 'github',
+				'source_kind': 'git-repository',
+				'source_location': 'https://github.com/acme/portal',
 				'source_ref': 'feature/ai-updates',
 				'watch_paths': ['src/**', 'tests/**'],
 				'trigger_type': 'push',
@@ -686,8 +818,149 @@ class AppSourceSettingsApiTests(APITestCase):
 				'connection_scope': 'personal',
 				'personal_connection_id': self.member_personal_connection.id,
 				'source_provider': 'github',
+				'source_kind': 'git-repository',
 			},
 			format='json',
 		)
 
 		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+	def test_raw_compose_and_dockerfile_sources_require_explicit_non_git_fields(self):
+		self.client.force_authenticate(self.org_admin)
+
+		compose_response = self.client.patch(
+			f'/api/apps/{self.app.id}/source_settings/',
+			{
+				'source_provider': 'raw-compose',
+				'source_kind': 'raw-compose',
+				'source_location': 'https://example.com/compose/docker-compose.yml',
+				'trigger_type': 'manual',
+				'watch_paths': ['ignored/**'],
+				'submodules_enabled': True,
+			},
+			format='json',
+		)
+
+		self.assertEqual(compose_response.status_code, status.HTTP_200_OK)
+		self.assertEqual(compose_response.data['source_kind'], 'raw-compose')
+		self.assertEqual(compose_response.data['source_location'], 'https://example.com/compose/docker-compose.yml')
+		self.assertEqual(compose_response.data['watch_paths'], [])
+		self.assertFalse(compose_response.data['submodules_enabled'])
+		self.assertEqual(compose_response.data['source_ref'], '')
+
+		dockerfile_response = self.client.patch(
+			f'/api/apps/{self.app.id}/source_settings/',
+			{
+				'source_provider': 'raw-compose',
+				'source_kind': 'raw-dockerfile',
+				'source_location': 'https://example.com/build/Dockerfile',
+				'build_context_path': './build',
+				'trigger_type': 'manual',
+			},
+			format='json',
+		)
+
+		self.assertEqual(dockerfile_response.status_code, status.HTTP_200_OK)
+		self.assertEqual(dockerfile_response.data['source_kind'], 'raw-dockerfile')
+		self.assertEqual(dockerfile_response.data['build_context_path'], './build')
+
+	def test_docker_registry_source_defaults_tag_to_latest(self):
+		self.client.force_authenticate(self.org_admin)
+
+		response = self.client.patch(
+			f'/api/apps/{self.app.id}/source_settings/',
+			{
+				'source_provider': 'docker-registry',
+				'source_kind': 'container-image',
+				'source_location': 'library/nginx',
+				'source_ref': '',
+				'trigger_type': 'manual',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertEqual(response.data['source_kind'], 'container-image')
+		self.assertEqual(response.data['source_ref'], 'latest')
+
+	def test_non_git_source_kinds_reject_push_trigger(self):
+		self.client.force_authenticate(self.org_admin)
+
+		response = self.client.patch(
+			f'/api/apps/{self.app.id}/source_settings/',
+			{
+				'source_provider': 'raw-compose',
+				'source_kind': 'raw-compose',
+				'source_location': 'https://example.com/compose/docker-compose.yml',
+				'trigger_type': 'push',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn('trigger_type', response.data)
+
+	def test_source_discovery_returns_manual_only_response_for_generic_git(self):
+		self.client.force_authenticate(self.org_admin)
+
+		response = self.client.get(
+			f'/api/apps/{self.app.id}/source_discovery/',
+			{'provider': 'generic-git', 'source_kind': 'git-repository'},
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertFalse(response.data['capabilities']['repository_browser'])
+		self.assertEqual(response.data['repositories'], [])
+		self.assertIn('Generic Git', response.data['manual_guidance'])
+
+	@mock.patch('api.source_discovery.requests.get')
+	def test_source_discovery_returns_docker_registry_results_and_tags(self, mock_get):
+		search_response = mock.Mock()
+		search_response.raise_for_status.return_value = None
+		search_response.json.return_value = {
+			'results': [
+				{
+					'repo_name': 'library/nginx',
+					'name': 'nginx',
+					'namespace': 'library',
+					'short_description': 'Official build of NGINX.',
+					'star_count': 100,
+					'pull_count': 500,
+					'is_official': True,
+				},
+			],
+		}
+
+		tags_response = mock.Mock()
+		tags_response.raise_for_status.return_value = None
+		tags_response.json.return_value = {
+			'results': [
+				{
+					'name': 'latest',
+					'last_updated': '2026-04-24T00:00:00Z',
+					'images': [{'digest': 'sha256:deadbeef'}],
+				},
+			],
+		}
+
+		mock_get.side_effect = [search_response, tags_response]
+
+		self.client.force_authenticate(self.org_admin)
+
+		search_result = self.client.get(
+			f'/api/apps/{self.app.id}/source_discovery/',
+			{'provider': 'docker-registry', 'source_kind': 'container-image', 'search': 'nginx'},
+		)
+
+		self.assertEqual(search_result.status_code, status.HTTP_200_OK)
+		self.assertTrue(search_result.data['capabilities']['registry_search'])
+		self.assertEqual(search_result.data['repositories'][0]['full_name'], 'library/nginx')
+
+		tags_result = self.client.get(
+			f'/api/apps/{self.app.id}/source_discovery/',
+			{'provider': 'docker-registry', 'source_kind': 'container-image', 'repository': 'nginx'},
+		)
+
+		self.assertEqual(tags_result.status_code, status.HTTP_200_OK)
+		self.assertEqual(tags_result.data['selected_repository'], 'library/nginx')
+		self.assertEqual(tags_result.data['tags'][0]['name'], 'latest')

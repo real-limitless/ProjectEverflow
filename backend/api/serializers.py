@@ -372,6 +372,9 @@ class AppSerializer(serializers.ModelSerializer):
 
 
 class AppSourceSettingsSerializer(serializers.ModelSerializer):
+    GIT_SOURCE_PROVIDERS = {'github', 'gitlab', 'bitbucket', 'gitea', 'generic-git'}
+    RAW_SOURCE_KINDS = {'raw-compose', 'raw-dockerfile'}
+
     app = serializers.PrimaryKeyRelatedField(read_only=True)
     source_type = serializers.ChoiceField(choices=App.SOURCE_CHOICES, source='app.source_type', read_only=True)
     repository_url = serializers.CharField(source='app.repository_url', read_only=True)
@@ -403,6 +406,9 @@ class AppSourceSettingsSerializer(serializers.ModelSerializer):
             'selected_connection_name',
             'selected_connection_provider',
             'source_provider',
+            'source_kind',
+            'source_location',
+            'build_context_path',
             'source_ref',
             'watch_paths',
             'trigger_type',
@@ -451,10 +457,52 @@ class AppSourceSettingsSerializer(serializers.ModelSerializer):
         organization_connection = data.get('organization_connection', getattr(instance, 'organization_connection', None))
         personal_connection = data.get('personal_connection', getattr(instance, 'personal_connection', None))
         source_provider = data.get('source_provider', getattr(instance, 'source_provider', 'github'))
+        source_kind = data.get('source_kind', getattr(instance, 'source_kind', 'git-repository'))
+        source_location = (data.get('source_location', getattr(instance, 'source_location', '')) or '').strip()
+        build_context_path = (data.get('build_context_path', getattr(instance, 'build_context_path', '')) or '').strip()
+        trigger_type = data.get('trigger_type', getattr(instance, 'trigger_type', 'manual'))
 
-        if source_provider in {'raw-compose', 'docker-registry'}:
+        if source_provider in self.GIT_SOURCE_PROVIDERS:
+            if source_kind != 'git-repository':
+                raise serializers.ValidationError({'source_kind': 'Git providers must use the git-repository source kind.'})
+
+            data['build_context_path'] = ''
+        elif source_provider == 'raw-compose':
+            if source_kind not in self.RAW_SOURCE_KINDS:
+                raise serializers.ValidationError({'source_kind': 'Raw compose sources must use the raw-compose or raw-dockerfile source kind.'})
             if connection_scope or organization_connection or personal_connection:
                 raise serializers.ValidationError('Non-Git source providers cannot use a Git connection.')
+            if not source_location:
+                raise serializers.ValidationError({'source_location': 'Enter the raw compose or Dockerfile location.'})
+            if trigger_type == 'push':
+                raise serializers.ValidationError({'trigger_type': 'Push triggers are not supported for non-Git source kinds yet.'})
+
+            data['connection_scope'] = ''
+            data['organization_connection'] = None
+            data['personal_connection'] = None
+            data['watch_paths'] = []
+            data['submodules_enabled'] = False
+            data['source_ref'] = ''
+            data['build_context_path'] = '.' if source_kind == 'raw-dockerfile' and not build_context_path else (build_context_path if source_kind == 'raw-dockerfile' else '')
+            return data
+        elif source_provider == 'docker-registry':
+            if source_kind != 'container-image':
+                raise serializers.ValidationError({'source_kind': 'Docker registry sources must use the container-image source kind.'})
+            if connection_scope or organization_connection or personal_connection:
+                raise serializers.ValidationError('Non-Git source providers cannot use a Git connection.')
+            if not source_location:
+                raise serializers.ValidationError({'source_location': 'Enter the image repository or reference.'})
+            if trigger_type == 'push':
+                raise serializers.ValidationError({'trigger_type': 'Push triggers are not supported for non-Git source kinds yet.'})
+
+            data['connection_scope'] = ''
+            data['organization_connection'] = None
+            data['personal_connection'] = None
+            data['watch_paths'] = []
+            data['submodules_enabled'] = False
+            data['build_context_path'] = ''
+            if 'source_ref' not in data or not (data.get('source_ref') or '').strip():
+                data['source_ref'] = 'latest'
             return data
 
         if connection_scope == 'organization':

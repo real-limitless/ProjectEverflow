@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardBody, Button } from '@patternfly/react-core';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
@@ -13,9 +14,10 @@ import {
   SelectTrigger, 
   SelectValue 
 } from '@/components/ui/select';
-import { Sparkles, GitCommit, GitPullRequest, FileSearch, MessageSquare, Zap, GitBranch, Plus, Trash2, Merge, RotateCcw, ArrowUp, ArrowDown, RefreshCw } from 'lucide-react';
+import { Sparkles, GitCommit, GitPullRequest, FileSearch, MessageSquare, Zap, GitBranch, Plus, Trash2, Merge, ArrowUp, ArrowDown, RefreshCw, AlertTriangle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import {
+  getAppSourceSettings,
   getGitBranches,
   getGitCommits,
   getGitRemoteStatus,
@@ -24,18 +26,64 @@ import {
   gitFetch,
   gitCheckout,
   gitCommit,
+  type AppSourceSettings,
   type GitBranch as IGitBranch,
   type GitCommit as IGitCommit,
   type GitRemoteStatus,
+  type ProjectApp,
 } from '@/lib/api';
 
 interface RepositoryGitTabProps {
+  app: ProjectApp | null;
   projectName: string;
   projectId: number;
+  onOpenGeneral?: () => void;
 }
 
-export const RepositoryGitTab: React.FC<RepositoryGitTabProps> = ({ projectName, projectId }) => {
+const sourceProviderLabels: Record<AppSourceSettings['source_provider'], string> = {
+  github: 'GitHub',
+  gitlab: 'GitLab',
+  bitbucket: 'Bitbucket',
+  gitea: 'Gitea',
+  'generic-git': 'Generic Git',
+  'raw-compose': 'Raw compose / Dockerfile',
+  'docker-registry': 'Docker registry / Docker Hub',
+};
+
+function isGitBackedSource(provider: AppSourceSettings['source_provider']) {
+  return provider !== 'raw-compose' && provider !== 'docker-registry';
+}
+
+function normalizeBranchName(value?: string | null) {
+  return (value || '')
+    .trim()
+    .replace(/^refs\/heads\//, '')
+    .replace(/^remotes\//, '')
+    .replace(/^origin\//, '')
+    .replace(/^heads\//, '');
+}
+
+function formatConnectionLabel(sourceSettings: AppSourceSettings | null) {
+  if (!sourceSettings?.selected_connection_name) {
+    return 'No saved connection';
+  }
+
+  if (!sourceSettings.connection_scope) {
+    return sourceSettings.selected_connection_name;
+  }
+
+  const scopeLabel = sourceSettings.connection_scope === 'organization' ? 'Shared' : 'Personal';
+  return `${scopeLabel} - ${sourceSettings.selected_connection_name}`;
+}
+
+export const RepositoryGitTab: React.FC<RepositoryGitTabProps> = ({ app, projectName, projectId, onOpenGeneral }) => {
   const queryClient = useQueryClient();
+
+  const { data: sourceSettingsResponse, isLoading: sourceSettingsLoading } = useQuery({
+    queryKey: ['app-source-settings', app?.id],
+    queryFn: () => getAppSourceSettings(app!.id),
+    enabled: app !== null,
+  });
 
   // Query states
   const { data: branchesData, isLoading: branchesLoading } = useQuery({
@@ -278,12 +326,88 @@ export const RepositoryGitTab: React.FC<RepositoryGitTabProps> = ({ projectName,
   };
 
   const currentBranch = branchesData?.data?.currentBranch || 'main';
+  const workspaceBranch = branchesData?.data?.currentBranch || null;
   const branches = branchesData?.data?.branches || [];
   const commits = commitsData?.data?.commits || [];
   const remoteStatus = remoteStatusData?.data;
+  const sourceSettings = sourceSettingsResponse?.data || null;
+  const sourceProvider = sourceSettings?.source_provider || null;
+  const sourceIsGitBacked = sourceProvider ? isGitBackedSource(sourceProvider) : true;
+  const sourceReference = sourceSettings?.source_location
+    || sourceSettings?.repository_url
+    || sourceSettings?.compose_path
+    || app?.repository_url
+    || app?.compose_path
+    || '';
+  const trackedBranch = sourceSettings?.source_ref || '';
+  const branchMismatch = Boolean(
+    sourceSettings
+      && sourceIsGitBacked
+      && trackedBranch
+      && workspaceBranch
+      && normalizeBranchName(trackedBranch) !== normalizeBranchName(workspaceBranch),
+  );
 
   return (
     <div className="space-y-4">
+      {app ? (
+        <Card>
+          <CardBody>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold">App deployment source context</h3>
+                <p className="text-sm text-muted-foreground">
+                  Source selection lives in General. Repository & Git only operates on the workspace repository for {projectName}.
+                </p>
+              </div>
+              {onOpenGeneral ? (
+                <Button variant="secondary" size="sm" onClick={onOpenGeneral}>
+                  Open General
+                </Button>
+              ) : null}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge variant="secondary">
+                Provider: {sourceSettingsLoading ? 'Loading' : sourceProvider ? sourceProviderLabels[sourceProvider] : 'Not configured'}
+              </Badge>
+              <Badge variant="secondary">Connection: {formatConnectionLabel(sourceSettings)}</Badge>
+              <Badge variant="secondary">Tracked ref: {trackedBranch || 'Not set'}</Badge>
+              <Badge variant="secondary">Trigger: {sourceSettings?.trigger_type || 'manual'}</Badge>
+            </div>
+            {sourceReference ? (
+              <p className="mt-3 break-all text-sm text-muted-foreground">Source: {sourceReference}</p>
+            ) : null}
+            {sourceSettings?.watch_paths?.length ? (
+              <p className="mt-1 text-sm text-muted-foreground">
+                Watched paths: {sourceSettings.watch_paths.join(', ')}
+              </p>
+            ) : null}
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {app && !sourceSettingsLoading && sourceSettings && !sourceIsGitBacked ? (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>General owns this non-Git deployment source</AlertTitle>
+          <AlertDescription>
+            This app deploys from {sourceProviderLabels[sourceProvider!]}. Repository & Git stays read-only here so deployment source changes happen in General instead of being split across tabs.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {branchMismatch ? (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Workspace branch differs from the tracked deployment ref</AlertTitle>
+          <AlertDescription>
+            General is tracking {trackedBranch}, but the workspace is currently on {workspaceBranch}. Switch the workspace branch here or update the tracked ref in General to keep deploys and live Git actions aligned.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {app && !sourceSettingsLoading && sourceSettings && !sourceIsGitBacked ? null : (
+        <>
       {/* Top bar: Branch selector + Sync status + Quick actions */}
       <Card>
         <CardBody>
@@ -434,7 +558,7 @@ export const RepositoryGitTab: React.FC<RepositoryGitTabProps> = ({ projectName,
                           ))}
                         </SelectContent>
                       </Select>
-                      <Button onClick={handleDeleteBranch} disabled={!selectedBranchToDelete} variant="destructive" className="w-full">Delete</Button>
+                      <Button onClick={handleDeleteBranch} disabled={!selectedBranchToDelete} variant="danger" className="w-full">Delete</Button>
                     </div>
                   </DialogContent>
                 </Dialog>
@@ -552,7 +676,7 @@ export const RepositoryGitTab: React.FC<RepositoryGitTabProps> = ({ projectName,
                       <Button 
                         onClick={generateCommitMessage}
                         disabled={isGenerating}
-                        variant="outline"
+                        variant="secondary"
                         className="gap-1.5"
                       >
                         <Sparkles className="h-3.5 w-3.5" />
@@ -758,6 +882,8 @@ export const RepositoryGitTab: React.FC<RepositoryGitTabProps> = ({ projectName,
           </div>
         </CardBody>
       </Card>
+        </>
+      )}
     </div>
   );
 };

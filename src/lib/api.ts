@@ -129,6 +129,45 @@ export interface Organization {
 export type GitProviderType = 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'generic-git';
 export type GitConnectionAuthType = 'pat' | 'oauth' | 'app' | 'ssh';
 export type GitConnectionScope = 'organization' | 'personal';
+export type AppSourceProviderType = GitProviderType | 'raw-compose' | 'docker-registry';
+export type AppSourceKind = 'git-repository' | 'raw-compose' | 'raw-dockerfile' | 'container-image';
+
+export interface AppSourceDiscoveryCapabilities {
+  manual_entry: boolean;
+  connection_selector: boolean;
+  repository_browser: boolean;
+  branch_browser: boolean;
+  registry_search: boolean;
+  tag_browser: boolean;
+  build_context_path: boolean;
+}
+
+export interface AppSourceDiscoveryRepository {
+  name: string;
+  full_name: string;
+  description: string;
+  star_count: number;
+  pull_count: number;
+  is_official: boolean;
+}
+
+export interface AppSourceDiscoveryTag {
+  name: string;
+  full_name: string;
+  last_updated: string;
+  digest: string;
+}
+
+export interface AppSourceDiscoveryPayload {
+  provider: AppSourceProviderType;
+  source_kind: AppSourceKind;
+  capabilities: AppSourceDiscoveryCapabilities;
+  manual_guidance: string;
+  repositories: AppSourceDiscoveryRepository[];
+  tags: AppSourceDiscoveryTag[];
+  selected_repository?: string;
+  lookup_error?: string;
+}
 
 export interface OrganizationGitConnection {
   id: number;
@@ -214,7 +253,10 @@ export interface AppSourceSettings {
   personal_connection_name?: string | null;
   selected_connection_name?: string | null;
   selected_connection_provider?: GitProviderType | null;
-  source_provider: GitProviderType | 'raw-compose' | 'docker-registry';
+  source_provider: AppSourceProviderType;
+  source_kind: AppSourceKind;
+  source_location: string;
+  build_context_path: string;
   source_ref: string;
   watch_paths: string[];
   trigger_type: 'manual' | 'push' | 'schedule';
@@ -969,6 +1011,28 @@ export const getPersonalGitConnectionBranches = async (
   const searchParams = new URLSearchParams();
   searchParams.append('repository', repository);
   return apiCall<GitConnectionBranchList>(`/personal-git-connections/${id}/branches/?${searchParams.toString()}`);
+};
+
+export const getAppSourceDiscovery = async (
+  appId: number,
+  params: {
+    provider: AppSourceProviderType;
+    source_kind: AppSourceKind;
+    search?: string;
+    repository?: string;
+  }
+): Promise<ApiResponse<AppSourceDiscoveryPayload>> => {
+  const searchParams = new URLSearchParams();
+  searchParams.append('provider', params.provider);
+  searchParams.append('source_kind', params.source_kind);
+  if (params.search) {
+    searchParams.append('search', params.search);
+  }
+  if (params.repository) {
+    searchParams.append('repository', params.repository);
+  }
+
+  return apiCall<AppSourceDiscoveryPayload>(`/apps/${appId}/source_discovery/?${searchParams.toString()}`);
 };
 
 export const getAppSourceSettings = async (appId: number): Promise<ApiResponse<AppSourceSettings>> => {
