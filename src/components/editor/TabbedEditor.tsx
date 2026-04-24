@@ -190,7 +190,7 @@ const TabbedEditorInner: React.FC<TabbedEditorProps & { forwardedRef: React.Ref<
         onDeleteFile={handleDeleteFile}
       />
 
-      <CardBody className="flex-1 overflow-hidden p-0 flex flex-col">
+      <CardBody className="flex-1 min-h-0 overflow-hidden p-0 flex flex-col">
         {activeFile ? (
           <>
             {/* Editor Header with Save/Discard */}
@@ -228,7 +228,7 @@ const TabbedEditorInner: React.FC<TabbedEditorProps & { forwardedRef: React.Ref<
             )}
 
             {/* Editor */}
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-hidden">
               <CodeEditor
                 content={activeFile.content}
                 fileName={activeFile.path}

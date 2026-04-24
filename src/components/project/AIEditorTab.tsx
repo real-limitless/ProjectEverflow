@@ -1153,6 +1153,8 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
     }
   };
 
+  const showWorkspacePanels = activeSidebarTab === 'files';
+
   return (
     <>
       <div className="flex flex-col flex-1 min-h-0 h-full overflow-hidden">
@@ -1177,7 +1179,7 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
                     </TabsList>
                   </div>
                   
-                  <TabsContent value="files" className="flex-1 min-h-0 overflow-hidden p-0 mt-0 flex flex-col">
+                  <TabsContent value="files" className="data-[state=active]:flex data-[state=active]:flex-1 data-[state=inactive]:hidden min-h-0 overflow-hidden p-0 mt-0 flex-col">
                     <FileExplorer
                       project={project}
                       onFileSelect={handleFileSelect}
@@ -1209,8 +1211,8 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
                     />
                   </TabsContent>
 
-                  <TabsContent value="editor" className="data-[state=active]:flex-1 data-[state=inactive]:h-0 min-h-0 overflow-hidden p-0 mt-0" forceMount>
-                    <div className={activeSidebarTab === 'editor' ? 'h-full' : 'hidden'}>
+                  <TabsContent value="editor" className="data-[state=active]:flex data-[state=active]:flex-1 data-[state=inactive]:hidden min-h-0 overflow-hidden p-0 mt-0 flex-col" forceMount>
+                    <div className="flex h-full min-h-0 flex-1 flex-col">
                       <TabbedEditor
                         ref={tabbedEditorRef}
                         project={project}
@@ -1223,149 +1225,152 @@ ${(analysisResult.total_functions || 0) > 20 ? `- Consider breaking down ${analy
                 </div>
               </ResizablePanel>
 
-              <ResizableHandle
-                withHandle
-                className="w-1.5 bg-border hover:bg-primary/20 transition-colors cursor-col-resize"
-              />
+              {showWorkspacePanels && (
+                <ResizableHandle
+                  withHandle
+                  className="w-1.5 bg-border hover:bg-primary/20 transition-colors cursor-col-resize"
+                />
+              )}
             </>
           )}
 
-          {/* Right side: Chat and Preview Area - takes remaining space */}
-          <ResizablePanel defaultSize={isSidebarCollapsed ? 100 : 100 - sidebarSize} minSize={layoutPreset.mainMin}>
-            <ResizablePanelGroup
-              key={`ai-editor-main:${layoutMode}:${storageScope}:${isChatCollapsed ? 'cc' : 'ce'}:${isPreviewHidden ? 'ph' : 'pv'}`}
-              direction="horizontal"
-              className="h-full w-full gap-4"
-              onLayout={handlePanelLayoutChange}
-            >
-            {/* Chat Panel — PatternFly Chatbot */}
-            {!isChatCollapsed && (
-              <>
-                <ResizablePanel defaultSize={isPreviewHidden ? 100 : panelLayout[0]} minSize={layoutPreset.chatMin} maxSize={isPreviewHidden ? 100 : layoutPreset.chatMax} className="flex flex-col h-full min-h-0">
-                  <ChatPanel
-                    project={project}
-                    allDisplayMessages={allDisplayMessages}
-                    messagesLoading={messagesLoading}
-                    isStreaming={isStreaming}
-                    streamingContent={streamingContent}
-                    currentSessionId={currentSessionId}
-                    sessions={sessions}
-                    sessionsLoading={sessionsLoading}
-                    onSelectSession={handleSelectSession}
-                    onNewSession={() => {
-                      createSessionMutation.mutate({
-                        project: project.id,
-                        title: `AI Editor Session for ${project.name}`,
-                        llm_id: getEffectiveModel(selectedLLM) || undefined,
-                        temperature,
-                        mode: chatMode,
-                        persona: selectedPersonaId || undefined,
-                        enabled_tool_ids: selectedToolIds,
-                      });
-                    }}
-                    isLoading={isLoading}
-                    onSend={handleSend}
-                    chatMode={chatMode}
-                    onChatModeChange={setChatMode}
-                    editingMessageId={editingMessageId}
-                    savingMessageId={savingMessageId}
-                    onEditMessage={handleEditMessage}
-                    onSetEditingMessageId={setEditingMessageId}
-                    onRegenerateMessage={handleRegenerateMessage}
-                    onCopyMessage={handleCopyMessage}
-                    selectedLLM={selectedLLM}
-                    onSelectedLLMChange={setSelectedLLM}
-                    selectedModelLabel={selectedModelLabel}
-                    llmOptions={llmOptions}
-                    getModelLabel={getModelLabel}
-                    temperature={temperature}
-                    onTemperatureChange={setTemperature}
-                    maxTokens={maxTokens}
-                    onMaxTokensChange={setMaxTokens}
-                    isSettingsOpen={isSettingsOpen}
-                    onSettingsOpenChange={setIsSettingsOpen}
-                    isModelSelectOpen={isModelSelectOpen}
-                    onModelSelectOpenChange={setIsModelSelectOpen}
-                    openFiles={openFiles}
-                    contextFiles={contextFiles}
-                    onContextChange={setContextFiles}
-                    allTools={allTools}
-                    selectedToolIds={selectedToolIds}
-                    onToolsChange={setSelectedToolIds}
-                    personas={personas}
-                    selectedPersona={selectedPersona}
-                    selectedPersonaId={selectedPersonaId}
-                    onSelectedPersonaChange={setSelectedPersonaId}
-                    isToolSelectorDialogOpen={isToolSelectorDialogOpen}
-                    onToolSelectorDialogOpenChange={setIsToolSelectorDialogOpen}
-                    agentMode={agentMode}
-                    onAgentModeToggle={() => {
-                      if (copilotAvailable || agentMode === 'copilot') {
-                        setAgentMode(prev => prev === 'assisted' ? 'copilot' : 'assisted');
-                      } else {
-                        toast({
-                          title: 'Copilot Not Available',
-                          description: 'Start workspace with COPILOT_MODE=true to enable',
-                          variant: 'default',
+          {showWorkspacePanels && (
+            <ResizablePanel defaultSize={isSidebarCollapsed ? 100 : 100 - sidebarSize} minSize={layoutPreset.mainMin}>
+              <ResizablePanelGroup
+                key={`ai-editor-main:${layoutMode}:${storageScope}:${isChatCollapsed ? 'cc' : 'ce'}:${isPreviewHidden ? 'ph' : 'pv'}`}
+                direction="horizontal"
+                className="h-full w-full gap-4"
+                onLayout={handlePanelLayoutChange}
+              >
+              {/* Chat Panel — PatternFly Chatbot */}
+              {!isChatCollapsed && (
+                <>
+                  <ResizablePanel defaultSize={isPreviewHidden ? 100 : panelLayout[0]} minSize={layoutPreset.chatMin} maxSize={isPreviewHidden ? 100 : layoutPreset.chatMax} className="flex flex-col h-full min-h-0">
+                    <ChatPanel
+                      project={project}
+                      allDisplayMessages={allDisplayMessages}
+                      messagesLoading={messagesLoading}
+                      isStreaming={isStreaming}
+                      streamingContent={streamingContent}
+                      currentSessionId={currentSessionId}
+                      sessions={sessions}
+                      sessionsLoading={sessionsLoading}
+                      onSelectSession={handleSelectSession}
+                      onNewSession={() => {
+                        createSessionMutation.mutate({
+                          project: project.id,
+                          title: `AI Editor Session for ${project.name}`,
+                          llm_id: getEffectiveModel(selectedLLM) || undefined,
+                          temperature,
+                          mode: chatMode,
+                          persona: selectedPersonaId || undefined,
+                          enabled_tool_ids: selectedToolIds,
                         });
-                      }
-                    }}
-                    copilotAvailable={copilotAvailable}
-                    agentWsStatus={agentWsStatus}
-                    isAnalysisModalOpen={isAnalysisModalOpen}
-                    onAnalysisModalOpenChange={setIsAnalysisModalOpen}
-                    analysisChunks={analysisChunks}
-                    analysisFinal={analysisFinal}
-                    onCreateChangeRequest={handleCreateChangeRequest}
-                    chatSummary={chatSummary}
-                    onSummaryChange={handleSummaryChange}
-                    onRegenerateSummary={async () => {
-                      if (currentSessionId) {
-                        try {
-                          await summarizeConversation(currentSessionId);
-                          queryClient.invalidateQueries({ queryKey: ['chat-sessions'] });
-                          toast({ title: 'Summary regenerated', description: 'Check the session subject for the updated summary.' });
-                        } catch {
-                          toast({ title: 'Error', description: 'Failed to regenerate summary.', variant: 'destructive' });
+                      }}
+                      isLoading={isLoading}
+                      onSend={handleSend}
+                      chatMode={chatMode}
+                      onChatModeChange={setChatMode}
+                      editingMessageId={editingMessageId}
+                      savingMessageId={savingMessageId}
+                      onEditMessage={handleEditMessage}
+                      onSetEditingMessageId={setEditingMessageId}
+                      onRegenerateMessage={handleRegenerateMessage}
+                      onCopyMessage={handleCopyMessage}
+                      selectedLLM={selectedLLM}
+                      onSelectedLLMChange={setSelectedLLM}
+                      selectedModelLabel={selectedModelLabel}
+                      llmOptions={llmOptions}
+                      getModelLabel={getModelLabel}
+                      temperature={temperature}
+                      onTemperatureChange={setTemperature}
+                      maxTokens={maxTokens}
+                      onMaxTokensChange={setMaxTokens}
+                      isSettingsOpen={isSettingsOpen}
+                      onSettingsOpenChange={setIsSettingsOpen}
+                      isModelSelectOpen={isModelSelectOpen}
+                      onModelSelectOpenChange={setIsModelSelectOpen}
+                      openFiles={openFiles}
+                      contextFiles={contextFiles}
+                      onContextChange={setContextFiles}
+                      allTools={allTools}
+                      selectedToolIds={selectedToolIds}
+                      onToolsChange={setSelectedToolIds}
+                      personas={personas}
+                      selectedPersona={selectedPersona}
+                      selectedPersonaId={selectedPersonaId}
+                      onSelectedPersonaChange={setSelectedPersonaId}
+                      isToolSelectorDialogOpen={isToolSelectorDialogOpen}
+                      onToolSelectorDialogOpenChange={setIsToolSelectorDialogOpen}
+                      agentMode={agentMode}
+                      onAgentModeToggle={() => {
+                        if (copilotAvailable || agentMode === 'copilot') {
+                          setAgentMode(prev => prev === 'assisted' ? 'copilot' : 'assisted');
+                        } else {
+                          toast({
+                            title: 'Copilot Not Available',
+                            description: 'Start workspace with COPILOT_MODE=true to enable',
+                            variant: 'default',
+                          });
                         }
-                      }
-                    }}
-                    memoryItems={memoryItems}
-                    onAddMemory={handleAddMemory}
-                    onEditMemory={handleEditMemory}
-                    onDeleteMemory={handleDeleteMemory}
-                    onClearAllMemory={handleClearAllMemory}
-                    agentTodos={agentTodos}
-                    isSidebarCollapsed={isSidebarCollapsed}
-                    onSidebarToggle={handleSidebarToggle}
-                    isPreviewHidden={isPreviewHidden}
-                    onPreviewToggle={handlePreviewToggle}
-                    onStopStreaming={wsCancel || undefined}
-                    messagesEndRef={messagesEndRef}
+                      }}
+                      copilotAvailable={copilotAvailable}
+                      agentWsStatus={agentWsStatus}
+                      isAnalysisModalOpen={isAnalysisModalOpen}
+                      onAnalysisModalOpenChange={setIsAnalysisModalOpen}
+                      analysisChunks={analysisChunks}
+                      analysisFinal={analysisFinal}
+                      onCreateChangeRequest={handleCreateChangeRequest}
+                      chatSummary={chatSummary}
+                      onSummaryChange={handleSummaryChange}
+                      onRegenerateSummary={async () => {
+                        if (currentSessionId) {
+                          try {
+                            await summarizeConversation(currentSessionId);
+                            queryClient.invalidateQueries({ queryKey: ['chat-sessions'] });
+                            toast({ title: 'Summary regenerated', description: 'Check the session subject for the updated summary.' });
+                          } catch {
+                            toast({ title: 'Error', description: 'Failed to regenerate summary.', variant: 'destructive' });
+                          }
+                        }
+                      }}
+                      memoryItems={memoryItems}
+                      onAddMemory={handleAddMemory}
+                      onEditMemory={handleEditMemory}
+                      onDeleteMemory={handleDeleteMemory}
+                      onClearAllMemory={handleClearAllMemory}
+                      agentTodos={agentTodos}
+                      isSidebarCollapsed={isSidebarCollapsed}
+                      onSidebarToggle={handleSidebarToggle}
+                      isPreviewHidden={isPreviewHidden}
+                      onPreviewToggle={handlePreviewToggle}
+                      onStopStreaming={wsCancel || undefined}
+                      messagesEndRef={messagesEndRef}
+                    />
+                  </ResizablePanel>
+
+                  {!isPreviewHidden && (
+                    <ResizableHandle
+                      withHandle
+                      className="w-2 bg-border hover:bg-primary/20 transition-colors cursor-col-resize"
+                    />
+                  )}
+                </>
+              )}
+
+              {/* Workspace Panel — optional */}
+              {!isPreviewHidden && (
+                <ResizablePanel defaultSize={isChatCollapsed ? 100 : panelLayout[1]} minSize={layoutPreset.previewMin}>
+                  <WorkspacePanel 
+                    project={project}
+                    isChatCollapsed={isChatCollapsed}
+                    onChatCollapsedChange={setIsChatCollapsed}
                   />
                 </ResizablePanel>
-
-                {!isPreviewHidden && (
-                  <ResizableHandle
-                    withHandle
-                    className="w-2 bg-border hover:bg-primary/20 transition-colors cursor-col-resize"
-                  />
-                )}
-              </>
-            )}
-
-            {/* Workspace Panel — optional */}
-            {!isPreviewHidden && (
-              <ResizablePanel defaultSize={isChatCollapsed ? 100 : panelLayout[1]} minSize={layoutPreset.previewMin}>
-                <WorkspacePanel 
-                  project={project}
-                  isChatCollapsed={isChatCollapsed}
-                  onChatCollapsedChange={setIsChatCollapsed}
-                />
-              </ResizablePanel>
-            )}
-            </ResizablePanelGroup>
-          </ResizablePanel>
+              )}
+              </ResizablePanelGroup>
+            </ResizablePanel>
+          )}
           </ResizablePanelGroup>
         </div>
       </div>
