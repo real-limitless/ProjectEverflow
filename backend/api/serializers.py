@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Team, Organization, OrganizationMembership, Project, Environment, App, Deployment, ProjectTemplate, ChangeRequest, Approval, ComplianceCheck, ComplianceTemplate, ProjectAssignment, Discussion, DiscussionReply, MarketplaceItem, MarketplaceCategory, ChatbotPersona, ChatbotTemplate, ChatSession, ChatMessage, Issue, IssueReply, Workflow, WorkflowExecution, LLMProvider
+from .models import User, Team, Organization, OrganizationMembership, OrganizationGitConnection, PersonalGitConnection, Project, Environment, App, AppSourceSettings, Deployment, ProjectTemplate, ChangeRequest, Approval, ComplianceCheck, ComplianceTemplate, ProjectAssignment, Discussion, DiscussionReply, MarketplaceItem, MarketplaceCategory, ChatbotPersona, ChatbotTemplate, ChatSession, ChatMessage, Issue, IssueReply, Workflow, WorkflowExecution, LLMProvider
 from .models import ProjectPod, ProjectService, ProjectTool, ToolExecution, WorkspaceResourceTier
 
 class UserSerializer(serializers.ModelSerializer):
@@ -72,6 +72,187 @@ class OrganizationSerializer(serializers.ModelSerializer):
         if obj.owner_id == request.user.id:
             return 'owner'
         return None
+
+
+class OrganizationGitConnectionSerializer(serializers.ModelSerializer):
+    organization = serializers.PrimaryKeyRelatedField(read_only=True)
+    organization_id = serializers.PrimaryKeyRelatedField(source='organization', queryset=Organization.objects.all(), write_only=True, required=False)
+    organization_name = serializers.CharField(source='organization.name', read_only=True)
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
+    credential_masked = serializers.SerializerMethodField()
+    has_credentials = serializers.SerializerMethodField()
+    repository_count = serializers.SerializerMethodField()
+    credential_plain = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    class Meta:
+        model = OrganizationGitConnection
+        fields = [
+            'id',
+            'organization',
+            'organization_id',
+            'organization_name',
+            'name',
+            'provider_type',
+            'auth_type',
+            'base_url',
+            'notes',
+            'repository_cache',
+            'repository_count',
+            'webhook_enabled',
+            'last_tested_at',
+            'last_test_status',
+            'credential_masked',
+            'credential_plain',
+            'has_credentials',
+            'created_by',
+            'created_by_username',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'id',
+            'organization',
+            'organization_name',
+            'repository_count',
+            'last_tested_at',
+            'last_test_status',
+            'credential_masked',
+            'has_credentials',
+            'created_by',
+            'created_by_username',
+            'created_at',
+            'updated_at',
+        ]
+
+    def get_credential_masked(self, obj):
+        if not obj.credential:
+            return None
+        try:
+            plain_value = obj.get_credential()
+            if len(plain_value) > 4:
+                return '*' * (len(plain_value) - 4) + plain_value[-4:]
+            return '****'
+        except Exception:
+            return '****'
+
+    def get_has_credentials(self, obj):
+        return bool(obj.credential)
+
+    def get_repository_count(self, obj):
+        return len(obj.repository_cache or [])
+
+    def create(self, validated_data):
+        credential_plain = validated_data.pop('credential_plain', None)
+        instance = super().create(validated_data)
+
+        if credential_plain is not None:
+            if credential_plain:
+                instance.set_credential(credential_plain)
+            else:
+                instance.credential = ''
+            instance.save()
+
+        return instance
+
+    def update(self, instance, validated_data):
+        credential_plain = validated_data.pop('credential_plain', None)
+        instance = super().update(instance, validated_data)
+
+        if credential_plain is not None:
+            if credential_plain:
+                instance.set_credential(credential_plain)
+            else:
+                instance.credential = ''
+            instance.save()
+
+        return instance
+
+
+class PersonalGitConnectionSerializer(serializers.ModelSerializer):
+    user = serializers.PrimaryKeyRelatedField(read_only=True)
+    user_username = serializers.CharField(source='user.username', read_only=True)
+    credential_masked = serializers.SerializerMethodField()
+    has_credentials = serializers.SerializerMethodField()
+    repository_count = serializers.SerializerMethodField()
+    credential_plain = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    class Meta:
+        model = PersonalGitConnection
+        fields = [
+            'id',
+            'user',
+            'user_username',
+            'name',
+            'provider_type',
+            'auth_type',
+            'base_url',
+            'notes',
+            'repository_cache',
+            'repository_count',
+            'webhook_enabled',
+            'last_tested_at',
+            'last_test_status',
+            'credential_masked',
+            'credential_plain',
+            'has_credentials',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'id',
+            'user',
+            'user_username',
+            'repository_count',
+            'last_tested_at',
+            'last_test_status',
+            'credential_masked',
+            'has_credentials',
+            'created_at',
+            'updated_at',
+        ]
+
+    def get_credential_masked(self, obj):
+        if not obj.credential:
+            return None
+        try:
+            plain_value = obj.get_credential()
+            if len(plain_value) > 4:
+                return '*' * (len(plain_value) - 4) + plain_value[-4:]
+            return '****'
+        except Exception:
+            return '****'
+
+    def get_has_credentials(self, obj):
+        return bool(obj.credential)
+
+    def get_repository_count(self, obj):
+        return len(obj.repository_cache or [])
+
+    def create(self, validated_data):
+        credential_plain = validated_data.pop('credential_plain', None)
+        instance = super().create(validated_data)
+
+        if credential_plain is not None:
+            if credential_plain:
+                instance.set_credential(credential_plain)
+            else:
+                instance.credential = ''
+            instance.save()
+
+        return instance
+
+    def update(self, instance, validated_data):
+        credential_plain = validated_data.pop('credential_plain', None)
+        instance = super().update(instance, validated_data)
+
+        if credential_plain is not None:
+            if credential_plain:
+                instance.set_credential(credential_plain)
+            else:
+                instance.credential = ''
+            instance.save()
+
+        return instance
 
 class TeamSerializer(serializers.ModelSerializer):
     organization = OrganizationSerializer(read_only=True)
@@ -188,6 +369,117 @@ class AppSerializer(serializers.ModelSerializer):
             'status': latest.status,
             'created_at': latest.created_at,
         }
+
+
+class AppSourceSettingsSerializer(serializers.ModelSerializer):
+    app = serializers.PrimaryKeyRelatedField(read_only=True)
+    source_type = serializers.ChoiceField(choices=App.SOURCE_CHOICES, source='app.source_type', read_only=True)
+    repository_url = serializers.CharField(source='app.repository_url', read_only=True)
+    compose_path = serializers.CharField(source='app.compose_path', read_only=True)
+    organization_connection = serializers.PrimaryKeyRelatedField(read_only=True)
+    organization_connection_id = serializers.PrimaryKeyRelatedField(source='organization_connection', queryset=OrganizationGitConnection.objects.all(), write_only=True, required=False, allow_null=True)
+    organization_connection_name = serializers.CharField(source='organization_connection.name', read_only=True)
+    personal_connection = serializers.PrimaryKeyRelatedField(read_only=True)
+    personal_connection_id = serializers.PrimaryKeyRelatedField(source='personal_connection', queryset=PersonalGitConnection.objects.all(), write_only=True, required=False, allow_null=True)
+    personal_connection_name = serializers.CharField(source='personal_connection.name', read_only=True)
+    selected_connection_name = serializers.SerializerMethodField()
+    selected_connection_provider = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AppSourceSettings
+        fields = [
+            'id',
+            'app',
+            'source_type',
+            'repository_url',
+            'compose_path',
+            'connection_scope',
+            'organization_connection',
+            'organization_connection_id',
+            'organization_connection_name',
+            'personal_connection',
+            'personal_connection_id',
+            'personal_connection_name',
+            'selected_connection_name',
+            'selected_connection_provider',
+            'source_provider',
+            'source_ref',
+            'watch_paths',
+            'trigger_type',
+            'auto_deploy_enabled',
+            'submodules_enabled',
+            'schedule',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'id',
+            'app',
+            'source_type',
+            'repository_url',
+            'compose_path',
+            'organization_connection',
+            'organization_connection_name',
+            'personal_connection',
+            'personal_connection_name',
+            'selected_connection_name',
+            'selected_connection_provider',
+            'created_at',
+            'updated_at',
+        ]
+
+    def get_selected_connection_name(self, obj):
+        if obj.connection_scope == 'organization' and obj.organization_connection:
+            return obj.organization_connection.name
+        if obj.connection_scope == 'personal' and obj.personal_connection:
+            return obj.personal_connection.name
+        return None
+
+    def get_selected_connection_provider(self, obj):
+        if obj.connection_scope == 'organization' and obj.organization_connection:
+            return obj.organization_connection.provider_type
+        if obj.connection_scope == 'personal' and obj.personal_connection:
+            return obj.personal_connection.provider_type
+        return None
+
+    def validate(self, data):
+        instance = getattr(self, 'instance', None)
+        request = self.context.get('request')
+        app = self.context.get('app') or getattr(instance, 'app', None)
+
+        connection_scope = data.get('connection_scope', getattr(instance, 'connection_scope', ''))
+        organization_connection = data.get('organization_connection', getattr(instance, 'organization_connection', None))
+        personal_connection = data.get('personal_connection', getattr(instance, 'personal_connection', None))
+        source_provider = data.get('source_provider', getattr(instance, 'source_provider', 'github'))
+
+        if source_provider in {'raw-compose', 'docker-registry'}:
+            if connection_scope or organization_connection or personal_connection:
+                raise serializers.ValidationError('Non-Git source providers cannot use a Git connection.')
+            return data
+
+        if connection_scope == 'organization':
+            if not organization_connection:
+                raise serializers.ValidationError({'organization_connection_id': 'Select a shared organization Git connection.'})
+            if personal_connection:
+                raise serializers.ValidationError({'personal_connection_id': 'Personal connection must be empty for shared source settings.'})
+            if organization_connection.provider_type != source_provider:
+                raise serializers.ValidationError({'source_provider': 'Selected provider must match the shared connection provider.'})
+            if app and app.environment.project.organization_id != organization_connection.organization_id:
+                raise serializers.ValidationError({'organization_connection_id': 'Shared connections must belong to the same organization as the app project.'})
+        elif connection_scope == 'personal':
+            if not personal_connection:
+                raise serializers.ValidationError({'personal_connection_id': 'Select a personal Git connection.'})
+            if organization_connection:
+                raise serializers.ValidationError({'organization_connection_id': 'Shared connection must be empty for personal source settings.'})
+            if personal_connection.provider_type != source_provider:
+                raise serializers.ValidationError({'source_provider': 'Selected provider must match the personal connection provider.'})
+            if request and personal_connection.user_id != request.user.id:
+                raise serializers.ValidationError({'personal_connection_id': 'You can only use your own personal Git connections.'})
+        else:
+            if organization_connection or personal_connection:
+                raise serializers.ValidationError('A connection scope is required when selecting a Git connection.')
+
+        return data
 
 
 class DeploymentSerializer(serializers.ModelSerializer):

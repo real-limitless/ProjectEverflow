@@ -10,6 +10,7 @@ import Login from "./pages/Login";
 import Organizations from "./pages/Organizations";
 import OrganizationsOverview from "./pages/organizations/OrganizationsOverview";
 import OrganizationDetail from "./pages/organizations/OrganizationDetail";
+import OrganizationSettings from "./pages/organizations/OrganizationSettings";
 import ProjectDetail from "./pages/organizations/ProjectDetail";
 import EnvironmentDetail from "./pages/organizations/EnvironmentDetail";
 import AppDetail from "./pages/organizations/AppDetail";
@@ -55,6 +56,7 @@ const App = () => (
           <Route path="/organizations" element={<AuthGuard><Organizations /></AuthGuard>}>
             <Route index element={<OrganizationsOverview />} />
             <Route path=":orgId" element={<OrganizationDetail />} />
+            <Route path=":orgId/settings" element={<OrganizationSettings />} />
             <Route path=":orgId/projects/:projectId" element={<ProjectDetail />} />
             <Route path=":orgId/projects/:projectId/environments/:environmentId" element={<EnvironmentDetail />} />
             <Route path=":orgId/projects/:projectId/environments/:environmentId/apps/:appId" element={<AppDetail />} />

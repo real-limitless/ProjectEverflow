@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { ProjectWorkspaceSettingsPanel } from '@/components/project/ProjectWorkspaceSettingsPanel';
 import { toast } from '@/hooks/use-toast';
 import { deleteProject, updateProject } from '@/lib/api';
 import type { OrganizationHierarchyOutletContext } from '@/pages/Organizations';
@@ -188,6 +189,11 @@ const ProjectDetail = () => {
           )}
         </CardContent>
       </Card>
+
+      <ProjectWorkspaceSettingsPanel
+        project={selectedProject}
+        onOpenAdminSettings={() => navigate('/admin/workspace-settings')}
+      />
 
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
         <DialogContent>

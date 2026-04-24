@@ -2,6 +2,10 @@ export function buildOrganizationPath(organizationId: number) {
   return `/organizations/${organizationId}`;
 }
 
+export function buildOrganizationSettingsPath(organizationId: number) {
+  return `${buildOrganizationPath(organizationId)}/settings`;
+}
+
 export function buildProjectPath(organizationId: number, projectId: number) {
   return `${buildOrganizationPath(organizationId)}/projects/${projectId}`;
 }

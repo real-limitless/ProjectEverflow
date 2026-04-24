@@ -15,14 +15,18 @@ from .workspace_initializer import initialize_project_workspace, WorkspaceInitia
 from .llm_config import get_llm_manager
 from .podman_orchestrator import PodmanOrchestrator
 from .compose_parser import load_compose_from_text, build_service_specs
+from .git_connection_discovery import GitProviderDiscoveryError, list_connection_repositories, list_repository_branches
 from .models import (
     User,
     Team,
     Organization,
     OrganizationMembership,
+    OrganizationGitConnection,
+    PersonalGitConnection,
     Project,
     Environment,
     App,
+    AppSourceSettings,
     Deployment,
     ProjectTemplate,
     ChangeRequest,
@@ -54,9 +58,12 @@ from .serializers import (
     TeamSerializer,
     OrganizationSerializer,
     OrganizationMembershipSerializer,
+    OrganizationGitConnectionSerializer,
+    PersonalGitConnectionSerializer,
     ProjectSerializer,
     EnvironmentSerializer,
     AppSerializer,
+    AppSourceSettingsSerializer,
     DeploymentSerializer,
     ProjectTemplateSerializer,
     ChangeRequestSerializer,
@@ -317,6 +324,204 @@ class OrganizationMembershipViewSet(viewsets.ReadOnlyModelViewSet):
         if organization_id:
             queryset = queryset.filter(organization_id=organization_id)
         return queryset
+
+
+class OrganizationGitConnectionViewSet(viewsets.ModelViewSet):
+    queryset = OrganizationGitConnection.objects.all()
+    serializer_class = OrganizationGitConnectionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = OrganizationGitConnection.objects.select_related('organization', 'created_by')
+        if not user_is_global_admin(self.request.user):
+            queryset = queryset.filter(
+                models.Q(organization__owner=self.request.user) |
+                models.Q(organization__memberships__user=self.request.user)
+            ).distinct()
+
+        organization_id = self.request.query_params.get('organization')
+        if organization_id:
+            queryset = queryset.filter(organization_id=organization_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        organization = serializer.validated_data.get('organization')
+        if not organization:
+            raise ValidationError({'organization_id': 'This field is required.'})
+        if not user_has_organization_access(self.request.user, organization, minimum_role='admin'):
+            raise PermissionDenied('You do not have permission to manage organization Git connections')
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        organization = serializer.validated_data.get('organization', instance.organization)
+        if organization != instance.organization:
+            raise ValidationError({'organization_id': 'Changing the owning organization is not supported.'})
+        if not user_has_organization_access(self.request.user, instance.organization, minimum_role='admin'):
+            raise PermissionDenied('You do not have permission to manage organization Git connections')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not user_has_organization_access(self.request.user, instance.organization, minimum_role='admin'):
+            raise PermissionDenied('You do not have permission to manage organization Git connections')
+        instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def test_connection(self, request, pk=None):
+        connection = self.get_object()
+        if not user_has_organization_access(request.user, connection.organization, minimum_role='admin'):
+            raise PermissionDenied('You do not have permission to test organization Git connections')
+
+        connection.last_tested_at = timezone.now()
+        requires_secret = connection.auth_type in {'pat', 'app', 'ssh'}
+
+        if requires_secret and not connection.credential:
+            connection.last_test_status = 'failed'
+            message = 'A credential is required before this connection can be validated.'
+        else:
+            connection.last_test_status = 'succeeded'
+            message = 'Connection record passed structural validation. Use repository discovery to verify repository and branch access for supported providers.'
+
+        connection.save(update_fields=['last_tested_at', 'last_test_status', 'updated_at'])
+        serializer = self.get_serializer(connection)
+        return Response(
+            {
+                'status': connection.last_test_status,
+                'message': message,
+                'connection': serializer.data,
+            }
+        )
+
+    @action(detail=True, methods=['get'])
+    def repositories(self, request, pk=None):
+        connection = self.get_object()
+        if not user_has_organization_access(request.user, connection.organization, minimum_role='member'):
+            raise PermissionDenied('You do not have permission to use organization Git connections')
+
+        search = request.query_params.get('search')
+        try:
+            repositories = list_connection_repositories(connection, search=search)
+        except GitProviderDiscoveryError as exc:
+            raise ValidationError({'detail': str(exc)}) from exc
+
+        connection.repository_cache = repositories
+        connection.save(update_fields=['repository_cache', 'updated_at'])
+
+        return Response(
+            {
+                'repositories': repositories,
+                'count': len(repositories),
+            }
+        )
+
+    @action(detail=True, methods=['get'])
+    def branches(self, request, pk=None):
+        connection = self.get_object()
+        if not user_has_organization_access(request.user, connection.organization, minimum_role='member'):
+            raise PermissionDenied('You do not have permission to use organization Git connections')
+
+        repository_identifier = request.query_params.get('repository', '')
+        try:
+            payload = list_repository_branches(connection, repository_identifier)
+        except GitProviderDiscoveryError as exc:
+            raise ValidationError({'detail': str(exc)}) from exc
+
+        return Response(
+            {
+                **payload,
+                'count': len(payload['branches']),
+            }
+        )
+
+
+class PersonalGitConnectionViewSet(viewsets.ModelViewSet):
+    queryset = PersonalGitConnection.objects.all()
+    serializer_class = PersonalGitConnectionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return PersonalGitConnection.objects.select_related('user').filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if instance.user_id != self.request.user.id:
+            raise PermissionDenied('You do not have permission to manage this personal Git connection')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.user_id != self.request.user.id:
+            raise PermissionDenied('You do not have permission to manage this personal Git connection')
+        instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def test_connection(self, request, pk=None):
+        connection = self.get_object()
+        if connection.user_id != request.user.id:
+            raise PermissionDenied('You do not have permission to test this personal Git connection')
+
+        connection.last_tested_at = timezone.now()
+        requires_secret = connection.auth_type in {'pat', 'app', 'ssh'}
+
+        if requires_secret and not connection.credential:
+            connection.last_test_status = 'failed'
+            message = 'A credential is required before this connection can be validated.'
+        else:
+            connection.last_test_status = 'succeeded'
+            message = 'Personal connection record passed structural validation. Use repository discovery to verify repository and branch access for supported providers.'
+
+        connection.save(update_fields=['last_tested_at', 'last_test_status', 'updated_at'])
+        serializer = self.get_serializer(connection)
+        return Response(
+            {
+                'status': connection.last_test_status,
+                'message': message,
+                'connection': serializer.data,
+            }
+        )
+
+    @action(detail=True, methods=['get'])
+    def repositories(self, request, pk=None):
+        connection = self.get_object()
+        if connection.user_id != request.user.id:
+            raise PermissionDenied('You do not have permission to use this personal Git connection')
+
+        search = request.query_params.get('search')
+        try:
+            repositories = list_connection_repositories(connection, search=search)
+        except GitProviderDiscoveryError as exc:
+            raise ValidationError({'detail': str(exc)}) from exc
+
+        connection.repository_cache = repositories
+        connection.save(update_fields=['repository_cache', 'updated_at'])
+
+        return Response(
+            {
+                'repositories': repositories,
+                'count': len(repositories),
+            }
+        )
+
+    @action(detail=True, methods=['get'])
+    def branches(self, request, pk=None):
+        connection = self.get_object()
+        if connection.user_id != request.user.id:
+            raise PermissionDenied('You do not have permission to use this personal Git connection')
+
+        repository_identifier = request.query_params.get('repository', '')
+        try:
+            payload = list_repository_branches(connection, repository_identifier)
+        except GitProviderDiscoveryError as exc:
+            raise ValidationError({'detail': str(exc)}) from exc
+
+        return Response(
+            {
+                **payload,
+                'count': len(payload['branches']),
+            }
+        )
 
 class TeamViewSet(viewsets.ModelViewSet):
     queryset = Team.objects.all()
@@ -1667,7 +1872,7 @@ class AppViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        queryset = App.objects.select_related('environment', 'environment__project', 'created_by')
+        queryset = App.objects.select_related('environment', 'environment__project', 'created_by', 'source_settings', 'source_settings__organization_connection', 'source_settings__personal_connection')
         if not user_is_global_admin(self.request.user):
             queryset = queryset.filter(environment__project__in=get_accessible_projects_queryset(self.request.user))
 
@@ -1692,6 +1897,52 @@ class AppViewSet(viewsets.ModelViewSet):
         if not user_can_manage_project(self.request.user, instance.environment.project):
             raise PermissionDenied("You do not have permission to delete this app")
         instance.delete()
+
+    def _build_source_settings_defaults(self, app):
+        deployment_settings = (app.config or {}).get('deploymentSettings', {})
+        watch_paths = deployment_settings.get('watchPaths', 'src/**')
+        if isinstance(watch_paths, str):
+            watch_paths = [path.strip() for path in watch_paths.splitlines() if path.strip()]
+        elif not isinstance(watch_paths, list):
+            watch_paths = []
+
+        return {
+            'source_provider': deployment_settings.get('providerType', 'github'),
+            'source_ref': deployment_settings.get('sourceRef', 'main'),
+            'watch_paths': watch_paths,
+            'trigger_type': deployment_settings.get('triggerType', 'manual'),
+            'auto_deploy_enabled': bool(deployment_settings.get('autoDeployEnabled')),
+            'submodules_enabled': bool(deployment_settings.get('submodulesEnabled')),
+            'schedule': deployment_settings.get('schedule', '0 */6 * * *'),
+            'created_by': app.created_by,
+        }
+
+    @action(detail=True, methods=['get', 'patch'])
+    def source_settings(self, request, pk=None):
+        app = self.get_object()
+        source_settings, _ = AppSourceSettings.objects.get_or_create(
+            app=app,
+            defaults=self._build_source_settings_defaults(app),
+        )
+
+        if request.method == 'GET':
+            serializer = AppSourceSettingsSerializer(source_settings, context={'request': request, 'app': app})
+            return Response(serializer.data)
+
+        if not user_can_manage_project(request.user, app.environment.project):
+            raise PermissionDenied('You do not have permission to manage this app source configuration')
+
+        serializer = AppSourceSettingsSerializer(
+            source_settings,
+            data=request.data,
+            partial=True,
+            context={'request': request, 'app': app},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(created_by=source_settings.created_by or request.user)
+
+        response_serializer = AppSourceSettingsSerializer(source_settings, context={'request': request, 'app': app})
+        return Response(response_serializer.data)
 
 
 class DeploymentViewSet(viewsets.ModelViewSet):

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useOutletContext } from 'react-router-dom';
-import { ArrowRight, History, Loader2, Pencil, RotateCcw, Rocket, Server, Trash2 } from 'lucide-react';
+import { ArrowRight, History, Loader2, Pencil, RotateCcw, Rocket, Server, Settings, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,9 +27,10 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { AppDetailsDialog } from '@/components/project/AppDetailsDialog';
 import { toast } from '@/hooks/use-toast';
 import type { OrganizationHierarchyOutletContext } from '@/pages/Organizations';
-import { deleteApp, deleteDeployment, DeploymentRecord, ProjectApp, rollbackDeployment, updateApp, updateDeployment } from '@/lib/api';
+import { deleteApp, deleteDeployment, DeploymentRecord, rollbackDeployment, updateDeployment } from '@/lib/api';
 import { buildAppWorkspacePath } from '@/lib/organizationPaths';
 
 const AppDetail = () => {
@@ -39,36 +40,12 @@ const AppDetail = () => {
   const [rollbackTargetId, setRollbackTargetId] = useState<number | null>(null);
   const [rollbackNotes, setRollbackNotes] = useState('');
   const [isAppEditOpen, setIsAppEditOpen] = useState(false);
-  const [appForm, setAppForm] = useState({
-    name: '',
-    description: '',
-    sourceType: 'compose',
-    repositoryUrl: '',
-    composePath: '',
-    status: 'draft',
-  });
   const [editingDeploymentId, setEditingDeploymentId] = useState<number | null>(null);
   const [deploymentForm, setDeploymentForm] = useState({
     version: '',
     sourceRef: '',
     notes: '',
     status: 'pending',
-  });
-
-  const updateAppMutation = useMutation({
-    mutationFn: (data: Partial<ProjectApp>) => updateApp(selectedApp!.id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['apps', selectedEnvironment!.id] });
-      toast({ title: 'Application updated', description: 'Application details were saved.' });
-      setIsAppEditOpen(false);
-    },
-    onError: (error) => {
-      toast({
-        title: 'Update failed',
-        description: error instanceof Error ? error.message : 'Unable to update the application.',
-        variant: 'destructive',
-      });
-    },
   });
 
   const deleteAppMutation = useMutation({
@@ -171,18 +148,6 @@ const AppDetail = () => {
     selectedApp.id,
   );
 
-  const openAppEditDialog = () => {
-    setAppForm({
-      name: selectedApp.name,
-      description: selectedApp.description || '',
-      sourceType: selectedApp.source_type,
-      repositoryUrl: selectedApp.repository_url || '',
-      composePath: selectedApp.compose_path || '',
-      status: selectedApp.status,
-    });
-    setIsAppEditOpen(true);
-  };
-
   const openDeploymentEditDialog = (deployment: (typeof deployments)[number]) => {
     setDeploymentForm({
       version: deployment.version,
@@ -210,9 +175,9 @@ const AppDetail = () => {
                 <ArrowRight className="mr-2 h-4 w-4" />
                 Open workspace
               </Button>
-              <Button variant="outline" size="sm" onClick={openAppEditDialog}>
-                <Pencil className="mr-2 h-4 w-4" />
-                Edit application
+              <Button variant="outline" size="sm" onClick={() => setIsAppEditOpen(true)}>
+                <Settings className="mr-2 h-4 w-4" />
+                App details
               </Button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
@@ -358,39 +323,12 @@ const AppDetail = () => {
         </CardContent>
       </Card>
 
-      <Dialog open={isAppEditOpen} onOpenChange={setIsAppEditOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit application</DialogTitle>
-            <DialogDescription>Update the application details surfaced in the hierarchy and workspace.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input placeholder="Application name" value={appForm.name} onChange={(event) => setAppForm((current) => ({ ...current, name: event.target.value }))} />
-            <Input placeholder="Source type" value={appForm.sourceType} onChange={(event) => setAppForm((current) => ({ ...current, sourceType: event.target.value }))} />
-            <Input placeholder="Repository URL" value={appForm.repositoryUrl} onChange={(event) => setAppForm((current) => ({ ...current, repositoryUrl: event.target.value }))} />
-            <Input placeholder="Compose path" value={appForm.composePath} onChange={(event) => setAppForm((current) => ({ ...current, composePath: event.target.value }))} />
-            <Input placeholder="Status" value={appForm.status} onChange={(event) => setAppForm((current) => ({ ...current, status: event.target.value }))} />
-            <Textarea placeholder="Describe the application" value={appForm.description} onChange={(event) => setAppForm((current) => ({ ...current, description: event.target.value }))} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAppEditOpen(false)} disabled={updateAppMutation.isPending}>Cancel</Button>
-            <Button
-              onClick={() => updateAppMutation.mutate({
-                name: appForm.name.trim(),
-                description: appForm.description.trim(),
-                source_type: appForm.sourceType as ProjectApp['source_type'],
-                repository_url: appForm.repositoryUrl.trim() || undefined,
-                compose_path: appForm.composePath.trim() || undefined,
-                status: appForm.status as ProjectApp['status'],
-              })}
-              disabled={!appForm.name.trim() || updateAppMutation.isPending}
-            >
-              {updateAppMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Save changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AppDetailsDialog
+        app={selectedApp}
+        environmentId={selectedEnvironment.id}
+        open={isAppEditOpen}
+        onOpenChange={setIsAppEditOpen}
+      />
 
       <Dialog open={editingDeployment !== null} onOpenChange={(open) => {
         if (!open) {

@@ -6,6 +6,7 @@ import {
   getCurrentUser,
   getDeployments,
   getEnvironments,
+  normalizeApiList,
   getOrganizationProjects,
   getOrganizations,
 } from '@/lib/api';
@@ -50,9 +51,13 @@ export function useOrganizationHierarchyData() {
     queryFn: () => getApps(selectedEnvironmentId as number),
     enabled: selectedEnvironmentId !== null,
   });
-  const { data: deploymentsResponse, isLoading: deploymentsLoading } = useQuery({
+  const { data: deployments = [], isLoading: deploymentsLoading } = useQuery({
     queryKey: ['deployments', selectedAppId],
-    queryFn: () => getDeployments({ appId: selectedAppId as number }),
+    queryFn: async () => {
+      const response = await getDeployments({ appId: selectedAppId as number });
+      return response.data ?? [];
+    },
+    select: (value) => normalizeApiList(value),
     enabled: selectedAppId !== null,
   });
 
@@ -60,7 +65,6 @@ export function useOrganizationHierarchyData() {
   const projects = projectsResponse?.data ?? [];
   const environments = environmentsResponse?.data ?? [];
   const apps = appsResponse?.data ?? [];
-  const deployments = deploymentsResponse?.data ?? [];
   const currentUser = currentUserResponse?.data;
   const canCreateOrganization = currentUser?.is_staff || currentUser?.role === 'admin';
 

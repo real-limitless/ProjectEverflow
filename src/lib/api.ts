@@ -43,6 +43,31 @@ export interface ApiResponse<T = any> {
   error?: string;
 }
 
+interface PaginatedApiListResponse<T> {
+  count?: number;
+  next?: string | null;
+  previous?: string | null;
+  results?: T[];
+}
+
+export function normalizeApiList<T>(payload: unknown): T[] {
+  if (Array.isArray(payload)) {
+    return payload as T[];
+  }
+
+  if (payload && typeof payload === 'object') {
+    const objectPayload = payload as { data?: unknown; results?: unknown };
+    if (Array.isArray(objectPayload.data)) {
+      return objectPayload.data as T[];
+    }
+    if (Array.isArray(objectPayload.results)) {
+      return objectPayload.results as T[];
+    }
+  }
+
+  return [];
+}
+
 export interface LoginResponse {
   access: string;
   refresh: string;
@@ -101,20 +126,99 @@ export interface Organization {
   updated_at: string;
 }
 
-export interface Project {
+export type GitProviderType = 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'generic-git';
+export type GitConnectionAuthType = 'pat' | 'oauth' | 'app' | 'ssh';
+export type GitConnectionScope = 'organization' | 'personal';
+
+export interface OrganizationGitConnection {
   id: number;
+  organization: number;
+  organization_name: string;
   name: string;
-  description: string;
-  system_prompt?: string;
-  owner: User;
-  contributors: User[];
-  team?: Team;
-  organization?: Organization | null;
-  status: 'draft' | 'in_development' | 'awaiting_approval' | 'published';
-  // Workspace configuration
-  workspace_image?: 'fedora:43' | 'registry.access.redhat.com/ubi9/ubi';
-  workspace_size?: string;
-  workspace_mode?: 'personal' | 'shared';
+  provider_type: GitProviderType;
+  auth_type: GitConnectionAuthType;
+  base_url?: string | null;
+  notes: string;
+  repository_cache: string[];
+  repository_count: number;
+  webhook_enabled: boolean;
+  last_tested_at?: string | null;
+  last_test_status: 'unknown' | 'succeeded' | 'failed';
+  credential_masked?: string | null;
+  has_credentials: boolean;
+  created_by?: number | null;
+  created_by_username?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PersonalGitConnection {
+  id: number;
+  user: number;
+  user_username: string;
+  name: string;
+  provider_type: GitProviderType;
+  auth_type: GitConnectionAuthType;
+  base_url?: string | null;
+  notes: string;
+  repository_cache: string[];
+  repository_count: number;
+  webhook_enabled: boolean;
+  last_tested_at?: string | null;
+  last_test_status: 'unknown' | 'succeeded' | 'failed';
+  credential_masked?: string | null;
+  has_credentials: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GitConnectionRepository {
+  id: string;
+  name: string;
+  full_name: string;
+  clone_url: string;
+  ssh_url: string;
+  web_url: string;
+  default_branch: string;
+  private: boolean;
+}
+
+export interface GitConnectionBranch {
+  name: string;
+  is_default: boolean;
+  protected?: boolean;
+}
+
+export interface GitConnectionRepositoryList {
+  repositories: GitConnectionRepository[];
+  count: number;
+}
+
+export interface GitConnectionBranchList {
+  repository: GitConnectionRepository | null;
+  default_branch?: string | null;
+  branches: GitConnectionBranch[];
+  count: number;
+}
+
+export interface AppSourceSettings {
+  id: number;
+  app: number;
+  source_type: ProjectApp['source_type'];
+  repository_url: string;
+  compose_path: string;
+  connection_scope: GitConnectionScope | '';
+  organization_connection?: number | null;
+  organization_connection_name?: string | null;
+  personal_connection?: number | null;
+  personal_connection_name?: string | null;
+  selected_connection_name?: string | null;
+  selected_connection_provider?: GitProviderType | null;
+  source_provider: GitProviderType | 'raw-compose' | 'docker-registry';
+  source_ref: string;
+  watch_paths: string[];
+  trigger_type: 'manual' | 'push' | 'schedule';
+  auto_deploy_enabled: boolean;
   creation_method?: 'blank' | 'clone' | 'chat' | 'template';
   git_repo_url?: string;
   branch?: string;
@@ -730,6 +834,160 @@ export const removeOrganizationMember = async (organizationId: number, userId: n
   });
 };
 
+export const getOrganizationGitConnections = async (params?: {
+  organizationId?: number;
+}): Promise<ApiResponse<OrganizationGitConnection[]>> => {
+  const searchParams = new URLSearchParams();
+  if (params?.organizationId) {
+    searchParams.append('organization', params.organizationId.toString());
+  }
+
+  const query = searchParams.toString();
+  return apiCall<OrganizationGitConnection[]>(`/organization-git-connections/${query ? `?${query}` : ''}`);
+};
+
+export const createOrganizationGitConnection = async (data: {
+  organization_id: number;
+  name: string;
+  provider_type: GitProviderType;
+  auth_type: GitConnectionAuthType;
+  base_url?: string;
+  notes?: string;
+  credential_plain?: string;
+}): Promise<ApiResponse<OrganizationGitConnection>> => {
+  return apiCall<OrganizationGitConnection>('/organization-git-connections/', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const updateOrganizationGitConnection = async (
+  id: number,
+  data: Partial<OrganizationGitConnection> & { credential_plain?: string; organization_id?: number }
+): Promise<ApiResponse<OrganizationGitConnection>> => {
+  return apiCall<OrganizationGitConnection>(`/organization-git-connections/${id}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deleteOrganizationGitConnection = async (id: number): Promise<ApiResponse<null>> => {
+  return apiCall<null>(`/organization-git-connections/${id}/`, {
+    method: 'DELETE',
+  });
+};
+
+export const testOrganizationGitConnection = async (
+  id: number
+): Promise<ApiResponse<{ status: 'unknown' | 'succeeded' | 'failed'; message: string; connection: OrganizationGitConnection }>> => {
+  return apiCall(`/organization-git-connections/${id}/test_connection/`, {
+    method: 'POST',
+  });
+};
+
+export const getOrganizationGitConnectionRepositories = async (
+  id: number,
+  params?: { search?: string }
+): Promise<ApiResponse<GitConnectionRepositoryList>> => {
+  const searchParams = new URLSearchParams();
+  if (params?.search) {
+    searchParams.append('search', params.search);
+  }
+
+  const query = searchParams.toString();
+  return apiCall<GitConnectionRepositoryList>(`/organization-git-connections/${id}/repositories/${query ? `?${query}` : ''}`);
+};
+
+export const getOrganizationGitConnectionBranches = async (
+  id: number,
+  repository: string
+): Promise<ApiResponse<GitConnectionBranchList>> => {
+  const searchParams = new URLSearchParams();
+  searchParams.append('repository', repository);
+  return apiCall<GitConnectionBranchList>(`/organization-git-connections/${id}/branches/?${searchParams.toString()}`);
+};
+
+export const getPersonalGitConnections = async (): Promise<ApiResponse<PersonalGitConnection[]>> => {
+  return apiCall<PersonalGitConnection[]>('/personal-git-connections/');
+};
+
+export const createPersonalGitConnection = async (data: {
+  name: string;
+  provider_type: GitProviderType;
+  auth_type: GitConnectionAuthType;
+  base_url?: string;
+  notes?: string;
+  credential_plain?: string;
+}): Promise<ApiResponse<PersonalGitConnection>> => {
+  return apiCall<PersonalGitConnection>('/personal-git-connections/', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const updatePersonalGitConnection = async (
+  id: number,
+  data: Partial<PersonalGitConnection> & { credential_plain?: string }
+): Promise<ApiResponse<PersonalGitConnection>> => {
+  return apiCall<PersonalGitConnection>(`/personal-git-connections/${id}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+};
+
+export const deletePersonalGitConnection = async (id: number): Promise<ApiResponse<null>> => {
+  return apiCall<null>(`/personal-git-connections/${id}/`, {
+    method: 'DELETE',
+  });
+};
+
+export const testPersonalGitConnection = async (
+  id: number
+): Promise<ApiResponse<{ status: 'unknown' | 'succeeded' | 'failed'; message: string; connection: PersonalGitConnection }>> => {
+  return apiCall(`/personal-git-connections/${id}/test_connection/`, {
+    method: 'POST',
+  });
+};
+
+export const getPersonalGitConnectionRepositories = async (
+  id: number,
+  params?: { search?: string }
+): Promise<ApiResponse<GitConnectionRepositoryList>> => {
+  const searchParams = new URLSearchParams();
+  if (params?.search) {
+    searchParams.append('search', params.search);
+  }
+
+  const query = searchParams.toString();
+  return apiCall<GitConnectionRepositoryList>(`/personal-git-connections/${id}/repositories/${query ? `?${query}` : ''}`);
+};
+
+export const getPersonalGitConnectionBranches = async (
+  id: number,
+  repository: string
+): Promise<ApiResponse<GitConnectionBranchList>> => {
+  const searchParams = new URLSearchParams();
+  searchParams.append('repository', repository);
+  return apiCall<GitConnectionBranchList>(`/personal-git-connections/${id}/branches/?${searchParams.toString()}`);
+};
+
+export const getAppSourceSettings = async (appId: number): Promise<ApiResponse<AppSourceSettings>> => {
+  return apiCall<AppSourceSettings>(`/apps/${appId}/source_settings/`);
+};
+
+export const updateAppSourceSettings = async (
+  appId: number,
+  data: Partial<AppSourceSettings> & {
+    organization_connection_id?: number | null;
+    personal_connection_id?: number | null;
+  }
+): Promise<ApiResponse<AppSourceSettings>> => {
+  return apiCall<AppSourceSettings>(`/apps/${appId}/source_settings/`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+};
+
 export const getTeam = async (id: number): Promise<ApiResponse<Team>> => {
   return apiCall<Team>(`/teams/${id}/`);
 };
@@ -854,7 +1112,14 @@ export const getDeployments = async (params?: {
     searchParams.set('app', String(params.appId));
   }
   const query = searchParams.toString();
-  return apiCall<DeploymentRecord[]>(`/deployments/${query ? `?${query}` : ''}`);
+  const response = await apiCall<DeploymentRecord[] | PaginatedApiListResponse<DeploymentRecord>>(
+    `/deployments/${query ? `?${query}` : ''}`
+  );
+
+  return {
+    data: normalizeApiList<DeploymentRecord>(response.data),
+    error: response.error,
+  };
 };
 
 export const createDeployment = async (data: {

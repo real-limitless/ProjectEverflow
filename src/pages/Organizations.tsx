@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button, Page, PageSection, Spinner, TreeView, TreeViewDataItem } from '@patternfly/react-core';
-import { Building2, FolderKanban, GitBranch, Plus, Rocket, Server } from 'lucide-react';
+import { Building2, FolderKanban, GitBranch, Plus, Rocket, Server, Settings2 } from 'lucide-react';
 import { Outlet, useNavigate } from 'react-router-dom';
 
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -35,6 +35,7 @@ import {
   buildAppOverviewPath,
   buildEnvironmentPath,
   buildOrganizationPath,
+  buildOrganizationSettingsPath,
   buildProjectPath,
 } from '@/lib/organizationPaths';
 
@@ -471,6 +472,14 @@ const Organizations = () => {
                   isDisabled={!canCreateOrganization}
                 >
                   Create organization
+                </Button>
+                <Button
+                  variant="secondary"
+                  icon={<Settings2 size={14} />}
+                  onClick={() => selectedOrgId && navigate(buildOrganizationSettingsPath(selectedOrgId))}
+                  isDisabled={!selectedOrgId}
+                >
+                  Org settings
                 </Button>
                 <Button variant="secondary" icon={<Plus size={14} />} onClick={() => openDialog('project')} isDisabled={!selectedOrgId}>
                   Create project

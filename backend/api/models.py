@@ -74,6 +74,134 @@ class OrganizationMembership(models.Model):
     def __str__(self):
         return f"{self.user.username} in {self.organization.name} ({self.role})"
 
+
+class OrganizationGitConnection(models.Model):
+    PROVIDER_TYPE_CHOICES = [
+        ('github', 'GitHub'),
+        ('gitlab', 'GitLab'),
+        ('bitbucket', 'Bitbucket'),
+        ('gitea', 'Gitea'),
+        ('generic-git', 'Generic Git'),
+    ]
+    AUTH_TYPE_CHOICES = [
+        ('pat', 'Personal Access Token'),
+        ('oauth', 'OAuth'),
+        ('app', 'App Installation'),
+        ('ssh', 'SSH'),
+    ]
+    TEST_STATUS_CHOICES = [
+        ('unknown', 'Unknown'),
+        ('succeeded', 'Succeeded'),
+        ('failed', 'Failed'),
+    ]
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='git_connections')
+    name = models.CharField(max_length=255)
+    provider_type = models.CharField(max_length=20, choices=PROVIDER_TYPE_CHOICES)
+    auth_type = models.CharField(max_length=20, choices=AUTH_TYPE_CHOICES, default='pat')
+    base_url = models.URLField(max_length=500, blank=True, null=True)
+    notes = models.TextField(blank=True)
+    credential = models.TextField(blank=True, help_text='Encrypted Git credential (token, app secret, or SSH key)')
+    repository_cache = models.JSONField(default=list, blank=True, help_text='Cached repository identifiers available through this connection')
+    webhook_enabled = models.BooleanField(default=False)
+    last_tested_at = models.DateTimeField(null=True, blank=True)
+    last_test_status = models.CharField(max_length=20, choices=TEST_STATUS_CHOICES, default='unknown')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_organization_git_connections')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['organization__name', 'name']
+        unique_together = ('organization', 'name')
+        indexes = [
+            models.Index(fields=['organization', 'provider_type']),
+            models.Index(fields=['organization', 'last_test_status']),
+        ]
+
+    def __str__(self):
+        return f"{self.organization.name}: {self.name} ({self.provider_type})"
+
+    def set_credential(self, plain_value: str):
+        from cryptography.fernet import Fernet
+
+        if not settings.FIELD_ENCRYPTION_KEY:
+            raise ValueError('FIELD_ENCRYPTION_KEY not configured')
+        cipher = Fernet(settings.FIELD_ENCRYPTION_KEY.encode())
+        self.credential = cipher.encrypt(plain_value.encode()).decode()
+
+    def get_credential(self) -> str:
+        from cryptography.fernet import Fernet, InvalidToken
+
+        if not self.credential:
+            return ''
+        if not settings.FIELD_ENCRYPTION_KEY:
+            raise ValueError('FIELD_ENCRYPTION_KEY not configured')
+
+        try:
+            cipher = Fernet(settings.FIELD_ENCRYPTION_KEY.encode())
+            return cipher.decrypt(self.credential.encode()).decode()
+        except InvalidToken as exc:
+            raise ValueError(
+                f"Failed to decrypt credential for organization Git connection '{self.name}'. "
+                'The encryption key may have changed. Please re-enter the credential.'
+            ) from exc
+
+
+class PersonalGitConnection(models.Model):
+    PROVIDER_TYPE_CHOICES = OrganizationGitConnection.PROVIDER_TYPE_CHOICES
+    AUTH_TYPE_CHOICES = OrganizationGitConnection.AUTH_TYPE_CHOICES
+    TEST_STATUS_CHOICES = OrganizationGitConnection.TEST_STATUS_CHOICES
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='personal_git_connections')
+    name = models.CharField(max_length=255)
+    provider_type = models.CharField(max_length=20, choices=PROVIDER_TYPE_CHOICES)
+    auth_type = models.CharField(max_length=20, choices=AUTH_TYPE_CHOICES, default='pat')
+    base_url = models.URLField(max_length=500, blank=True, null=True)
+    notes = models.TextField(blank=True)
+    credential = models.TextField(blank=True, help_text='Encrypted personal Git credential (token, app secret, or SSH key)')
+    repository_cache = models.JSONField(default=list, blank=True, help_text='Cached repository identifiers available through this personal connection')
+    webhook_enabled = models.BooleanField(default=False)
+    last_tested_at = models.DateTimeField(null=True, blank=True)
+    last_test_status = models.CharField(max_length=20, choices=TEST_STATUS_CHOICES, default='unknown')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['user__username', 'name']
+        unique_together = ('user', 'name')
+        indexes = [
+            models.Index(fields=['user', 'provider_type']),
+            models.Index(fields=['user', 'last_test_status']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username}: {self.name} ({self.provider_type})"
+
+    def set_credential(self, plain_value: str):
+        from cryptography.fernet import Fernet
+
+        if not settings.FIELD_ENCRYPTION_KEY:
+            raise ValueError('FIELD_ENCRYPTION_KEY not configured')
+        cipher = Fernet(settings.FIELD_ENCRYPTION_KEY.encode())
+        self.credential = cipher.encrypt(plain_value.encode()).decode()
+
+    def get_credential(self) -> str:
+        from cryptography.fernet import Fernet, InvalidToken
+
+        if not self.credential:
+            return ''
+        if not settings.FIELD_ENCRYPTION_KEY:
+            raise ValueError('FIELD_ENCRYPTION_KEY not configured')
+
+        try:
+            cipher = Fernet(settings.FIELD_ENCRYPTION_KEY.encode())
+            return cipher.decrypt(self.credential.encode()).decode()
+        except InvalidToken as exc:
+            raise ValueError(
+                f"Failed to decrypt credential for personal Git connection '{self.name}'. "
+                'The encryption key may have changed. Please re-enter the credential.'
+            ) from exc
+
 class Project(models.Model):
     STATUS_CHOICES = [
         ('draft', 'Draft'),
@@ -221,6 +349,48 @@ class App(models.Model):
 
     def __str__(self):
         return f"{self.environment.name} / {self.name}"
+
+
+class AppSourceSettings(models.Model):
+    CONNECTION_SCOPE_CHOICES = [
+        ('organization', 'Shared organization connection'),
+        ('personal', 'Personal connection'),
+    ]
+    SOURCE_PROVIDER_CHOICES = [
+        ('github', 'GitHub'),
+        ('gitlab', 'GitLab'),
+        ('bitbucket', 'Bitbucket'),
+        ('gitea', 'Gitea'),
+        ('generic-git', 'Generic Git'),
+        ('raw-compose', 'Raw Compose / Dockerfile'),
+        ('docker-registry', 'Docker Registry / Hub'),
+    ]
+    TRIGGER_TYPE_CHOICES = [
+        ('manual', 'Manual'),
+        ('push', 'On Push'),
+        ('schedule', 'Schedule'),
+    ]
+
+    app = models.OneToOneField(App, on_delete=models.CASCADE, related_name='source_settings')
+    connection_scope = models.CharField(max_length=20, choices=CONNECTION_SCOPE_CHOICES, blank=True)
+    organization_connection = models.ForeignKey(OrganizationGitConnection, on_delete=models.SET_NULL, null=True, blank=True, related_name='app_sources')
+    personal_connection = models.ForeignKey(PersonalGitConnection, on_delete=models.SET_NULL, null=True, blank=True, related_name='app_sources')
+    source_provider = models.CharField(max_length=20, choices=SOURCE_PROVIDER_CHOICES, default='github')
+    source_ref = models.CharField(max_length=255, blank=True, default='main')
+    watch_paths = models.JSONField(default=list, blank=True)
+    trigger_type = models.CharField(max_length=20, choices=TRIGGER_TYPE_CHOICES, default='manual')
+    auto_deploy_enabled = models.BooleanField(default=False)
+    submodules_enabled = models.BooleanField(default=False)
+    schedule = models.CharField(max_length=100, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_app_source_settings')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['app__environment__name', 'app__name']
+
+    def __str__(self):
+        return f"Source settings for {self.app.name}"
 
 
 class WorkspaceResourceTier(models.Model):

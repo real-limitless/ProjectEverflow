@@ -32,17 +32,18 @@ import { IssuesTab } from '@/components/project/IssuesTab';
 import { PullRequestsTab } from '@/components/project/PullRequestsTab';
 import { WorkflowTab } from '@/components/project/WorkflowTab';
 import { AIEditorTab } from '@/components/project/AIEditorTab';
-import { ProjectDetailsTab } from '@/components/project/ProjectDetailsTab';
 import { FileManagerTab } from '@/components/project/FileManagerTab';
 import { RepositoryGitTab } from '@/components/project/RepositoryGitTab';
 import { SafetyComplianceTab } from '@/components/project/SafetyComplianceTab';
+import { GeneralTab } from '@/components/project/GeneralTab';
+import { AppDetailsDialog } from '@/components/project/AppDetailsDialog';
 import { ServiceCreationWizard } from '../components/project/ServiceCreationWizard';
 import { WebtopTab } from '@/components/project/WebtopTab';
 import { ContainerLogsTab } from '@/components/project/ContainerLogsTab';
 import { LegacyHierarchyRouteRedirect } from '../components/project/LegacyHierarchyRouteRedirect';
 import { WorkspaceOrchestration } from '@/components/project/WorkspaceOrchestration';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { deleteProjectServiceRecord, getProjects, Project, getProjectServices, ProjectService, restartService, startAllServices, startService, stopAllServices, stopService, updateProjectServiceRecord, killService } from '@/lib/api';
+import { deleteProjectServiceRecord, getProjects, Project, getProjectServices, ProjectService, restartService, startAllServices, startService, stopAllServices, stopService, updateProjectServiceRecord, killService, ProjectApp, ProjectEnvironment } from '@/lib/api';
 import { CheckCircle, AlertTriangle, XCircle, FileText, Layers, ListChecks, Target, Shield, Play, Square, ChevronDown, Terminal, RefreshCcw, ExternalLink, RotateCcw, Loader2 } from 'lucide-react';
 
 
@@ -735,6 +736,8 @@ const applicationFormSchema = z.object({
 
 interface ApplicationWorkspaceProps {
   project: Project | null;
+  app?: ProjectApp | null;
+  environment?: ProjectEnvironment | null;
   applicationName?: string;
   serviceAppId?: number;
   headerTitle?: string;
@@ -750,6 +753,8 @@ interface ApplicationWorkspaceProps {
 
 export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
   project,
+  app,
+  environment,
   applicationName,
   serviceAppId,
   headerTitle = 'Application workspace',
@@ -773,6 +778,7 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isAppDetailsOpen, setIsAppDetailsOpen] = useState(false);
   
   // AI Settings State
   const [aiModel, setAiModel] = useState(editApplicationData.defaultSettings.aiModel);
@@ -994,7 +1000,7 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
       style={{ marginBottom: '1.5rem' }}
     >
       <Tab eventKey={0} title={<TabTitleText>AI Editor</TabTitleText>} />
-      <Tab eventKey={1} title={<TabTitleText>Project Details</TabTitleText>} />
+      <Tab eventKey={1} title={<TabTitleText>General</TabTitleText>} />
       <Tab eventKey={2} title={<TabTitleText>Services</TabTitleText>} />
       <Tab eventKey={3} title={<TabTitleText>File Manager</TabTitleText>} />
       <Tab eventKey={4} title={<TabTitleText>Repository & Git</TabTitleText>} />
@@ -1127,7 +1133,17 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
         )}
 
         {activeTab === 1 && (
-          project ? <ProjectDetailsTab project={project} /> : <div>Loading project details...</div>
+          project ? (
+            <GeneralTab
+              project={project}
+              app={app ?? null}
+              environment={environment}
+              onOpenAppDetails={() => setIsAppDetailsOpen(true)}
+              onOpenTerminal={() => setActiveTab(9)}
+            />
+          ) : (
+            <div>Loading app general settings...</div>
+          )
         )}
 
         {activeTab === 2 && (
@@ -1169,6 +1185,13 @@ export const ApplicationWorkspace: React.FC<ApplicationWorkspaceProps> = ({
         )}
         </div>
       </PageSection>
+
+      <AppDetailsDialog
+        app={app ?? null}
+        environmentId={environment?.id ?? app?.environment}
+        open={isAppDetailsOpen}
+        onOpenChange={setIsAppDetailsOpen}
+      />
     </>
   );
 };

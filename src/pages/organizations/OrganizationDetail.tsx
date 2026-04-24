@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Building2, FolderKanban, Loader2, Pencil, Trash2, Users } from 'lucide-react';
+import { Building2, FolderKanban, Loader2, Pencil, Settings2, Trash2, Users } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
 import { deleteOrganization, updateOrganization } from '@/lib/api';
+import { buildOrganizationSettingsPath } from '@/lib/organizationPaths';
 import type { OrganizationHierarchyOutletContext } from '@/pages/Organizations';
 
 const OrganizationDetail = () => {
@@ -105,6 +106,10 @@ const OrganizationDetail = () => {
               <Button variant="outline" size="sm" onClick={openEditDialog}>
                 <Pencil className="mr-2 h-4 w-4" />
                 Edit organization
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate(buildOrganizationSettingsPath(selectedOrganization.id))}>
+                <Settings2 className="mr-2 h-4 w-4" />
+                Git connections
               </Button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>

@@ -131,6 +131,8 @@ const AppWorkspacePage = () => {
       ) : (
         <ApplicationWorkspace
           project={selectedProject}
+          app={selectedApp}
+          environment={selectedEnvironment}
           applicationName={selectedApp.name}
           serviceAppId={selectedApp.id}
           headerTitle={selectedApp.name}
