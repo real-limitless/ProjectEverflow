@@ -25,7 +25,7 @@ const Dashboard = () => {
       sidebar={<DashboardSidebar isOpen={isSidebarOpen} />}
     >
       <PageSection variant="default">
-        <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+        <div>
           <PageHeader
             title="Welcome to Everflow AI Platform!"
             description="Everflow serves as the central hub where employees can build, showcase, and share applications leveraging artificial intelligence. Each application goes through a structured approval process managed by leadership to ensure quality, alignment with Everflows's mission, and adherence to our Code of Conduct."

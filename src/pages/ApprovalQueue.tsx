@@ -1,14 +1,10 @@
 import { useState } from 'react';
-import { Page, PageSection, Card, CardBody, Button, Label } from '@patternfly/react-core';
+import { Page, PageSection, Card, CardBody, Button, Label, SearchInput, FormSelect, FormSelectOption, Spinner } from '@patternfly/react-core';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { DashboardSidebar } from '@/components/dashboard/DashboardSidebar';
-import { GitPullRequest, FileCode, CheckCircle2, Clock, AlertTriangle, MessageSquare, Eye, XCircle, Loader2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { GitPullRequest, FileCode, CheckCircle2, Clock, AlertTriangle, MessageSquare, Eye, XCircle, Check, X, GitMerge, FolderOpen } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { Search } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { useQuery } from '@tanstack/react-query';
 import { getChangeRequests, approveChangeRequest, requestChangesChangeRequest, ChangeRequest } from '@/lib/api';
@@ -35,23 +31,23 @@ const ApprovalQueue = () => {
 
   const changeRequests = changeRequestsResponse?.data || [];
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status: string): 'blue' | 'orange' | 'green' | 'red' | 'grey' => {
     switch (status) {
-      case 'pending': return 'info';
-      case 'changes_requested': return 'warning';
-      case 'approved': return 'success';
-      case 'rejected': return 'destructive';
-      default: return 'secondary';
+      case 'pending': return 'blue';
+      case 'changes_requested': return 'orange';
+      case 'approved': return 'green';
+      case 'rejected': return 'red';
+      default: return 'grey';
     }
   };
 
-  const getTypeColor = (type: string) => {
+  const getTypeColor = (type: string): 'blue' | 'red' | 'green' | 'grey' | 'orange' => {
     switch (type) {
-      case 'feature': return 'info';
-      case 'bug_fix': return 'destructive';
-      case 'enhancement': return 'success';
-      case 'documentation': return 'secondary';
-      default: return 'secondary';
+      case 'feature': return 'blue';
+      case 'bug_fix': return 'red';
+      case 'enhancement': return 'green';
+      case 'documentation': return 'grey';
+      default: return 'orange';
     }
   };
 
@@ -131,6 +127,13 @@ const ApprovalQueue = () => {
     });
   };
 
+  const handleViewProject = (projectId: number) => {
+    toast({
+      title: "View Project",
+      description: "Opening project view...",
+    });
+  };
+
   return (
     <Page 
       masthead={<DashboardHeader onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />} 
@@ -145,55 +148,54 @@ const ApprovalQueue = () => {
 
         {/* Filter Controls */}
         <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ flex: '1 1 300px', position: 'relative' }}>
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
+          <div style={{ flex: '1 1 300px' }}>
+            <SearchInput
               placeholder="Search by title, project, or contributor..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
+              onChange={(_evt, value) => setSearchQuery(value)}
+              onClear={() => setSearchQuery('')}
             />
           </div>
-          
-          <Select value={projectFilter} onValueChange={setProjectFilter}>
-            <SelectTrigger className="w-[200px]">
-              <SelectValue placeholder="Filter by project" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Projects</SelectItem>
-              {uniqueProjects.map(project => (
-                <SelectItem key={project} value={project}>{project}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
 
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Change type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              <SelectItem value="feature">Feature</SelectItem>
-              <SelectItem value="bug_fix">Bug Fix</SelectItem>
-              <SelectItem value="enhancement">Enhancement</SelectItem>
-              <SelectItem value="documentation">Documentation</SelectItem>
-              <SelectItem value="refactor">Refactor</SelectItem>
-              <SelectItem value="other">Other</SelectItem>
-            </SelectContent>
-          </Select>
+          <FormSelect
+            value={projectFilter}
+            onChange={(_evt, value) => setProjectFilter(value)}
+            style={{ width: '200px' }}
+            aria-label="Filter by project"
+          >
+            <FormSelectOption value="all" label="All Projects" />
+            {uniqueProjects.map(project => (
+              <FormSelectOption key={project} value={project} label={project} />
+            ))}
+          </FormSelect>
 
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="pending">Pending Review</SelectItem>
-              <SelectItem value="changes_requested">Changes Requested</SelectItem>
-              <SelectItem value="approved">Approved</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
-            </SelectContent>
-          </Select>
+          <FormSelect
+            value={typeFilter}
+            onChange={(_evt, value) => setTypeFilter(value)}
+            style={{ width: '180px' }}
+            aria-label="Filter by change type"
+          >
+            <FormSelectOption value="all" label="All Types" />
+            <FormSelectOption value="feature" label="Feature" />
+            <FormSelectOption value="bug_fix" label="Bug Fix" />
+            <FormSelectOption value="enhancement" label="Enhancement" />
+            <FormSelectOption value="documentation" label="Documentation" />
+            <FormSelectOption value="refactor" label="Refactor" />
+            <FormSelectOption value="other" label="Other" />
+          </FormSelect>
+
+          <FormSelect
+            value={statusFilter}
+            onChange={(_evt, value) => setStatusFilter(value)}
+            style={{ width: '180px' }}
+            aria-label="Filter by status"
+          >
+            <FormSelectOption value="all" label="All Status" />
+            <FormSelectOption value="pending" label="Pending Review" />
+            <FormSelectOption value="changes_requested" label="Changes Requested" />
+            <FormSelectOption value="approved" label="Approved" />
+            <FormSelectOption value="rejected" label="Rejected" />
+          </FormSelect>
 
           <p style={{ fontSize: '0.875rem', color: 'var(--pf-v6-global--Color--200)' }}>
             Showing {filteredRequests.length} of {changeRequests.length} requests
@@ -203,7 +205,7 @@ const ApprovalQueue = () => {
         {/* Loading and Error States */}
         {isLoading && (
           <div className="flex justify-center items-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin" />
+            <Spinner size="xl" />
             <span className="ml-2">Loading change requests...</span>
           </div>
         )}
@@ -243,12 +245,12 @@ const ApprovalQueue = () => {
                             <h3 style={{ fontSize: '1.125rem', fontWeight: 600, margin: 0 }}>
                               {request.title}
                             </h3>
-                            <Badge variant={getTypeColor(request.change_type)}>
+                            <Label color={getTypeColor(request.change_type)}>
                               {request.change_type.replace('_', ' ')}
-                            </Badge>
-                            <Badge variant={getStatusColor(request.status)}>
+                            </Label>
+                            <Label color={getStatusColor(request.status)}>
                               {request.status.replace('_', ' ')}
-                            </Badge>
+                            </Label>
                           </div>
                           <p style={{ fontSize: '0.875rem', color: 'var(--pf-v6-global--Color--200)', margin: 0 }}>
                             <strong>{request.project.name}</strong> • main → {request.target_branch}
@@ -289,7 +291,7 @@ const ApprovalQueue = () => {
                             {request.approval_count} of {request.approvals_required} approvals
                           </span>
                         </div>
-                        <Progress value={approvalProgress} size={ProgressSize.sm} />
+                        <Progress value={approvalProgress} />
                       </div>
 
                       {/* Action Buttons */}
@@ -297,8 +299,7 @@ const ApprovalQueue = () => {
                         {request.status === 'pending_review' && (
                           <>
                             <Button
-                              variant={ButtonVariant.primary}
-                              size="sm"
+                              variant="primary"
                               onClick={() => handleApprove(request.id)}
                               isLoading={approvingRequest === request.id}
                               isDisabled={approvingRequest === request.id}
@@ -307,8 +308,7 @@ const ApprovalQueue = () => {
                               Approve
                             </Button>
                             <Button
-                              variant={ButtonVariant.secondary}
-                              size="sm"
+                              variant="secondary"
                               onClick={() => handleRequestChanges(request.id)}
                               isLoading={requestingChanges === request.id}
                               isDisabled={requestingChanges === request.id}
@@ -317,8 +317,7 @@ const ApprovalQueue = () => {
                               Request Changes
                             </Button>
                             <Button
-                              variant={ButtonVariant.danger}
-                              size="sm"
+                              variant="danger"
                               onClick={() => handleReject(request.id)}
                               isLoading={rejectingRequest === request.id}
                               isDisabled={rejectingRequest === request.id}
@@ -329,16 +328,14 @@ const ApprovalQueue = () => {
                           </>
                         )}
                         <Button
-                          variant={ButtonVariant.link}
-                          size="sm"
+                          variant="link"
                           onClick={() => handleViewDiff(request.id)}
                         >
-                          <GitDiff size={16} style={{ marginRight: '0.25rem' }} />
+                          <GitMerge size={16} style={{ marginRight: '0.25rem' }} />
                           View Diff
                         </Button>
                         <Button
-                          variant={ButtonVariant.link}
-                          size="sm"
+                          variant="link"
                           onClick={() => handleViewProject(request.project.id)}
                         >
                           <FolderOpen size={16} style={{ marginRight: '0.25rem' }} />

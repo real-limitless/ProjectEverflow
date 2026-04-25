@@ -1,11 +1,21 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import {
+  Button,
+  Card,
+  CardBody,
+  CardTitle,
+  FormGroup,
+  FormSelect,
+  FormSelectOption,
+  Label,
+  Switch,
+  TextArea,
+  TextInput,
+} from '@patternfly/react-core';
 import { Clock3, Eye, FolderGit2, Loader2, PlugZap, Rocket, Server, Settings, Square, Terminal } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -13,17 +23,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
 import { ProvisioningLogViewer } from './ProvisioningLogViewer';
 import {
@@ -894,68 +893,70 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader>
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-2xl">
-                <Server className="h-5 w-5" />
+        <CardTitle>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.5rem' }}>
+                <Server style={{ width: '1.25rem', height: '1.25rem' }} />
                 {app.name}
-              </CardTitle>
-              <CardDescription>
-                App-scoped deployment source controls now live here. Each app can point at either a shared team connection or a personal Git credential.
-              </CardDescription>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <Button variant="secondary" onClick={onOpenAppDetails}>
+                  <Settings style={{ marginRight: '0.5rem', width: '1rem', height: '1rem' }} />
+                  App details
+                </Button>
+                <Button variant="primary" onClick={() => deployMutation.mutate()} isDisabled={deployMutation.isPending} isLoading={deployMutation.isPending}>
+                  {!deployMutation.isPending && <Rocket style={{ marginRight: '0.5rem', width: '1rem', height: '1rem' }} />}
+                  Deploy
+                </Button>
+                <Button variant="secondary" onClick={() => reloadMutation.mutate()} isDisabled={reloadMutation.isPending || appServices.length === 0} isLoading={reloadMutation.isPending}>
+                  {!reloadMutation.isPending && <PlugZap style={{ marginRight: '0.5rem', width: '1rem', height: '1rem' }} />}
+                  Reload
+                </Button>
+                <Button variant="danger" onClick={() => stopMutation.mutate()} isDisabled={stopMutation.isPending || appServices.length === 0} isLoading={stopMutation.isPending}>
+                  {!stopMutation.isPending && <Square style={{ marginRight: '0.5rem', width: '1rem', height: '1rem' }} />}
+                  Stop
+                </Button>
+                <Button variant="secondary" onClick={onOpenTerminal}>
+                  <Terminal style={{ marginRight: '0.5rem', width: '1rem', height: '1rem' }} />
+                  Open terminal
+                </Button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" onClick={onOpenAppDetails}>
-                <Settings className="mr-2 h-4 w-4" />
-                App details
-              </Button>
-              <Button size="sm" onClick={() => deployMutation.mutate()} disabled={deployMutation.isPending}>
-                {deployMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Rocket className="mr-2 h-4 w-4" />}
-                Deploy
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => reloadMutation.mutate()} disabled={reloadMutation.isPending || appServices.length === 0}>
-                {reloadMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlugZap className="mr-2 h-4 w-4" />}
-                Reload
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => stopMutation.mutate()} disabled={stopMutation.isPending || appServices.length === 0}>
-                {stopMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Square className="mr-2 h-4 w-4" />}
-                Stop
-              </Button>
-              <Button variant="outline" size="sm" onClick={onOpenTerminal}>
-                <Terminal className="mr-2 h-4 w-4" />
-                Open terminal
-              </Button>
-            </div>
+            <p style={{ fontSize: '0.875rem', fontWeight: 400, color: 'var(--pf-v6-global--Color--200)', margin: 0 }}>
+              App-scoped deployment source controls now live here. Each app can point at either a shared team connection or a personal Git credential.
+            </p>
           </div>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          <Badge variant="secondary">Environment: {environment?.name || 'Unknown environment'}</Badge>
-          <Badge variant="secondary">Source type: {app.source_type}</Badge>
-          <Badge variant="secondary">Status: {app.status}</Badge>
-          <Badge variant="secondary">Services: {servicesLoading ? 'Loading' : appServices.length}</Badge>
-          <Badge variant="secondary">Source settings: {sourceSettingsLoading ? 'Loading' : 'Ready'}</Badge>
-        </CardContent>
+        </CardTitle>
+        <CardBody>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <Label>Environment: {environment?.name || 'Unknown environment'}</Label>
+            <Label>Source type: {app.source_type}</Label>
+            <Label color={app.status === 'running' ? 'green' : app.status === 'stopped' ? 'grey' : 'blue'}>Status: {app.status}</Label>
+            <Label>Services: {servicesLoading ? 'Loading' : appServices.length}</Label>
+            <Label>Source settings: {sourceSettingsLoading ? 'Loading' : 'Ready'}</Label>
+          </div>
+        </CardBody>
       </Card>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-xl">
-              <FolderGit2 className="h-5 w-5" />
-              Core Deployment & Git Integration
-            </CardTitle>
-            <CardDescription>
+          <CardTitle>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.25rem' }}>
+              <FolderGit2 style={{ width: '1.25rem', height: '1.25rem' }} />
+              Core Deployment &amp; Git Integration
+            </span>
+          </CardTitle>
+          <CardBody>
+            <p style={{ fontSize: '0.875rem', color: 'var(--pf-v6-global--Color--200)', marginBottom: '1.25rem' }}>
               Configure provider, source kind, repository or image location, branch or tag, compose or build context, triggers, and autodeploy. Connection selection is persisted as app source-of-truth.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
+            </p>
             <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="provider-type">Source provider</Label>
-                <Select
+              <FormGroup label="Source provider" fieldId="provider-type">
+                <FormSelect
+                  id="provider-type"
                   value={settings.providerType}
-                  onValueChange={(value) => {
+                  onChange={(_evt, value) => {
                     const nextProvider = value as SourceProviderType;
                     setSettings((current) => {
                       const nextSourceKind = getDefaultSourceKind(nextProvider, current.sourceKind);
@@ -970,26 +971,21 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                     });
                   }}
                 >
-                  <SelectTrigger id="provider-type">
-                    <SelectValue placeholder="Choose provider" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="github">GitHub</SelectItem>
-                    <SelectItem value="gitlab">GitLab</SelectItem>
-                    <SelectItem value="bitbucket">Bitbucket</SelectItem>
-                    <SelectItem value="gitea">Gitea</SelectItem>
-                    <SelectItem value="generic-git">Generic Git</SelectItem>
-                    <SelectItem value="raw-compose">Raw compose / Dockerfile</SelectItem>
-                    <SelectItem value="docker-registry">Docker registry / Docker Hub</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+                  <FormSelectOption value="github" label="GitHub" />
+                  <FormSelectOption value="gitlab" label="GitLab" />
+                  <FormSelectOption value="bitbucket" label="Bitbucket" />
+                  <FormSelectOption value="gitea" label="Gitea" />
+                  <FormSelectOption value="generic-git" label="Generic Git" />
+                  <FormSelectOption value="raw-compose" label="Raw compose / Dockerfile" />
+                  <FormSelectOption value="docker-registry" label="Docker registry / Docker Hub" />
+                </FormSelect>
+              </FormGroup>
 
-              <div className="space-y-2">
-                <Label htmlFor="source-kind">Source kind</Label>
-                <Select
+              <FormGroup label="Source kind" fieldId="source-kind">
+                <FormSelect
+                  id="source-kind"
                   value={settings.sourceKind}
-                  onValueChange={(value) => {
+                  onChange={(_evt, value) => {
                     const nextSourceKind = value as SourceKind;
                     setSettings((current) => ({
                       ...current,
@@ -999,19 +995,12 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                       buildContextPath: nextSourceKind === 'raw-dockerfile' ? current.buildContextPath || '.' : '',
                     }));
                   }}
-                  disabled={sourceKindOptions.length === 1}
+                  isDisabled={sourceKindOptions.length === 1}
                 >
-                  <SelectTrigger id="source-kind">
-                    <SelectValue placeholder="Choose source kind" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {sourceKindOptions.map((sourceKind) => (
-                      <SelectItem key={sourceKind} value={sourceKind}>
-                        {getSourceKindLabel(sourceKind)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  {sourceKindOptions.map((sourceKind) => (
+                    <FormSelectOption key={sourceKind} value={sourceKind} label={getSourceKindLabel(sourceKind)} />
+                  ))}
+                </FormSelect>
                 <p className="text-xs text-muted-foreground">
                   {settings.providerType === 'raw-compose'
                     ? 'Choose whether this app consumes a raw compose file or a raw Dockerfile.'
@@ -1019,196 +1008,188 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                       ? 'Container image sources persist repository and tag separately.'
                       : 'Git-backed providers persist repository location and source ref explicitly.'}
                 </p>
-              </div>
+              </FormGroup>
 
               <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="connection-name">Git connection</Label>
-                <Select
-                  value={gitConnectionValue}
-                  onValueChange={(value) => {
-                    if (value === 'none') {
+                <FormGroup label="Git connection" fieldId="connection-name">
+                  <FormSelect
+                    id="connection-name"
+                    value={gitConnectionValue}
+                    onChange={(_evt, value) => {
+                      if (value === 'none') {
+                        setSettings((current) => ({
+                          ...current,
+                          connectionScope: '',
+                          connectionId: null,
+                          connectionName: '',
+                        }));
+                        return;
+                      }
+
+                      const [scope, rawId] = value.split(':');
+                      const connectionScope = scope as GitConnectionScope;
+                      const connectionId = Number(rawId);
+                      const selectedConnection = availableGitConnections.find(
+                        (connection) => connection.scope === connectionScope && connection.id === connectionId,
+                      );
+
                       setSettings((current) => ({
                         ...current,
-                        connectionScope: '',
-                        connectionId: null,
-                        connectionName: '',
+                        connectionScope,
+                        connectionId,
+                        connectionName: selectedConnection?.name || '',
                       }));
-                      return;
-                    }
-
-                    const [scope, rawId] = value.split(':');
-                    const connectionScope = scope as GitConnectionScope;
-                    const connectionId = Number(rawId);
-                    const selectedConnection = availableGitConnections.find(
-                      (connection) => connection.scope === connectionScope && connection.id === connectionId,
-                    );
-
-                    setSettings((current) => ({
-                      ...current,
-                      connectionScope,
-                      connectionId,
-                      connectionName: selectedConnection?.name || '',
-                    }));
-                  }}
-                  disabled={!isGitSourceKind(settings.sourceKind) || gitConnectionsLoading}
-                >
-                  <SelectTrigger id="connection-name">
-                    <SelectValue
-                      placeholder={
+                    }}
+                    isDisabled={!isGitSourceKind(settings.sourceKind) || gitConnectionsLoading}
+                  >
+                    <FormSelectOption
+                      value="none"
+                      label={
                         !isGitSourceKind(settings.sourceKind)
                           ? 'Not required for this source provider'
                           : gitConnectionsLoading
                             ? 'Loading Git connections...'
-                            : 'Choose a shared or personal connection'
+                            : 'No connection selected'
                       }
                     />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No connection selected</SelectItem>
                     {matchingGitConnections.map((connection) => (
-                      <SelectItem key={`${connection.scope}:${connection.id}`} value={`${connection.scope}:${connection.id}`}>
-                        {connection.scope === 'organization' ? '[Shared]' : '[Personal]'} {connection.name}
-                      </SelectItem>
+                      <FormSelectOption
+                        key={`${connection.scope}:${connection.id}`}
+                        value={`${connection.scope}:${connection.id}`}
+                        label={`${connection.scope === 'organization' ? '[Shared]' : '[Personal]'} ${connection.name}`}
+                      />
                     ))}
-                  </SelectContent>
-                </Select>
-                {isGitSourceKind(settings.sourceKind) ? (
-                  <p className="text-xs text-muted-foreground">
-                    {matchingGitConnections.length === 0
-                      ? (
-                        <>
-                          No matching Git connections exist for this provider.{' '}
-                          <Link
-                            to={buildOrganizationSettingsPath(project.organization?.id)}
-                            className="underline underline-offset-2 hover:text-foreground"
-                          >
-                            Add one in Organization Settings →
-                          </Link>
-                        </>
-                      )
-                      : settings.providerType === 'generic-git'
-                        ? `Current selection: ${selectedConnectionLabel}. Generic Git uses saved credentials but keeps repository and ref entry manual.`
-                      : selectedGitConnection
-                        ? `Current selection: ${selectedConnectionLabel}`
-                        : 'Leave this empty to use a public repository without a saved connection.'}
-                  </p>
-                ) : null}
+                  </FormSelect>
+                  {isGitSourceKind(settings.sourceKind) ? (
+                    <p className="text-xs text-muted-foreground">
+                      {matchingGitConnections.length === 0
+                        ? (
+                          <>
+                            No matching Git connections exist for this provider.{' '}
+                            <Link
+                              to={buildOrganizationSettingsPath(project.organization?.id)}
+                              className="underline underline-offset-2 hover:text-foreground"
+                            >
+                              Add one in Organization Settings →
+                            </Link>
+                          </>
+                        )
+                        : settings.providerType === 'generic-git'
+                          ? `Current selection: ${selectedConnectionLabel}. Generic Git uses saved credentials but keeps repository and ref entry manual.`
+                        : selectedGitConnection
+                          ? `Current selection: ${selectedConnectionLabel}`
+                          : 'Leave this empty to use a public repository without a saved connection.'}
+                    </p>
+                  ) : null}
+                </FormGroup>
               </div>
 
               <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="source-location">{sourceLocationLabel}</Label>
-                <Input
-                  id="source-location"
-                  value={settings.sourceLocation}
-                  onChange={(event) => setSettings((current) => ({ ...current, sourceLocation: event.target.value }))}
-                  placeholder={getSourceLocationPlaceholder(settings.providerType, settings.sourceKind)}
-                />
-                {publicRepositoryMessage ? <p className="text-xs text-muted-foreground">{publicRepositoryMessage}</p> : null}
-                {manualGuidanceMessage ? <p className="text-xs text-muted-foreground">{manualGuidanceMessage}</p> : null}
+                <FormGroup label={sourceLocationLabel} fieldId="source-location">
+                  <TextInput
+                    id="source-location"
+                    value={settings.sourceLocation}
+                    onChange={(_evt, value) => setSettings((current) => ({ ...current, sourceLocation: value }))}
+                    placeholder={getSourceLocationPlaceholder(settings.providerType, settings.sourceKind)}
+                  />
+                  {publicRepositoryMessage ? <p className="text-xs text-muted-foreground">{publicRepositoryMessage}</p> : null}
+                  {manualGuidanceMessage ? <p className="text-xs text-muted-foreground">{manualGuidanceMessage}</p> : null}
+                </FormGroup>
               </div>
 
               {canBrowseHostedRepositories && selectedGitConnection ? (
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="discovered-repository">Discovered repositories</Label>
-                  <Select
-                    value={discoveredRepositoryValue}
-                    onValueChange={(value) => {
-                      if (value === 'manual') {
-                        return;
-                      }
-
-                      const repository = discoveredRepositories.find(
-                        (candidate) => getRepositoryOptionValue(candidate) === value,
-                      );
-                      if (!repository) {
-                        return;
-                      }
-
-                      setSettings((current) => ({
-                        ...current,
-                        sourceLocation: getRepositoryOptionValue(repository),
-                        sourceRef: repository.default_branch || current.sourceRef || 'main',
-                      }));
-                    }}
-                    disabled={repositoriesLoading || discoveredRepositories.length === 0}
-                  >
-                    <SelectTrigger id="discovered-repository">
-                      <SelectValue placeholder="Choose a discovered repository" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="manual">Keep manual repository value</SelectItem>
-                      {discoveredRepositories.map((repository) => (
-                        <SelectItem
-                          key={`${repository.id}:${getRepositoryOptionValue(repository)}`}
-                          value={getRepositoryOptionValue(repository)}
-                        >
-                          {repository.full_name || repository.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">{repositoryDiscoveryMessage}</p>
-                </div>
-              ) : null}
-
-              {settings.providerType === 'docker-registry' ? (
-                <>
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="registry-search">Search Docker Hub</Label>
-                    <Input
-                      id="registry-search"
-                      value={registrySearch}
-                      onChange={(event) => setRegistrySearch(event.target.value)}
-                      placeholder="nginx, postgres, redis..."
-                    />
-                  </div>
-
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="discovered-registry-repository">Docker Hub repositories</Label>
-                    <Select
-                      value={discoveredRegistryRepositoryValue}
-                      onValueChange={(value) => {
+                  <FormGroup label="Discovered repositories" fieldId="discovered-repository">
+                    <FormSelect
+                      id="discovered-repository"
+                      value={discoveredRepositoryValue}
+                      onChange={(_evt, value) => {
                         if (value === 'manual') {
                           return;
                         }
 
-                        const repository = discoveredRegistryRepositories.find((candidate) => candidate.full_name === value);
+                        const repository = discoveredRepositories.find(
+                          (candidate) => getRepositoryOptionValue(candidate) === value,
+                        );
                         if (!repository) {
                           return;
                         }
 
                         setSettings((current) => ({
                           ...current,
-                          sourceLocation: repository.full_name,
-                          sourceRef: current.sourceRef || 'latest',
+                          sourceLocation: getRepositoryOptionValue(repository),
+                          sourceRef: repository.default_branch || current.sourceRef || 'main',
                         }));
                       }}
-                      disabled={sourceDiscoveryLoading || discoveredRegistryRepositories.length === 0}
+                      isDisabled={repositoriesLoading || discoveredRepositories.length === 0}
                     >
-                      <SelectTrigger id="discovered-registry-repository">
-                        <SelectValue placeholder="Choose a Docker Hub repository" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="manual">Keep manual image repository</SelectItem>
+                      <FormSelectOption value="manual" label="Keep manual repository value" />
+                      {discoveredRepositories.map((repository) => (
+                        <FormSelectOption
+                          key={`${repository.id}:${getRepositoryOptionValue(repository)}`}
+                          value={getRepositoryOptionValue(repository)}
+                          label={repository.full_name || repository.name}
+                        />
+                      ))}
+                    </FormSelect>
+                    <p className="text-xs text-muted-foreground">{repositoryDiscoveryMessage}</p>
+                  </FormGroup>
+                </div>
+              ) : null}
+
+              {settings.providerType === 'docker-registry' ? (
+                <>
+                  <div className="space-y-2 md:col-span-2">
+                    <FormGroup label="Search Docker Hub" fieldId="registry-search">
+                      <TextInput
+                        id="registry-search"
+                        value={registrySearch}
+                        onChange={(_evt, value) => setRegistrySearch(value)}
+                        placeholder="nginx, postgres, redis..."
+                      />
+                    </FormGroup>
+                  </div>
+
+                  <div className="space-y-2 md:col-span-2">
+                    <FormGroup label="Docker Hub repositories" fieldId="discovered-registry-repository">
+                      <FormSelect
+                        id="discovered-registry-repository"
+                        value={discoveredRegistryRepositoryValue}
+                        onChange={(_evt, value) => {
+                          if (value === 'manual') {
+                            return;
+                          }
+
+                          const repository = discoveredRegistryRepositories.find((candidate) => candidate.full_name === value);
+                          if (!repository) {
+                            return;
+                          }
+
+                          setSettings((current) => ({
+                            ...current,
+                            sourceLocation: repository.full_name,
+                            sourceRef: current.sourceRef || 'latest',
+                          }));
+                        }}
+                        isDisabled={sourceDiscoveryLoading || discoveredRegistryRepositories.length === 0}
+                      >
+                        <FormSelectOption value="manual" label="Keep manual image repository" />
                         {discoveredRegistryRepositories.map((repository) => (
-                          <SelectItem key={repository.full_name} value={repository.full_name}>
-                            {repository.full_name}
-                          </SelectItem>
+                          <FormSelectOption key={repository.full_name} value={repository.full_name} label={repository.full_name} />
                         ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">{registryRepositoryMessage}</p>
+                      </FormSelect>
+                      <p className="text-xs text-muted-foreground">{registryRepositoryMessage}</p>
+                    </FormGroup>
                   </div>
                 </>
               ) : null}
 
               {isGitSourceKind(settings.sourceKind) || settings.sourceKind === 'container-image' ? (
-                <div className="space-y-2">
-                  <Label htmlFor="source-ref">{sourceRefLabel}</Label>
-                  <Input
+                <FormGroup label={sourceRefLabel} fieldId="source-ref">
+                  <TextInput
                     id="source-ref"
                     value={settings.sourceRef}
-                    onChange={(event) => setSettings((current) => ({ ...current, sourceRef: event.target.value }))}
+                    onChange={(_evt, value) => setSettings((current) => ({ ...current, sourceRef: value }))}
                     placeholder={settings.sourceKind === 'container-image' ? 'latest' : 'main'}
                   />
                   {canBrowseHostedRepositories && selectedGitConnection && !selectedDiscoveredRepository ? (
@@ -1216,142 +1197,127 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                       Choose one of the discovered repositories to browse branches, or keep entering a branch manually.
                     </p>
                   ) : null}
-                </div>
+                </FormGroup>
               ) : null}
 
               {isGitSourceKind(settings.sourceKind) ? (
-                <div className="space-y-2">
-                  <Label htmlFor="compose-path">Compose path</Label>
-                  <Input
+                <FormGroup label="Compose path" fieldId="compose-path">
+                  <TextInput
                     id="compose-path"
                     value={settings.composePath}
-                    onChange={(event) => setSettings((current) => ({ ...current, composePath: event.target.value }))}
+                    onChange={(_evt, value) => setSettings((current) => ({ ...current, composePath: value }))}
                     placeholder="./docker-compose.yml"
                   />
-                </div>
+                </FormGroup>
               ) : null}
 
               {settings.sourceKind === 'raw-dockerfile' ? (
-                <div className="space-y-2">
-                  <Label htmlFor="build-context-path">Build context path</Label>
-                  <Input
+                <FormGroup label="Build context path" fieldId="build-context-path">
+                  <TextInput
                     id="build-context-path"
                     value={settings.buildContextPath}
-                    onChange={(event) => setSettings((current) => ({ ...current, buildContextPath: event.target.value }))}
+                    onChange={(_evt, value) => setSettings((current) => ({ ...current, buildContextPath: value }))}
                     placeholder="."
                   />
-                </div>
+                </FormGroup>
               ) : null}
 
               {canBrowseHostedRepositories && selectedDiscoveredRepository ? (
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="discovered-branch">Discovered branches</Label>
-                  <Select
-                    value={discoveredBranchValue}
-                    onValueChange={(value) => {
-                      if (value === 'manual') {
-                        return;
-                      }
-
-                      setSettings((current) => ({ ...current, sourceRef: value }));
-                    }}
-                    disabled={branchesLoading || discoveredBranches.length === 0}
-                  >
-                    <SelectTrigger id="discovered-branch">
-                      <SelectValue placeholder="Choose a discovered branch" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="manual">Keep manual branch value</SelectItem>
+                  <FormGroup label="Discovered branches" fieldId="discovered-branch">
+                    <FormSelect
+                      id="discovered-branch"
+                      value={discoveredBranchValue}
+                      onChange={(_evt, value) => {
+                        if (value === 'manual') {
+                          return;
+                        }
+                        setSettings((current) => ({ ...current, sourceRef: value }));
+                      }}
+                      isDisabled={branchesLoading || discoveredBranches.length === 0}
+                    >
+                      <FormSelectOption value="manual" label="Keep manual branch value" />
                       {discoveredBranches.map((branch: GitConnectionBranch) => (
-                        <SelectItem key={branch.name} value={branch.name}>
-                          {branch.is_default ? `[Default] ${branch.name}` : branch.name}
-                        </SelectItem>
+                        <FormSelectOption
+                          key={branch.name}
+                          value={branch.name}
+                          label={branch.is_default ? `[Default] ${branch.name}` : branch.name}
+                        />
                       ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">{branchDiscoveryMessage}</p>
+                    </FormSelect>
+                    <p className="text-xs text-muted-foreground">{branchDiscoveryMessage}</p>
+                  </FormGroup>
                 </div>
               ) : null}
 
               {settings.sourceKind === 'container-image' ? (
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="discovered-registry-tag">Discovered tags</Label>
-                  <Select
-                    value={discoveredRegistryTagValue}
-                    onValueChange={(value) => {
-                      if (value === 'manual') {
-                        return;
-                      }
-
-                      setSettings((current) => ({ ...current, sourceRef: value }));
-                    }}
-                    disabled={sourceDiscoveryLoading || discoveredRegistryTags.length === 0}
-                  >
-                    <SelectTrigger id="discovered-registry-tag">
-                      <SelectValue placeholder="Choose a discovered tag" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="manual">Keep manual tag value</SelectItem>
+                  <FormGroup label="Discovered tags" fieldId="discovered-registry-tag">
+                    <FormSelect
+                      id="discovered-registry-tag"
+                      value={discoveredRegistryTagValue}
+                      onChange={(_evt, value) => {
+                        if (value === 'manual') {
+                          return;
+                        }
+                        setSettings((current) => ({ ...current, sourceRef: value }));
+                      }}
+                      isDisabled={sourceDiscoveryLoading || discoveredRegistryTags.length === 0}
+                    >
+                      <FormSelectOption value="manual" label="Keep manual tag value" />
                       {discoveredRegistryTags.map((tag) => (
-                        <SelectItem key={tag.full_name} value={tag.name}>
-                          {tag.name}
-                        </SelectItem>
+                        <FormSelectOption key={tag.full_name} value={tag.name} label={tag.name} />
                       ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">{registryTagMessage}</p>
+                    </FormSelect>
+                    <p className="text-xs text-muted-foreground">{registryTagMessage}</p>
+                  </FormGroup>
                 </div>
               ) : null}
 
               {isGitSourceKind(settings.sourceKind) ? (
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="watch-paths">Watch paths</Label>
-                  <Textarea
-                    id="watch-paths"
-                    value={settings.watchPaths}
-                    onChange={(event) => setSettings((current) => ({ ...current, watchPaths: event.target.value }))}
-                    placeholder={"src/**\ncompose/**"}
-                    rows={4}
-                  />
+                  <FormGroup label="Watch paths" fieldId="watch-paths">
+                    <TextArea
+                      id="watch-paths"
+                      value={settings.watchPaths}
+                      onChange={(_evt, value) => setSettings((current) => ({ ...current, watchPaths: value }))}
+                      placeholder={"src/**\ncompose/**"}
+                      rows={4}
+                    />
+                  </FormGroup>
                 </div>
               ) : null}
 
-              <div className="space-y-2">
-                <Label htmlFor="trigger-type">Trigger type</Label>
-                <Select
+              <FormGroup label="Trigger type" fieldId="trigger-type">
+                <FormSelect
+                  id="trigger-type"
                   value={settings.triggerType}
-                  onValueChange={(value) =>
+                  onChange={(_evt, value) =>
                     setSettings((current) => ({
                       ...current,
                       triggerType: normalizeTriggerTypeForKind(current.sourceKind, value as TriggerType),
                     }))}
                 >
-                  <SelectTrigger id="trigger-type">
-                    <SelectValue placeholder="Choose trigger" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="manual">Manual deploy</SelectItem>
-                    {isGitSourceKind(settings.sourceKind) ? <SelectItem value="push">On push</SelectItem> : null}
-                    <SelectItem value="schedule">Schedule</SelectItem>
-                  </SelectContent>
-                </Select>
+                  <FormSelectOption value="manual" label="Manual deploy" />
+                  {isGitSourceKind(settings.sourceKind) ? <FormSelectOption value="push" label="On push" /> : null}
+                  <FormSelectOption value="schedule" label="Schedule" />
+                </FormSelect>
                 {!isGitSourceKind(settings.sourceKind) ? (
                   <p className="text-xs text-muted-foreground">
                     Push triggers are not available for non-Git source kinds yet.
                   </p>
                 ) : null}
-              </div>
+              </FormGroup>
 
-              <div className="space-y-2">
-                <Label htmlFor="schedule">Schedule</Label>
-                <Input
+              <FormGroup label="Schedule" fieldId="schedule">
+                <TextInput
                   id="schedule"
                   value={settings.schedule}
-                  onChange={(event) => setSettings((current) => ({ ...current, schedule: event.target.value }))}
+                  onChange={(_evt, value) => setSettings((current) => ({ ...current, schedule: value }))}
                   placeholder="0 */6 * * *"
-                  disabled={settings.triggerType !== 'schedule'}
+                  isDisabled={settings.triggerType !== 'schedule'}
                 />
-              </div>
+              </FormGroup>
             </div>
 
             <div className="grid gap-4 rounded-lg border border-border/80 bg-muted/20 p-4 md:grid-cols-2">
@@ -1361,8 +1327,11 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                   <div className="text-xs text-muted-foreground">Toggle automatic deployments for matching triggers.</div>
                 </div>
                 <Switch
-                  checked={settings.autoDeployEnabled}
-                  onCheckedChange={(checked) => setSettings((current) => ({ ...current, autoDeployEnabled: checked }))}
+                  id="autodeploy"
+                  label="On"
+                  labelOff="Off"
+                  isChecked={settings.autoDeployEnabled}
+                  onChange={(_evt, checked) => setSettings((current) => ({ ...current, autoDeployEnabled: checked }))}
                 />
               </div>
 
@@ -1376,9 +1345,12 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                   </div>
                 </div>
                 <Switch
-                  checked={isGitSourceKind(settings.sourceKind) ? settings.submodulesEnabled : false}
-                  onCheckedChange={(checked) => setSettings((current) => ({ ...current, submodulesEnabled: checked }))}
-                  disabled={!isGitSourceKind(settings.sourceKind)}
+                  id="submodules"
+                  label="On"
+                  labelOff="Off"
+                  isChecked={isGitSourceKind(settings.sourceKind) ? settings.submodulesEnabled : false}
+                  onChange={(_evt, checked) => setSettings((current) => ({ ...current, submodulesEnabled: checked }))}
+                  isDisabled={!isGitSourceKind(settings.sourceKind)}
                 />
               </div>
             </div>
@@ -1392,22 +1364,22 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button onClick={() => saveSettingsMutation.mutate()} disabled={saveSettingsMutation.isPending}>
-                {saveSettingsMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              <Button variant="primary" onClick={() => saveSettingsMutation.mutate()} isDisabled={saveSettingsMutation.isPending} isLoading={saveSettingsMutation.isPending}>
                 Save General settings
               </Button>
               {isGitSourceKind(settings.sourceKind) && settings.sourceLocation.trim() ? (
                 <Button
-                  variant="outline"
+                  variant="secondary"
                   onClick={() => setCloneConfirmOpen(true)}
-                  disabled={cloneWorkspaceMutation.isPending}
+                  isDisabled={cloneWorkspaceMutation.isPending}
+                  isLoading={cloneWorkspaceMutation.isPending}
                 >
-                  {cloneWorkspaceMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FolderGit2 className="mr-2 h-4 w-4" />}
+                  {!cloneWorkspaceMutation.isPending && <FolderGit2 style={{ marginRight: '0.5rem', width: '1rem', height: '1rem' }} />}
                   Clone into Workspace
                 </Button>
               ) : null}
-              <Button variant="outline" onClick={() => setIsPreviewOpen(true)}>
-                <Eye className="mr-2 h-4 w-4" />
+              <Button variant="secondary" onClick={() => setIsPreviewOpen(true)}>
+                <Eye style={{ marginRight: '0.5rem', width: '1rem', height: '1rem' }} />
                 Preview source payload
               </Button>
             </div>
@@ -1423,59 +1395,58 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                   </DialogDescription>
                 </DialogHeader>
                 <div className="flex justify-end gap-2 pt-2">
-                  <Button variant="outline" onClick={() => setCloneConfirmOpen(false)} disabled={cloneWorkspaceMutation.isPending}>
+                  <Button variant="secondary" onClick={() => setCloneConfirmOpen(false)} isDisabled={cloneWorkspaceMutation.isPending}>
                     Cancel
                   </Button>
                   <Button
-                    variant="destructive"
+                    variant="danger"
                     onClick={() => cloneWorkspaceMutation.mutate()}
-                    disabled={cloneWorkspaceMutation.isPending}
+                    isDisabled={cloneWorkspaceMutation.isPending}
+                    isLoading={cloneWorkspaceMutation.isPending}
                   >
-                    {cloneWorkspaceMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     Clone &amp; overwrite workspace
                   </Button>
                 </div>
               </DialogContent>
             </Dialog>
-          </CardContent>
+          </CardBody>
         </Card>
 
         <div className="space-y-6">
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-xl">
-                <Clock3 className="h-5 w-5" />
-                Webhooks & build queue
-              </CardTitle>
-              <CardDescription>
+            <CardTitle>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.25rem' }}>
+                <Clock3 style={{ width: '1.25rem', height: '1.25rem' }} />
+                Webhooks &amp; build queue
+              </span>
+            </CardTitle>
+            <CardBody>
+              <p style={{ fontSize: '0.875rem', color: 'var(--pf-v6-global--Color--200)', marginBottom: '1rem' }}>
                 The queue control shell is ready here. Webhook URLs, cancel queue, kill build, and live logs still need the next backend slice.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="webhook-url">Webhook URL</Label>
-                <Input id="webhook-url" value="Pending backend support" readOnly />
+              </p>
+              <div className="space-y-3">
+                <FormGroup label="Webhook URL" fieldId="webhook-url">
+                  <TextInput id="webhook-url" value="Pending backend support" readOnly />
+                </FormGroup>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" isDisabled>Cancel queue</Button>
+                  <Button variant="secondary" isDisabled>Kill build</Button>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" disabled>
-                  Cancel queue
-                </Button>
-                <Button variant="outline" size="sm" disabled>
-                  Kill build
-                </Button>
-              </div>
-            </CardContent>
+            </CardBody>
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-xl">
-                <Rocket className="h-5 w-5" />
+            <CardTitle>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.25rem' }}>
+                <Rocket style={{ width: '1.25rem', height: '1.25rem' }} />
                 Last 10 deployments
-              </CardTitle>
-              <CardDescription>Recent deployment history for this app. Real-time build logs will connect here in the next backend slice.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
+              </span>
+            </CardTitle>
+            <CardBody>
+              <p style={{ fontSize: '0.875rem', color: 'var(--pf-v6-global--Color--200)', marginBottom: '1rem' }}>
+                Recent deployment history for this app. Real-time build logs will connect here in the next backend slice.
+              </p>
               {showDeployLogs && (
                 <ProvisioningLogViewer
                   projectId={project.id}
@@ -1499,7 +1470,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                 <p className="text-sm text-muted-foreground">No deployments exist for this app yet.</p>
               ) : (
                 recentDeployments.map((deployment) => (
-                  <div key={deployment.id} className="rounded-lg border border-border bg-background p-4">
+                  <div key={deployment.id} className="rounded-lg border border-border bg-background p-4" style={{ marginBottom: '0.75rem' }}>
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="font-semibold">{deployment.version}</div>
@@ -1507,9 +1478,9 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                           {deployment.source_ref || 'manual'} • {deployment.trigger_type}
                         </div>
                       </div>
-                      <Badge variant={deployment.status === 'succeeded' ? 'default' : 'outline'}>
+                      <Label color={deployment.status === 'succeeded' ? 'green' : deployment.status === 'failed' ? 'red' : 'blue'}>
                         {deployment.status.replace(/_/g, ' ')}
-                      </Badge>
+                      </Label>
                     </div>
                     <div className="mt-3 text-xs text-muted-foreground">
                       {new Date(deployment.created_at).toLocaleString()}
@@ -1518,7 +1489,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                   </div>
                 ))
               )}
-            </CardContent>
+            </CardBody>
           </Card>
         </div>
       </div>

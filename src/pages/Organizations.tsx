@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button, Page, PageSection, Spinner, TreeView, TreeViewDataItem } from '@patternfly/react-core';
-import { Building2, FolderKanban, GitBranch, Plus, Rocket, Server, Settings2 } from 'lucide-react';
+import { Building2, FolderKanban, GitBranch, Plus, Server, Settings2 } from 'lucide-react';
 import { Outlet, useNavigate } from 'react-router-dom';
 
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -489,9 +489,6 @@ const Organizations = () => {
                 </Button>
                 <Button variant="secondary" icon={<Plus size={14} />} onClick={() => openDialog('app')} isDisabled={!selectedEnvironmentId}>
                   Create application
-                </Button>
-                <Button variant="primary" icon={<Rocket size={14} />} onClick={() => openDialog('deployment')} isDisabled={!selectedAppId}>
-                  Record deployment
                 </Button>
               </>
             }

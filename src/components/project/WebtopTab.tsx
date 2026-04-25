@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Card, CardBody, Button, Spinner, Alert, AlertVariant, Progress, Modal, ModalVariant } from '@patternfly/react-core';
+import { Card, CardBody, Button, Spinner, Alert, AlertVariant, Modal, ModalVariant, Dropdown, DropdownList, DropdownItem, MenuToggle } from '@patternfly/react-core';
+import { EllipsisVIcon } from '@patternfly/react-icons';
 import { Play, Square, RotateCw, XCircle, Loader2, Trash2, RefreshCw, AlertTriangle, CheckCircle2, Activity } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
@@ -21,17 +22,6 @@ import {
   SyncCheckResponse
 } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
 
 interface WebtopTabProps {
   project: Project;
@@ -42,6 +32,7 @@ export const WebtopTab: React.FC<WebtopTabProps> = ({ project }) => {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [showStatsModal, setShowStatsModal] = useState(false);
+  const [isLifecycleMenuOpen, setIsLifecycleMenuOpen] = useState(false);
   const queryClient = useQueryClient();
 
   // Fetch services for this project
@@ -364,67 +355,76 @@ export const WebtopTab: React.FC<WebtopTabProps> = ({ project }) => {
               )}
             </div>
 
-            <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                icon={<Play size={16} />}
-                onClick={() => startMutation.mutate(webtopService.id)}
-                isDisabled={isRunning || isActionPending}
-              >
-                Start
-              </Button>
-              <Button
-                variant="secondary"
-                icon={<Square size={16} />}
-                onClick={() => stopMutation.mutate(webtopService.id)}
-                isDisabled={isStopped || isActionPending}
-              >
-                Stop
-              </Button>
-              <Button
-                variant="secondary"
-                icon={<RotateCw size={16} />}
-                onClick={() => restartMutation.mutate(webtopService.id)}
-                isDisabled={isActionPending}
-              >
-                Restart
-              </Button>
-              <Button
-                variant="danger"
-                icon={<XCircle size={16} />}
-                onClick={() => killMutation.mutate(webtopService.id)}
-                isDisabled={isStopped || isActionPending}
-              >
-                Kill
-              </Button>
-              <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="danger"
-                    icon={<Trash2 size={16} />}
+            <div className="flex gap-2 items-center">
+              {/* Primary toggle: Start when stopped, Stop when running */}
+              {isRunning ? (
+                <Button
+                  variant="danger"
+                  icon={<Square size={16} />}
+                  onClick={() => stopMutation.mutate(webtopService.id)}
+                  isDisabled={isActionPending}
+                  isLoading={stopMutation.isPending}
+                >
+                  Stop
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  icon={<Play size={16} />}
+                  onClick={() => startMutation.mutate(webtopService.id)}
+                  isDisabled={isRunning || isActionPending}
+                  isLoading={startMutation.isPending}
+                >
+                  Start
+                </Button>
+              )}
+
+              {/* Kebab menu for secondary actions */}
+              <Dropdown
+                isOpen={isLifecycleMenuOpen}
+                onSelect={() => setIsLifecycleMenuOpen(false)}
+                onOpenChange={setIsLifecycleMenuOpen}
+                toggle={(toggleRef) => (
+                  <MenuToggle
+                    ref={toggleRef}
+                    aria-label="More workspace actions"
+                    variant="plain"
+                    onClick={() => setIsLifecycleMenuOpen(!isLifecycleMenuOpen)}
+                    isExpanded={isLifecycleMenuOpen}
                     isDisabled={isActionPending}
                   >
-                    Delete
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete Webtop Container</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Are you sure you want to delete the webtop container? This action cannot be undone and will remove all unsaved data in the workspace.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => deleteMutation.mutate(webtopService.id)}
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    >
-                      Delete
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+                    <EllipsisVIcon />
+                  </MenuToggle>
+                )}
+              >
+                <DropdownList>
+                  <DropdownItem
+                    key="restart"
+                    icon={<RotateCw size={14} />}
+                    isDisabled={isActionPending}
+                    onClick={() => restartMutation.mutate(webtopService.id)}
+                  >
+                    Restart
+                  </DropdownItem>
+                  <DropdownItem
+                    key="kill"
+                    isDisabled={isStopped || isActionPending}
+                    icon={<XCircle size={14} />}
+                    onClick={() => killMutation.mutate(webtopService.id)}
+                  >
+                    Kill
+                  </DropdownItem>
+                  <DropdownItem
+                    key="delete"
+                    isDanger
+                    isDisabled={isActionPending}
+                    icon={<Trash2 size={14} />}
+                    onClick={() => setIsDeleteDialogOpen(true)}
+                  >
+                    Delete workspace
+                  </DropdownItem>
+                </DropdownList>
+              </Dropdown>
             </div>
           </div>
         </CardBody>
@@ -457,6 +457,30 @@ export const WebtopTab: React.FC<WebtopTabProps> = ({ project }) => {
           </CardBody>
         </Card>
       )}
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        isOpen={isDeleteDialogOpen}
+        onClose={() => setIsDeleteDialogOpen(false)}
+        title="Delete Webtop Container"
+        variant={ModalVariant.small}
+        actions={[
+          <Button
+            key="delete"
+            variant="danger"
+            onClick={() => deleteMutation.mutate(webtopService.id)}
+            isDisabled={deleteMutation.isPending}
+            isLoading={deleteMutation.isPending}
+          >
+            Delete
+          </Button>,
+          <Button key="cancel" variant="link" onClick={() => setIsDeleteDialogOpen(false)} isDisabled={deleteMutation.isPending}>
+            Cancel
+          </Button>,
+        ]}
+      >
+        <p>Are you sure you want to delete the webtop container? This action cannot be undone and will remove all unsaved data in the workspace.</p>
+      </Modal>
 
       {/* Sync Issues Modal */}
       <Modal
