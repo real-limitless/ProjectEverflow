@@ -15,7 +15,7 @@ from .workspace_initializer import initialize_project_workspace, WorkspaceInitia
 from .llm_config import get_llm_manager
 from .podman_orchestrator import PodmanOrchestrator
 from .compose_parser import load_compose_from_text, build_service_specs
-from .git_connection_discovery import GitProviderDiscoveryError, list_connection_repositories, list_repository_branches
+from .git_connection_discovery import GitProviderDiscoveryError, list_connection_repositories, list_repository_branches, test_connection_credential
 from .git_source_normalization import GitRepositoryNormalizationError, normalize_public_git_repository_input
 from .source_discovery import SourceDiscoveryError, get_source_discovery_payload
 from .models import (
@@ -374,22 +374,17 @@ class OrganizationGitConnectionViewSet(viewsets.ModelViewSet):
         if not user_has_organization_access(request.user, connection.organization, minimum_role='admin'):
             raise PermissionDenied('You do not have permission to test organization Git connections')
 
+        result = test_connection_credential(connection)
+
         connection.last_tested_at = timezone.now()
-        requires_secret = connection.auth_type in {'pat', 'app', 'ssh'}
-
-        if requires_secret and not connection.credential:
-            connection.last_test_status = 'failed'
-            message = 'A credential is required before this connection can be validated.'
-        else:
-            connection.last_test_status = 'succeeded'
-            message = 'Connection record passed structural validation. Use repository discovery to verify repository and branch access for supported providers.'
-
+        connection.last_test_status = result['status'] if result['status'] in {'succeeded', 'failed'} else 'unknown'
         connection.save(update_fields=['last_tested_at', 'last_test_status', 'updated_at'])
         serializer = self.get_serializer(connection)
         return Response(
             {
-                'status': connection.last_test_status,
-                'message': message,
+                'status': result['status'],
+                'message': result['message'],
+                'username': result.get('username'),
                 'connection': serializer.data,
             }
         )
@@ -464,22 +459,17 @@ class PersonalGitConnectionViewSet(viewsets.ModelViewSet):
         if connection.user_id != request.user.id:
             raise PermissionDenied('You do not have permission to test this personal Git connection')
 
+        result = test_connection_credential(connection)
+
         connection.last_tested_at = timezone.now()
-        requires_secret = connection.auth_type in {'pat', 'app', 'ssh'}
-
-        if requires_secret and not connection.credential:
-            connection.last_test_status = 'failed'
-            message = 'A credential is required before this connection can be validated.'
-        else:
-            connection.last_test_status = 'succeeded'
-            message = 'Personal connection record passed structural validation. Use repository discovery to verify repository and branch access for supported providers.'
-
+        connection.last_test_status = result['status'] if result['status'] in {'succeeded', 'failed'} else 'unknown'
         connection.save(update_fields=['last_tested_at', 'last_test_status', 'updated_at'])
         serializer = self.get_serializer(connection)
         return Response(
             {
-                'status': connection.last_test_status,
-                'message': message,
+                'status': result['status'],
+                'message': result['message'],
+                'username': result.get('username'),
                 'connection': serializer.data,
             }
         )
@@ -600,6 +590,19 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
             data['git_repo_url'] = normalized_repository.clone_url
 
+        # Extract connection fields before passing to serializer (not model fields on Project)
+        connection_scope = data.pop('connection_scope', None)
+        if isinstance(connection_scope, list):
+            connection_scope = connection_scope[0] if connection_scope else None
+        connection_id = data.pop('connection_id', None)
+        if isinstance(connection_id, list):
+            connection_id = connection_id[0] if connection_id else None
+        if connection_id:
+            try:
+                connection_id = int(connection_id)
+            except (TypeError, ValueError):
+                connection_id = None
+
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
 
@@ -616,6 +619,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
         project.provisioning_status = 'pending'
         project.save(update_fields=['provisioning_status'])
 
+        # Resolve credential from the optional saved connection
+        clone_credential: str | None = None
+        if connection_id and connection_scope and data.get('creation_method') == 'clone':
+            try:
+                if connection_scope == 'organization':
+                    from .models import OrganizationGitConnection
+                    git_conn = OrganizationGitConnection.objects.get(pk=connection_id)
+                    if git_conn.organization == organization or user_has_organization_access(request.user, git_conn.organization, minimum_role='member'):
+                        clone_credential = git_conn.get_credential()
+                elif connection_scope == 'personal':
+                    from .models import PersonalGitConnection
+                    git_conn = PersonalGitConnection.objects.get(pk=connection_id, user=request.user)
+                    clone_credential = git_conn.get_credential()
+            except Exception:  # noqa: BLE001
+                clone_credential = None
+
         # Trigger workspace provisioning for clone method
         if project.creation_method == 'clone' and project.git_repo_url:
             project.provisioning_status = 'in_progress'
@@ -628,8 +647,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 # Provision workspace volume and container
                 orchestrator.ensure_workspace_service(project.id, user_id=user_id)
 
-                # Initialize workspace with git clone
-                initialize_project_workspace(project)
+                # Initialize workspace with git clone (credential passed securely, never logged)
+                initialize_project_workspace(project, clone_credential=clone_credential)
 
                 project.provisioning_status = 'completed'
                 project.save(update_fields=['provisioning_status'])
@@ -1480,6 +1499,85 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 {'error': str(exc), 'error_type': 'reprovision_error'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=True, methods=['post'], url_path='workspace/clone-from-source')
+    def clone_workspace_from_source(self, request, pk=None):
+        """
+        Clone a git repository directly into the project workspace volume.
+        Clears existing workspace content first. The workspace container does not
+        need to be running — cloning uses a temporary alpine/git container.
+        """
+        project = self.get_object()
+
+        if not user_has_project_access(request.user, project):
+            raise PermissionDenied("You do not have permission to manage this project's workspace")
+
+        git_url = request.data.get('git_url', '').strip()
+        branch = request.data.get('branch', '').strip() or None
+        connection_scope = request.data.get('connection_scope', '').strip() or None
+        connection_id_raw = request.data.get('connection_id', None)
+        connection_id = None
+        if connection_id_raw:
+            try:
+                connection_id = int(connection_id_raw)
+            except (TypeError, ValueError):
+                connection_id = None
+
+        if not git_url:
+            return Response({'error': 'git_url is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Normalize the URL
+        try:
+            normalized_repository = normalize_public_git_repository_input(git_url)
+            git_url = normalized_repository.clone_url
+        except GitRepositoryNormalizationError:
+            pass  # Use the URL as-is (may be a private or self-hosted repo)
+
+        # Resolve PAT from an optional saved connection
+        clone_credential = None
+        if connection_id and connection_scope:
+            try:
+                if connection_scope == 'organization':
+                    org = project.organization
+                    git_conn = OrganizationGitConnection.objects.get(pk=connection_id)
+                    if git_conn.organization == org or user_has_organization_access(request.user, git_conn.organization, minimum_role='member'):
+                        clone_credential = git_conn.get_credential()
+                elif connection_scope == 'personal':
+                    git_conn = PersonalGitConnection.objects.get(pk=connection_id, user=request.user)
+                    clone_credential = git_conn.get_credential()
+            except Exception:  # noqa: BLE001
+                clone_credential = None
+
+        volume_name = f"proj-{project.id}-workspace"
+        initializer = WorkspaceInitializer(volume_name, project_id=project.id)
+        podman_bin = os.getenv('PODMAN_BIN', 'podman')
+
+        try:
+            # Ensure the volume exists before clearing
+            initializer._ensure_volume_exists()
+
+            # Clear existing workspace content so the clone lands cleanly
+            clear_cmd = 'find /workspace -mindepth 1 -delete 2>/dev/null || true'
+            try:
+                initializer._run_command([
+                    podman_bin, 'run', '--rm',
+                    '-v', f'{volume_name}:/workspace',
+                    '--entrypoint', '/bin/sh',
+                    'alpine:latest',
+                    '-c', clear_cmd,
+                ])
+            except Exception as clear_exc:
+                self.logger.warning(f"Could not clear workspace before clone: {clear_exc}")
+
+            # Clone the repository into the volume
+            initializer.init_from_clone(git_url, branch, credential=clone_credential)
+
+            return Response({'status': 'success', 'message': 'Repository cloned successfully into workspace'})
+
+        except Exception as exc:
+            self.logger.error(f"clone_workspace_from_source failed for project {project.id}: {exc}")
+            return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class ProjectTemplateViewSet(viewsets.ModelViewSet):
     queryset = ProjectTemplate.objects.filter(is_active=True)

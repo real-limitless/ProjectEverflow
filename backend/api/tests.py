@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import App, AppSourceSettings, Deployment, Environment, Organization, OrganizationGitConnection, OrganizationMembership, PersonalGitConnection, Project, ProjectService
+from .models import App, AppSourceSettings, Deployment, Environment, Organization, OrganizationGitConnection, OrganizationMembership, PersonalGitConnection, Project, ProjectPod, ProjectService
 
 
 User = get_user_model()
@@ -351,6 +351,119 @@ class ProjectPublicGitInputApiTests(APITestCase):
 
 		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 		self.assertIn('git_repo_url', response.data)
+
+
+class ProjectWorkspaceGitPullApiTests(APITestCase):
+	def setUp(self):
+		self.user = User.objects.create_user(
+			username='workspace-git-user',
+			password='test-pass',
+		)
+		self.project = Project.objects.create(
+			name='Workspace Git Project',
+			description='Workspace git pull tests',
+			owner=self.user,
+			creation_method='clone',
+			git_repo_url='git@github.com:acme/portal.git',
+		)
+		self.pod = ProjectPod.objects.create(
+			project=self.project,
+			pod_name=f'project-{self.project.id}-pod',
+			status='running',
+		)
+		ProjectService.objects.create(
+			pod=self.pod,
+			name='workspace',
+			service_type='ai-workspace',
+			image='fedora:43',
+			container_name=f'workspace-{self.project.id}',
+			status='running',
+		)
+
+	@mock.patch('api.git_views.GitViewSet._execute_in_container')
+	def test_pull_rewrites_public_ssh_origin_to_https_before_pull(self, mock_execute):
+		self.client.force_authenticate(self.user)
+
+		def execute_side_effect(_container_name, command, timeout=30):
+			if command == 'git remote get-url origin':
+				return {
+					'success': True,
+					'stdout': 'git@github.com:acme/portal.git\n',
+					'stderr': '',
+					'returncode': 0,
+				}
+			if command == 'git remote set-url origin https://github.com/acme/portal':
+				return {
+					'success': True,
+					'stdout': '',
+					'stderr': '',
+					'returncode': 0,
+				}
+			if command == 'git pull':
+				return {
+					'success': True,
+					'stdout': 'Already up to date.\n',
+					'stderr': '',
+					'returncode': 0,
+				}
+			return {
+				'success': False,
+				'stdout': '',
+				'stderr': f'Unexpected command: {command}',
+			}
+
+		mock_execute.side_effect = execute_side_effect
+
+		response = self.client.post(f'/api/projects/{self.project.id}/workspace/git/pull/', {}, format='json')
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertEqual(response.data['remote']['previous_origin'], 'git@github.com:acme/portal.git')
+		self.assertEqual(response.data['remote']['normalized_origin'], 'https://github.com/acme/portal')
+		self.assertEqual(
+			[call.args[1] for call in mock_execute.call_args_list],
+			['git remote get-url origin', 'git remote set-url origin https://github.com/acme/portal', 'git pull'],
+		)
+
+		self.project.refresh_from_db()
+		self.assertEqual(self.project.git_repo_url, 'https://github.com/acme/portal')
+
+	@mock.patch('api.git_views.GitViewSet._execute_in_container')
+	def test_pull_leaves_https_origin_unchanged(self, mock_execute):
+		self.client.force_authenticate(self.user)
+		self.project.git_repo_url = 'https://github.com/acme/portal'
+		self.project.save(update_fields=['git_repo_url'])
+
+		def execute_side_effect(_container_name, command, timeout=30):
+			if command == 'git remote get-url origin':
+				return {
+					'success': True,
+					'stdout': 'https://github.com/acme/portal\n',
+					'stderr': '',
+					'returncode': 0,
+				}
+			if command == 'git pull':
+				return {
+					'success': True,
+					'stdout': 'Already up to date.\n',
+					'stderr': '',
+					'returncode': 0,
+				}
+			return {
+				'success': False,
+				'stdout': '',
+				'stderr': f'Unexpected command: {command}',
+			}
+
+		mock_execute.side_effect = execute_side_effect
+
+		response = self.client.post(f'/api/projects/{self.project.id}/workspace/git/pull/', {}, format='json')
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertEqual(
+			[call.args[1] for call in mock_execute.call_args_list],
+			['git remote get-url origin', 'git pull'],
+		)
+		self.assertEqual(response.data['remote']['normalized_origin'], 'https://github.com/acme/portal')
 
 
 class OrganizationGitConnectionApiTests(APITestCase):

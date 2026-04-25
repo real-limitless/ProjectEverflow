@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useOutletContext } from 'react-router-dom';
-import { Cable, CheckCircle2, GitBranch, Globe, KeyRound, Loader2, LockKeyhole, Plus, Settings2, ShieldCheck, Trash2 } from 'lucide-react';
+import { BookOpen, Cable, CheckCircle2, GitBranch, Globe, Loader2, LockKeyhole, Pencil, Plus, Settings2, ShieldCheck, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,6 +39,8 @@ import {
   PersonalGitConnection,
   testOrganizationGitConnection,
   testPersonalGitConnection,
+  updateOrganizationGitConnection,
+  updatePersonalGitConnection,
 } from '@/lib/api';
 import { buildOrganizationPath } from '@/lib/organizationPaths';
 import type { OrganizationHierarchyOutletContext } from '@/pages/Organizations';
@@ -84,12 +86,24 @@ function buildEmptyConnectionForm(scope: GitConnectionScope = 'organization'): C
   };
 }
 
+interface EditFormState {
+  connectionId: number;
+  scope: GitConnectionScope;
+  name: string;
+  provider: GitProviderType;
+  authType: GitConnectionAuthType;
+  baseUrl: string;
+  notes: string;
+  credential: string;
+}
+
 const OrganizationSettings = () => {
   const { selectedOrganization } = useOutletContext<OrganizationHierarchyOutletContext>();
   const queryClient = useQueryClient();
   const canManageSharedConnections = selectedOrganization?.user_role === 'owner' || selectedOrganization?.user_role === 'admin';
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [formState, setFormState] = useState<ConnectionFormState>(() => buildEmptyConnectionForm());
+  const [editTarget, setEditTarget] = useState<EditFormState | null>(null);
 
   const { data: sharedConnectionsResponse, isLoading: isSharedLoading, error: sharedError } = useQuery({
     queryKey: ['organization-git-connections', selectedOrganization?.id],
@@ -223,6 +237,59 @@ const OrganizationSettings = () => {
     },
   });
 
+  const editMutation = useMutation({
+    mutationFn: async () => {
+      if (!editTarget) throw new Error('No connection selected for editing.');
+      const payload = {
+        name: editTarget.name.trim(),
+        provider_type: editTarget.provider,
+        auth_type: editTarget.authType,
+        base_url: editTarget.baseUrl.trim() || undefined,
+        notes: editTarget.notes.trim() || undefined,
+        ...(editTarget.credential.trim() ? { credential_plain: editTarget.credential.trim() } : {}),
+      };
+      return editTarget.scope === 'personal'
+        ? updatePersonalGitConnection(editTarget.connectionId, payload)
+        : updateOrganizationGitConnection(editTarget.connectionId, payload);
+    },
+    onSuccess: () => {
+      invalidateConnections();
+      setEditTarget(null);
+      toast({
+        title: 'Connection updated',
+        description: 'The Git connection has been saved. If you updated the credential, test the connection to verify access.',
+      });
+    },
+    onError: (mutationError) => {
+      toast({
+        title: 'Unable to update connection',
+        description: mutationError instanceof Error ? mutationError.message : 'Connection update failed.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const openEditDialog = (connection: ManagedConnection) => {
+    setEditTarget({
+      connectionId: connection.id,
+      scope: connection.scope,
+      name: connection.name,
+      provider: connection.provider_type,
+      authType: connection.auth_type,
+      baseUrl: connection.base_url || '',
+      notes: connection.notes || '',
+      credential: '',
+    });
+  };
+
+  const saveEdit = () => {
+    if (!editTarget?.name.trim()) {
+      toast({ title: 'Name required', description: 'Enter a name before saving.', variant: 'destructive' });
+      return;
+    }
+    editMutation.mutate();
+  };
+
   if (!selectedOrganization) {
     return (
       <Card>
@@ -287,6 +354,15 @@ const OrganizationSettings = () => {
           {connection.notes ? <p className="mt-3 text-sm text-muted-foreground">{connection.notes}</p> : null}
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => openEditDialog(connection)}
+            disabled={connection.scope === 'organization' && !canManageSharedConnections}
+          >
+            <Pencil className="mr-2 h-4 w-4" />
+            Edit
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -420,20 +496,21 @@ const OrganizationSettings = () => {
             <CardContent className="space-y-3 text-sm text-muted-foreground">
               <p>Shared connections let teams standardize which org-level repositories power deployments and branch-based release flows.</p>
               <p>Personal connections let individuals authorize AI-assisted commit-back without exposing personal tokens to the whole organization.</p>
-              <p>The app General tab can now choose either scope as the source of truth for repository, branch, and future Dokploy deployments.</p>
+              <p>The app General tab can choose either scope as the source of truth for repository, branch, and deploy-from-source workflows.</p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-xl">
-                <KeyRound className="h-5 w-5" />
-                Remaining backend slice
+                <BookOpen className="h-5 w-5" />
+                How connections work
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-muted-foreground">
-              <p>Encrypted credential storage, shared and personal CRUD, and app source configuration are now in place.</p>
-              <p>Repository discovery, branch lookup, webhook secret rotation, and provider-specific OAuth or App installation flows still need follow-up backend work.</p>
+              <p><span className="font-medium text-foreground">Personal Access Token (PAT)</span> — Generate a token in your provider's developer settings (GitHub: Settings → Developer settings → Tokens; GitLab: User Settings → Access Tokens). Paste it in the credential field. PAT connections support repository browsing and live credential verification via Test.</p>
+              <p><span className="font-medium text-foreground">SSH</span> — Paste an SSH private key. SSH connections support workspace clone and pull operations. Repository browsing and live credential tests are not available for SSH connections.</p>
+              <p><span className="font-medium text-foreground">No connection needed for public repos</span> — HTTPS URLs, owner/repo slugs, and public git@ addresses can be used directly in the app General tab without any saved connection.</p>
             </CardContent>
           </Card>
         </div>
@@ -506,11 +583,12 @@ const OrganizationSettings = () => {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="pat">Personal access token</SelectItem>
-                    <SelectItem value="oauth">OAuth</SelectItem>
-                    <SelectItem value="app">App installation</SelectItem>
-                    <SelectItem value="ssh">SSH</SelectItem>
+                    <SelectItem value="ssh">SSH key</SelectItem>
                   </SelectContent>
                 </Select>
+                {formState.authType === 'ssh' ? (
+                  <p className="text-xs text-muted-foreground">SSH connections support workspace clone and pull operations. Repository browsing is not available for SSH connections.</p>
+                ) : null}
               </div>
             </div>
 
@@ -554,6 +632,114 @@ const OrganizationSettings = () => {
             <Button onClick={createConnection} disabled={createMutation.isPending}>
               {createMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Add {formState.scope === 'personal' ? 'personal' : 'shared'} connection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editTarget !== null} onOpenChange={(open) => { if (!open) setEditTarget(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Git connection</DialogTitle>
+            <DialogDescription>
+              Update the connection details. Leave the credential field blank to keep the existing credential unchanged.
+            </DialogDescription>
+          </DialogHeader>
+
+          {editTarget ? (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label>Connection scope</Label>
+                <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+                  {editTarget.scope === 'organization' ? 'Shared organization connection' : 'Personal connection'} — cannot be changed after creation
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-connection-name">Connection name</Label>
+                <Input
+                  id="edit-connection-name"
+                  value={editTarget.name}
+                  onChange={(event) => setEditTarget((current) => current ? { ...current, name: event.target.value } : current)}
+                />
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-provider">Provider</Label>
+                  <Select
+                    value={editTarget.provider}
+                    onValueChange={(value) => setEditTarget((current) => current ? { ...current, provider: value as GitProviderType } : current)}
+                  >
+                    <SelectTrigger id="edit-provider">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="github">GitHub</SelectItem>
+                      <SelectItem value="gitlab">GitLab</SelectItem>
+                      <SelectItem value="bitbucket">Bitbucket</SelectItem>
+                      <SelectItem value="gitea">Gitea</SelectItem>
+                      <SelectItem value="generic-git">Generic Git</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit-auth-type">Auth type</Label>
+                  <Select
+                    value={editTarget.authType}
+                    onValueChange={(value) => setEditTarget((current) => current ? { ...current, authType: value as GitConnectionAuthType } : current)}
+                  >
+                    <SelectTrigger id="edit-auth-type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pat">Personal access token</SelectItem>
+                      <SelectItem value="ssh">SSH key</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {editTarget.authType === 'ssh' ? (
+                    <p className="text-xs text-muted-foreground">SSH connections support workspace clone and pull. Repository browsing is unavailable.</p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-base-url">Base URL</Label>
+                <Input
+                  id="edit-base-url"
+                  value={editTarget.baseUrl}
+                  onChange={(event) => setEditTarget((current) => current ? { ...current, baseUrl: event.target.value } : current)}
+                  placeholder="https://git.example.com (leave blank for hosted providers)"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-notes">Notes</Label>
+                <Textarea
+                  id="edit-notes"
+                  value={editTarget.notes}
+                  onChange={(event) => setEditTarget((current) => current ? { ...current, notes: event.target.value } : current)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-credential">Replace credential</Label>
+                <Textarea
+                  id="edit-credential"
+                  value={editTarget.credential}
+                  onChange={(event) => setEditTarget((current) => current ? { ...current, credential: event.target.value } : current)}
+                  placeholder="Leave blank to keep existing credential — only fill to replace it."
+                />
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTarget(null)} disabled={editMutation.isPending}>Cancel</Button>
+            <Button onClick={saveEdit} disabled={editMutation.isPending}>
+              {editMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Save changes
             </Button>
           </DialogFooter>
         </DialogContent>

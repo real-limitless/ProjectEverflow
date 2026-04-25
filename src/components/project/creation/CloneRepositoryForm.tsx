@@ -1,15 +1,25 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
+import { useQuery } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Card, CardBody, CardTitle, Button as PatternFlyButton } from '@patternfly/react-core';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from "@/hooks/use-toast";
-import { Github, Gitlab } from "lucide-react";
+import { Github, Gitlab, Lock } from "lucide-react";
 import { ArrowLeftIcon } from '@patternfly/react-icons';
-import { createProject, getCurrentUser } from '@/lib/api';
+import {
+  createProject,
+  getCurrentUser,
+  getOrganizationGitConnections,
+  getPersonalGitConnections,
+  getOrganizations,
+  GitConnectionScope,
+  normalizeApiList,
+} from '@/lib/api';
 
 const cloneSchema = z.object({
   repositoryUrl: z.string().trim().min(1, "Enter a repository URL, SSH clone URL, or supported owner/repo slug"),
@@ -28,6 +38,35 @@ interface CloneRepositoryFormProps {
 export function CloneRepositoryForm({ onCancel, onComplete }: CloneRepositoryFormProps) {
   const { toast } = useToast();
   const [isCloning, setIsCloning] = useState(false);
+  // null = no connection (public), 'personal:N' or 'org:N' = a saved connection
+  const [selectedConnectionKey, setSelectedConnectionKey] = useState<string>('none');
+
+  const { data: organizations } = useQuery({
+    queryKey: ['organizations'],
+    queryFn: async () => {
+      const response = await getOrganizations();
+      return normalizeApiList(response.data);
+    },
+  });
+  const firstOrgId = organizations?.[0]?.id ?? null;
+
+  const { data: orgConnectionsData } = useQuery({
+    queryKey: ['orgGitConnections', firstOrgId],
+    queryFn: () => getOrganizationGitConnections({ organizationId: firstOrgId! }),
+    enabled: firstOrgId !== null,
+    select: (response) => normalizeApiList(response.data),
+  });
+
+  const { data: personalConnectionsData } = useQuery({
+    queryKey: ['personalGitConnections'],
+    queryFn: getPersonalGitConnections,
+    select: (response) => normalizeApiList(response.data),
+  });
+
+  const allConnections = [
+    ...(orgConnectionsData ?? []).map((c) => ({ ...c, connectionScope: 'organization' as GitConnectionScope })),
+    ...(personalConnectionsData ?? []).map((c) => ({ ...c, connectionScope: 'personal' as GitConnectionScope })),
+  ];
 
   const form = useForm<CloneFormData>({
     resolver: zodResolver(cloneSchema),
@@ -36,6 +75,8 @@ export function CloneRepositoryForm({ onCancel, onComplete }: CloneRepositoryFor
       branch: "main",
     },
   });
+
+  const currentProvider = form.watch('provider');
 
     const onSubmit = async (data: CloneFormData) => {
     setIsCloning(true);
@@ -54,6 +95,15 @@ export function CloneRepositoryForm({ onCancel, onComplete }: CloneRepositoryFor
         return;
       }
 
+      // Resolve connection fields from the selected connection key
+      let connectionScope: GitConnectionScope | undefined;
+      let connectionId: number | undefined;
+      if (selectedConnectionKey && selectedConnectionKey !== 'none') {
+        const [scopePrefix, idStr] = selectedConnectionKey.split(':');
+        connectionScope = scopePrefix as GitConnectionScope;
+        connectionId = Number(idStr);
+      }
+
       const response = await createProject({
         name: data.projectName,
         description: `Cloned from ${data.provider} repository: ${data.repositoryUrl}`,
@@ -62,6 +112,7 @@ export function CloneRepositoryForm({ onCancel, onComplete }: CloneRepositoryFor
         git_repo_url: data.repositoryUrl,
         git_provider_hint: normalizedProviderHint,
         branch: data.branch || 'main',
+        ...(connectionScope && connectionId ? { connection_scope: connectionScope, connection_id: connectionId } : {}),
       });
 
       if (response.error) {
@@ -144,6 +195,31 @@ export function CloneRepositoryForm({ onCancel, onComplete }: CloneRepositoryFor
                   </FormItem>
                 )}
               />
+
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <Lock className="h-4 w-4" />
+                  Saved connection (for private repositories)
+                </Label>
+                <Select value={selectedConnectionKey} onValueChange={setSelectedConnectionKey}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="No connection — public repo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No connection — public repository</SelectItem>
+                    {allConnections
+                      .filter((c) => c.provider_type === currentProvider || currentProvider === 'other')
+                      .map((c) => (
+                        <SelectItem key={`${c.connectionScope}:${c.id}`} value={`${c.connectionScope}:${c.id}`}>
+                          {c.name} ({c.connectionScope === 'organization' ? 'shared' : 'personal'})
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Select a saved connection to clone private repositories. Connections are filtered by the selected provider. Leave as "No connection" for public repos.
+                </p>
+              </div>
 
               <FormField
                 control={form.control}

@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { Clock3, Eye, FolderGit2, Loader2, PlugZap, Rocket, Server, Settings, Square, Terminal } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +29,7 @@ import {
   AppSourceKind,
   AppSourceProviderType,
   AppSourceSettings,
+  cloneWorkspaceFromSource,
   createDeployment,
   GitConnectionBranch,
   GitConnectionRepository,
@@ -52,6 +54,7 @@ import {
   updateApp,
   updateAppSourceSettings,
 } from '@/lib/api';
+import { buildOrganizationSettingsPath } from '@/lib/organizationPaths';
 
 type SourceProviderType = AppSourceProviderType;
 type SourceKind = AppSourceKind;
@@ -384,6 +387,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
   const queryClient = useQueryClient();
   const [settings, setSettings] = useState<DeploymentSettingsFormState>(defaultSettings);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [cloneConfirmOpen, setCloneConfirmOpen] = useState(false);
   const [registrySearch, setRegistrySearch] = useState('');
   const deferredRegistrySearch = useDeferredValue(registrySearch.trim());
 
@@ -582,6 +586,27 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
       }));
     }
   }, [matchingGitConnections, settings.connectionId, settings.connectionName, settings.connectionScope, settings.sourceKind]);
+
+  const cloneWorkspaceMutation = useMutation({
+    mutationFn: async () => {
+      const result = await cloneWorkspaceFromSource(project.id, {
+        git_url: settings.sourceLocation.trim(),
+        branch: settings.sourceRef.trim() || undefined,
+        connection_scope: (settings.connectionScope as GitConnectionScope) || undefined,
+        connection_id: settings.connectionId ?? undefined,
+      });
+      if (!result.data) throw new Error(result.error || 'Clone failed');
+      return result.data;
+    },
+    onSuccess: () => {
+      toast({ title: 'Repository cloned', description: 'Workspace has been populated with the repository contents.' });
+      setCloneConfirmOpen(false);
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Clone failed', description: error.message, variant: 'destructive' });
+      setCloneConfirmOpen(false);
+    },
+  });
 
   const saveSettingsMutation = useMutation({
     mutationFn: async () => {
@@ -856,10 +881,10 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
           ? 'No tags were returned for this image. Manual tag entry still works.'
           : 'Enter or select an image repository to browse tags.'
         : `Choose from ${discoveredRegistryTags.length} discovered tags or keep the tag manual.`;
-  const publicRepositoryMessage = isGitSourceKind(settings.sourceKind)
-    && supportsRepositoryBrowsing(settings.providerType)
-    && !selectedGitConnection
-      ? 'No saved connection is required for a public repository. Enter an HTTPS URL, an owner/repo slug, or a hosted git@ URL and the backend will normalize it for public clone access.'
+  const publicRepositoryMessage = isGitSourceKind(settings.sourceKind) && supportsRepositoryBrowsing(settings.providerType) && !selectedGitConnection
+    ? 'No saved connection is required for a public repository. Enter an HTTPS URL, an owner/repo slug, or a hosted git@ URL and the backend will normalize it for public clone access.'
+    : isGitSourceKind(settings.sourceKind) && settings.providerType === 'generic-git' && !selectedGitConnection
+      ? 'Enter any full HTTPS Git URL. No saved connection is required for public repositories.'
       : '';
 
   return (
@@ -1046,7 +1071,17 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                 {isGitSourceKind(settings.sourceKind) ? (
                   <p className="text-xs text-muted-foreground">
                     {matchingGitConnections.length === 0
-                      ? 'No matching Git connections exist for this provider yet. Public repositories can still be entered manually below.'
+                      ? (
+                        <>
+                          No matching Git connections exist for this provider.{' '}
+                          <Link
+                            to={buildOrganizationSettingsPath(project.organization?.id)}
+                            className="underline underline-offset-2 hover:text-foreground"
+                          >
+                            Add one in Organization Settings →
+                          </Link>
+                        </>
+                      )
                       : settings.providerType === 'generic-git'
                         ? `Current selection: ${selectedConnectionLabel}. Generic Git uses saved credentials but keeps repository and ref entry manual.`
                       : selectedGitConnection
@@ -1357,11 +1392,47 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                 {saveSettingsMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Save General settings
               </Button>
+              {isGitSourceKind(settings.sourceKind) && settings.sourceLocation.trim() ? (
+                <Button
+                  variant="outline"
+                  onClick={() => setCloneConfirmOpen(true)}
+                  disabled={cloneWorkspaceMutation.isPending}
+                >
+                  {cloneWorkspaceMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FolderGit2 className="mr-2 h-4 w-4" />}
+                  Clone into Workspace
+                </Button>
+              ) : null}
               <Button variant="outline" onClick={() => setIsPreviewOpen(true)}>
                 <Eye className="mr-2 h-4 w-4" />
                 Preview source payload
               </Button>
             </div>
+
+            <Dialog open={cloneConfirmOpen} onOpenChange={setCloneConfirmOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Clone repository into workspace?</DialogTitle>
+                  <DialogDescription>
+                    This will <strong>clear all existing workspace files</strong> and replace them with a fresh clone of{' '}
+                    <code className="rounded bg-muted px-1 py-0.5 text-xs">{settings.sourceLocation.trim()}</code>.
+                    This action cannot be undone.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={() => setCloneConfirmOpen(false)} disabled={cloneWorkspaceMutation.isPending}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => cloneWorkspaceMutation.mutate()}
+                    disabled={cloneWorkspaceMutation.isPending}
+                  >
+                    {cloneWorkspaceMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Clone &amp; overwrite workspace
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
           </CardContent>
         </Card>
 

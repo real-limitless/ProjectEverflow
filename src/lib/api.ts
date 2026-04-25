@@ -1382,6 +1382,8 @@ export const createProject = async (data: {
   template?: number;
   workspace_image?: string;
   workspace_size?: string;
+  connection_scope?: GitConnectionScope;
+  connection_id?: number;
 }): Promise<ApiResponse<Project>> => {
   return apiCall<Project>('/projects/', {
     method: 'POST',
@@ -1411,6 +1413,21 @@ export const deleteProject = async (id: number): Promise<ApiResponse<null>> => {
   return apiCall<null>(`/projects/${id}/`, {
     method: 'DELETE',
   });
+};
+
+export const cloneWorkspaceFromSource = async (
+  projectId: number,
+  data: {
+    git_url: string;
+    branch?: string;
+    connection_scope?: GitConnectionScope;
+    connection_id?: number;
+  },
+): Promise<ApiResponse<{ status: string; message: string }>> => {
+  return apiCall<{ status: string; message: string }>(
+    `/projects/${projectId}/workspace/clone-from-source/`,
+    { method: 'POST', body: JSON.stringify(data) },
+  );
 };
 
 // Project Template functions

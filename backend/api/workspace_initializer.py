@@ -226,13 +226,14 @@ class WorkspaceInitializer:
         except WorkspaceInitializerError as exc:
             raise WorkspaceInitializerError(f"Failed to initialize blank workspace: {exc}") from exc
 
-    def init_from_clone(self, git_url: str, branch: Optional[str] = None) -> None:
+    def init_from_clone(self, git_url: str, branch: Optional[str] = None, credential: Optional[str] = None) -> None:
         """
         Initialize workspace by cloning a git repository.
         
         Args:
             git_url: URL of the git repository to clone
             branch: Optional branch name to checkout
+            credential: Optional PAT used for authenticated clone via http.extraHeader (never logged)
         """
         self._log('info', 'clone_repo', f"Creating workspace volume: {self.volume_name}")
         self._ensure_volume_exists()
@@ -242,8 +243,13 @@ class WorkspaceInitializer:
         
         branch_arg = f" --branch {branch}" if branch else ""
         # Use a robust move to include dotfiles without tripping on . and ..
+        token = (credential or '').strip()
+        if token:
+            git_prefix = f'git -c http.extraHeader="Authorization: token {token}"'
+        else:
+            git_prefix = 'git'
         clone_cmd = (
-            f"git clone --depth 1{branch_arg} {git_url} /workspace/repo"
+            f"{git_prefix} clone --depth 1{branch_arg} {git_url} /workspace/repo"
             " && cd /workspace/repo"
             " && find . -mindepth 1 -maxdepth 1 -exec mv -t /workspace {} +"
             " && cd /workspace && rm -rf /workspace/repo"
@@ -512,12 +518,13 @@ class WorkspaceInitializer:
         self._run_command([self.podman, 'volume', 'create', self.volume_name])
 
 
-def initialize_project_workspace(project) -> None:
+def initialize_project_workspace(project, clone_credential: Optional[str] = None) -> None:
     """
     Initialize workspace for a project based on its creation method.
     
     Args:
         project: Project model instance
+        clone_credential: Optional decrypted PAT to use for authenticated git clone
     """
     volume_name = f"proj-{project.id}-workspace"
     initializer = WorkspaceInitializer(volume_name, project_id=project.id)
@@ -541,7 +548,7 @@ def initialize_project_workspace(project) -> None:
                 project.save(update_fields=['git_repo_url'])
 
             initializer._log('info', 'init_method', f"Cloning repository: {normalized_git_url}")
-            initializer.init_from_clone(normalized_git_url, project.branch)
+            initializer.init_from_clone(normalized_git_url, project.branch, credential=clone_credential)
             # After cloning, attempt to provision compose-defined services
             try:
                 initializer.provision_compose_services(project)

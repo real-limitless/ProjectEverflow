@@ -11,6 +11,102 @@ class GitProviderDiscoveryError(Exception):
     pass
 
 
+def test_connection_credential(connection) -> Dict[str, Any]:
+    """
+    Perform a lightweight live credential check against the provider.
+    Returns a dict with keys: status ('succeeded'|'failed'|'unknown'), message, username (or None).
+    Never raises — errors are captured into the returned dict.
+    """
+    provider_type = connection.provider_type
+    auth_type = connection.auth_type
+
+    if auth_type == 'ssh':
+        return {
+            'status': 'unknown',
+            'message': 'SSH connections cannot be verified this way. Workspace clone and pull will use the SSH key directly.',
+            'username': None,
+        }
+
+    if provider_type == 'generic-git':
+        return {
+            'status': 'unknown',
+            'message': 'Generic Git connections cannot be verified without a repository URL. Use repository discovery to confirm access.',
+            'username': None,
+        }
+
+    if not connection.credential:
+        return {
+            'status': 'failed',
+            'message': 'No credential is stored for this connection. Add a Personal Access Token before testing.',
+            'username': None,
+        }
+
+    try:
+        token = connection.get_credential().strip()
+    except ValueError as exc:
+        return {'status': 'failed', 'message': f'Credential could not be decrypted: {exc}', 'username': None}
+
+    if not token:
+        return {'status': 'failed', 'message': 'The stored credential is empty. Update the connection with a valid PAT.', 'username': None}
+
+    try:
+        if provider_type == 'github':
+            return _test_github_credential(connection, token)
+        elif provider_type == 'gitlab':
+            return _test_gitlab_credential(connection, token)
+        elif provider_type == 'gitea':
+            return _test_gitea_credential(connection, token)
+        elif provider_type == 'bitbucket':
+            return _test_bitbucket_credential(connection, token)
+        else:
+            return {
+                'status': 'unknown',
+                'message': f'Live credential testing is not available for provider "{provider_type}" yet.',
+                'username': None,
+            }
+    except Exception as exc:  # noqa: BLE001
+        return {'status': 'failed', 'message': f'Credential test failed: {exc}', 'username': None}
+
+
+def _test_github_credential(connection, token: str) -> Dict[str, Any]:
+    api_root = _github_api_root(connection.base_url)
+    try:
+        data = _request_json(f'{api_root}/user', {'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'})
+        login = data.get('login') or data.get('name') or 'unknown'
+        return {'status': 'succeeded', 'message': f'Authenticated as: {login}', 'username': login}
+    except GitProviderDiscoveryError as exc:
+        return {'status': 'failed', 'message': str(exc), 'username': None}
+
+
+def _test_gitlab_credential(connection, token: str) -> Dict[str, Any]:
+    api_root = _gitlab_api_root(connection.base_url)
+    try:
+        data = _request_json(f'{api_root}/user', {'Authorization': f'Bearer {token}'})
+        login = data.get('username') or data.get('name') or 'unknown'
+        return {'status': 'succeeded', 'message': f'Authenticated as: {login}', 'username': login}
+    except GitProviderDiscoveryError as exc:
+        return {'status': 'failed', 'message': str(exc), 'username': None}
+
+
+def _test_gitea_credential(connection, token: str) -> Dict[str, Any]:
+    api_root = _gitea_api_root(connection.base_url)
+    try:
+        data = _request_json(f'{api_root}/user', {'Authorization': f'token {token}'})
+        login = data.get('login') or data.get('full_name') or 'unknown'
+        return {'status': 'succeeded', 'message': f'Authenticated as: {login}', 'username': login}
+    except GitProviderDiscoveryError as exc:
+        return {'status': 'failed', 'message': str(exc), 'username': None}
+
+
+def _test_bitbucket_credential(connection, token: str) -> Dict[str, Any]:
+    try:
+        data = _request_json('https://api.bitbucket.org/2.0/user', {'Authorization': f'Bearer {token}'})
+        login = data.get('username') or data.get('display_name') or 'unknown'
+        return {'status': 'succeeded', 'message': f'Authenticated as: {login}', 'username': login}
+    except GitProviderDiscoveryError as exc:
+        return {'status': 'failed', 'message': str(exc), 'username': None}
+
+
 def list_connection_repositories(connection, search: Optional[str] = None) -> List[Dict[str, Any]]:
     provider_type = connection.provider_type
     token = _get_connection_token(connection)

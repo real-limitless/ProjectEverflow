@@ -11,6 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, NotFound, ValidationError
 
 from .models import Project, ProjectService, ProjectPod
+from .git_source_normalization import GitRepositoryNormalizationError, normalize_public_git_repository_input
 from .podman_orchestrator import PodmanOrchestrator, OrchestratorError
 from .workspace_file_views import user_has_project_access
 
@@ -93,6 +94,39 @@ class GitViewSet(viewsets.ViewSet):
                 'stdout': '',
                 'stderr': str(e),
             }
+
+    def _normalize_public_origin_remote(self, project: Project, container_name: str) -> Optional[Dict[str, str]]:
+        """Rewrite a legacy public SSH origin to HTTPS when it can be normalized safely."""
+        origin_result = self._execute_in_container(container_name, 'git remote get-url origin')
+        if not origin_result['success']:
+            return None
+
+        current_origin = (origin_result.get('stdout') or '').strip()
+        if not current_origin:
+            return None
+
+        try:
+            normalized_remote = normalize_public_git_repository_input(current_origin)
+        except GitRepositoryNormalizationError:
+            return None
+
+        normalized_origin = normalized_remote.clone_url
+        if current_origin != normalized_origin:
+            update_result = self._execute_in_container(
+                container_name,
+                f'git remote set-url origin {normalized_origin}',
+            )
+            if not update_result['success']:
+                raise ValidationError(f"Failed to rewrite origin remote for public pull compatibility: {update_result['stderr']}")
+
+        if project.git_repo_url != normalized_origin:
+            project.git_repo_url = normalized_origin
+            project.save(update_fields=['git_repo_url'])
+
+        return {
+            'previous_origin': current_origin,
+            'normalized_origin': normalized_origin,
+        }
     
     @action(detail=False, methods=['get'])
     def branches(self, request, project_id=None):
@@ -268,6 +302,8 @@ class GitViewSet(viewsets.ViewSet):
         try:
             project = self._get_project(project_id)
             container_name = self._get_workspace_container(project)
+
+            remote_details = self._normalize_public_origin_remote(project, container_name)
             
             cmd = "git pull"
             result = self._execute_in_container(container_name, cmd, timeout=60)
@@ -282,9 +318,12 @@ class GitViewSet(viewsets.ViewSet):
                 'success': True,
                 'message': 'Pull completed successfully',
                 'output': result['stdout'],
+                'remote': remote_details,
             })
         except (NotFound, PermissionDenied) as e:
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except ValidationError as e:
+            return Response({'success': False, 'error': str(e.detail if hasattr(e, 'detail') else e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Error pulling: {e}")
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
