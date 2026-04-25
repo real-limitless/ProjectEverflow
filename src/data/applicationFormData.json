@@ -1,0 +1,66 @@
+{
+  "categories": [
+    {
+      "id": "nlp",
+      "name": "Natural Language Processing",
+      "description": "Projects that process and understand human language"
+    },
+    {
+      "id": "computer-vision",
+      "name": "Computer Vision",
+      "description": "Projects that analyze and understand visual content"
+    },
+    {
+      "id": "predictive-analytics",
+      "name": "Predictive Analytics",
+      "description": "Projects that forecast trends and outcomes"
+    },
+    {
+      "id": "automation",
+      "name": "Automation",
+      "description": "Projects that automate business processes"
+    },
+    {
+      "id": "chatbot",
+      "name": "Chatbot & Conversational AI",
+      "description": "Conversational AI and chatbot projects"
+    },
+    {
+      "id": "other",
+      "name": "Other",
+      "description": "Other types of AI projects"
+    }
+  ],
+  "aiTechnologies": [
+    {
+      "id": "gpt",
+      "name": "GPT / Large Language Models",
+      "description": "Projects using GPT or similar large language models"
+    },
+    {
+      "id": "bert",
+      "name": "BERT / Transformers",
+      "description": "Projects using BERT or transformer architectures"
+    },
+    {
+      "id": "tensorflow",
+      "name": "TensorFlow",
+      "description": "Projects built with TensorFlow framework"
+    },
+    {
+      "id": "pytorch",
+      "name": "PyTorch",
+      "description": "Projects built with PyTorch framework"
+    },
+    {
+      "id": "opencv",
+      "name": "OpenCV",
+      "description": "Computer vision projects using OpenCV"
+    },
+    {
+      "id": "custom",
+      "name": "Custom ML Model",
+      "description": "Projects using custom machine learning models"
+    }
+  ]
+}

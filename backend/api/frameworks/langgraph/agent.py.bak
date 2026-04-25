@@ -1,0 +1,286 @@
+"""
+LangGraph ReAct agent implementation.
+"""
+import asyncio
+from typing import Dict, List, Any, AsyncGenerator
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.prebuilt import ToolNode
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
+
+from .adapter import CustomChatModel
+from .tools import get_workspace_tools
+from api.models import ChatSession, LLMProvider
+
+
+# Define the agent state
+AgentState = dict[str, Any]
+
+
+def should_continue(state: AgentState) -> str:
+    """Determine if we should continue with tool execution or end."""
+    messages = state["messages"]
+    last_message = messages[-1]
+    
+    # Check if the last message has tool calls
+    if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+        return "tools"
+    else:
+        return END
+
+
+def should_plan(state: AgentState) -> str:
+    """Determine if we need planning or can proceed directly."""
+    messages = state["messages"]
+    user_message = None
+    for msg in reversed(messages):
+        if msg.type == "human":
+            user_message = msg.content
+            break
+    
+    if user_message and any(keyword in user_message.lower() for keyword in ['modify', 'change', 'update', 'create', 'build']):
+        return "plan"
+    else:
+        return "agent"
+
+
+def create_agent(session: ChatSession, container_name: str):
+    """Create a LangGraph ReAct agent for the given session."""
+
+    # Get provider (reuse existing logic)
+    from api.views import ChatSessionViewSet
+    viewset = ChatSessionViewSet()
+    provider = viewset._resolve_provider_hierarchy(session)
+
+    if not provider:
+        raise ValueError("No LLM provider available for session")
+
+    # Try to find the actual workspace container name
+    actual_container_name = container_name
+    try:
+        from api.podman_manager import PodmanManager
+        manager = PodmanManager(session.project)
+        found_container = manager._get_workspace_container_name()
+        if found_container:
+            actual_container_name = found_container
+    except Exception:
+        # Fall back to the provided container name
+        pass
+
+    # Create custom LLM adapter
+    llm = CustomChatModel(provider, session)
+
+    # Get workspace tools
+    tools = get_workspace_tools(session.project, actual_container_name)
+    llm_with_tools = llm.bind_tools(tools)
+
+    # Define planning node
+    async def planning_node(state: AgentState) -> Dict[str, List[BaseMessage]]:
+        """Planning node that breaks down complex tasks."""
+        messages = state["messages"]
+        user_message = None
+        for msg in reversed(messages):
+            if msg.type == "human":
+                user_message = msg.content
+                break
+        
+        # Create a planning prompt
+        planning_prompt = f"""Analyze this user request and break it down into specific, actionable steps: {user_message}
+
+Create a numbered list of specific actions needed to complete this task. Each step should be:
+- Specific and actionable
+- Include file names when relevant
+- Mention tools or commands to use
+- Be completable in one focused action
+
+Format as a numbered list like:
+1. First specific action
+2. Second specific action
+3. etc."""
+        
+        # Use the LLM to generate a plan
+        planning_messages = [
+            SystemMessage(content="You are a planning assistant. Break down user requests into specific, actionable steps. Focus on concrete actions that can be executed."),
+            HumanMessage(content=planning_prompt)
+        ]
+        
+        plan_response = await llm.ainvoke(planning_messages)
+        plan_content = plan_response.content if hasattr(plan_response, 'content') else str(plan_response)
+        
+        # Parse the plan into structured todos
+        todos = []
+        lines = plan_content.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if line and (line[0].isdigit() or line.startswith('-')):
+                # Remove numbering
+                if line[0].isdigit():
+                    line = line.split('.', 1)[-1].strip()
+                elif line.startswith('-'):
+                    line = line[1:].strip()
+                if line:
+                    todos.append({
+                        'description': line,
+                        'status': 'pending',
+                        'details': None
+                    })
+        
+        # Store todos in state for tracking
+        state["todos"] = todos
+        
+        # Add planning result to messages
+        planning_result = AIMessage(content=f"Planning completed. Created {len(todos)} tasks:\n{plan_content}")
+        return {"messages": [planning_result], "todos": todos}
+
+    # Define agent node
+    async def agent_node(state: AgentState) -> Dict[str, List[BaseMessage]]:
+        """Agent reasoning and tool calling node."""
+        response = await llm_with_tools.ainvoke(state["messages"])
+        return {"messages": [response]}
+
+    # Create tool node
+    tool_node = ToolNode(tools)
+
+    # Build the graph
+    graph = StateGraph(AgentState)
+
+    # Add nodes
+    graph.add_node("plan", planning_node)
+    graph.add_node("agent", agent_node)
+    graph.add_node("tools", tool_node)
+
+    # Add edges
+    graph.add_edge(START, "plan")
+    graph.add_conditional_edges(
+        "plan",
+        should_plan,
+        {
+            "plan": "plan",
+            "agent": "agent"
+        }
+    )
+    graph.add_conditional_edges(
+        "agent",
+        should_continue,
+        {
+            "tools": "tools",
+            END: END
+        }
+    )
+    graph.add_edge("tools", "agent")
+
+    # Use in-memory checkpointer (could be upgraded to Postgres later)
+    checkpointer = InMemorySaver()
+
+    # Compile the graph
+    compiled_graph = graph.compile(checkpointer=checkpointer)
+
+    return compiled_graph
+
+
+async def run_agent_stream(
+    graph,
+    user_input: str,
+    session_id: int,
+    max_iterations: int = 15
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """Run the agent and stream events."""
+
+    # Prepare initial state with conversation history
+    from api.models import ChatMessage
+
+    # Load existing messages for context
+    existing_messages = []
+    messages = await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: list(ChatMessage.objects.filter(session_id=session_id).order_by('created_at'))
+    )
+
+    for msg in messages:
+        if msg.message_type == 'user':
+            existing_messages.append(HumanMessage(content=msg.content))
+        elif msg.message_type == 'assistant':
+            ai_msg = AIMessage(content=msg.content)
+            # Add tool calls if present
+            if msg.tool_calls:
+                ai_msg.tool_calls = msg.tool_calls
+            existing_messages.append(ai_msg)
+        elif msg.message_type == 'system':
+            # System messages are handled separately
+            pass
+
+    # Add the new user input
+    initial_messages = existing_messages + [HumanMessage(content=user_input)]
+
+    config = {
+        "configurable": {"thread_id": str(session_id)},
+        "recursion_limit": max_iterations
+    }
+
+    # Run the agent and collect all events
+    try:
+        yield {"type": "thinking", "content": "Agent is reasoning..."}
+        
+        # Use astream to get step-by-step execution
+        tool_calls = []
+        reasoning_parts = []
+        iterations = 0
+        current_todos = []
+        
+        async for step in graph.astream(
+            {"messages": initial_messages},
+            config=config
+        ):
+            iterations += 1
+            
+            if "plan" in step:
+                # Planning step completed
+                if "todos" in step["plan"]:
+                    current_todos = step["plan"]["todos"]
+                    yield {"type": "todos_update", "todos": current_todos}
+                    
+            elif "agent" in step:
+                # Agent reasoning step
+                agent_messages = step["agent"]["messages"]
+                for msg in agent_messages:
+                    if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                        for tool_call in msg.tool_calls:
+                            tool_calls.append({
+                                'id': tool_call['id'],
+                                'name': tool_call['name'],
+                                'arguments': tool_call['args'],
+                                'status': 'running'
+                            })
+                            # Update todo status if this tool call matches a todo
+                            for todo in current_todos:
+                                if todo['status'] == 'pending' and tool_call['name'].lower() in todo['description'].lower():
+                                    todo['status'] = 'in_progress'
+                                    yield {"type": "todos_update", "todos": current_todos}
+                                    break
+                            yield {"type": "tool_start", "name": tool_call['name'], "args": tool_call['args']}
+                    elif hasattr(msg, 'content') and msg.content:
+                        reasoning_parts.append(msg.content)
+                        
+            elif "tools" in step:
+                # Tool execution step
+                tool_messages = step["tools"]["messages"]
+                for msg in tool_messages:
+                    if hasattr(msg, 'content'):
+                        # Update last tool call with result
+                        if tool_calls:
+                            tool_calls[-1]['status'] = 'completed'
+                            tool_calls[-1]['output'] = msg.content
+                        # Update todo status to completed
+                        for todo in current_todos:
+                            if todo['status'] == 'in_progress':
+                                todo['status'] = 'completed'
+                                yield {"type": "todos_update", "todos": current_todos}
+                                break
+                        yield {"type": "tool_end", "output": msg.content}
+
+        # Final response
+        final_content = "".join(reasoning_parts) if reasoning_parts else "Task completed."
+        yield {"type": "final", "content": final_content, "tool_calls": tool_calls, "iterations": iterations}
+    except Exception as e:
+        yield {"type": "error", "content": f"Agent execution failed: {str(e)}"}

@@ -1,0 +1,51 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Set HOME explicitly for uid 1000 runtime and prepare Podman remote config dirs
+ENV HOME=/app
+ENV XDG_CONFIG_HOME=/app/podman-config
+ENV XDG_DATA_HOME=/app/podman-data
+RUN mkdir -p $XDG_CONFIG_HOME/containers $XDG_DATA_HOME $HOME/.local/share/containers $HOME/.cache/containers
+
+# Install system dependencies including latest podman-remote (v5.7.0)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    curl -L -o /tmp/podman-remote.tar.gz https://github.com/containers/podman/releases/download/v5.7.0/podman-remote-static-linux_amd64.tar.gz && \
+    tar -xzf /tmp/podman-remote.tar.gz -C /tmp && \
+    # Identify extracted binary (pattern may change between releases)
+    PODMAN_BIN=$(find /tmp -maxdepth 2 -type f -name 'podman-remote-static-linux_amd64' -o -name 'podman-remote-static' | head -n1) && \
+    if [ -z "$PODMAN_BIN" ]; then echo "podman-remote binary not found after extraction" >&2; exit 1; fi && \
+    mv "$PODMAN_BIN" /usr/local/bin/podman && \
+    chmod +x /usr/local/bin/podman && \
+    rm -rf /tmp/podman-remote.tar.gz /tmp/bin /var/lib/apt/lists/* && \
+    apt-get clean
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+
+# Create entrypoint script with Podman socket configuration, migrations, and auto-reload
+RUN cat > /entrypoint.sh << 'EOF'
+#!/bin/sh
+set -e
+/usr/local/bin/podman --version || echo "[entrypoint] podman version failed"
+/usr/local/bin/podman ps -a || echo "[entrypoint] podman ps failed"
+python manage.py makemigrations
+python manage.py migrate
+echo "from api.models import User; User.objects.filter(username='admin').exists() or User.objects.create_superuser('admin', 'admin@example.com', '${DJANGO_SUPERUSER_PASSWORD:-admin123}', role='admin')" | python manage.py shell
+
+if [ "${DEBUG}" = "True" ] || [ "${DEBUG}" = "true" ]; then
+  echo "[entrypoint] Starting Daphne with auto-reload via watchmedo"
+  watchmedo auto-restart -d /app --patterns="*.py" -- daphne -b 0.0.0.0 -p 8000 backend.asgi:application
+else
+  daphne -b 0.0.0.0 -p 8000 backend.asgi:application
+fi
+EOF
+
+RUN chmod +x /entrypoint.sh
+
+CMD ["/entrypoint.sh"]

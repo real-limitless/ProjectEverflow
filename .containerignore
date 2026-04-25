@@ -1,0 +1,24 @@
+# Dependencies (rebuilt inside the container)
+node_modules
+.venv
+
+# Backend (not needed for the frontend container)
+backend
+
+# Git
+.git
+.gitignore
+
+# Build artifacts
+dist
+
+# IDE / editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# Misc
+*.md
+docs
+bun.lockb

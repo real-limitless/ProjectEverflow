@@ -1,0 +1,17 @@
+{
+  "llms": [
+    {
+      "id": "litemaas-llama-4-scout-17B-16E-W4A16",
+      "name": "LiteMaaS Llama 4 Scout 17B 16E W4A16",
+      "provider": "LiteMaaS",
+      "model": "Llama-4-Scout-17B-16E-W4A16",
+      "base_url": "LITEMAAS_BASE_URL",
+      "api_key_env": "LITEMAAS_API_KEY",
+      "description": "LiteMaaS Llama 4 Scout 17B 16E W4A16 model hosted on LiteMaaS",
+      "max_tokens": 4096,
+      "temperature": 0.7,
+      "enabled": true
+    }
+  ],
+  "default_llm": "litemaas-llama-4-scout-17B-16E-W4A16"
+}

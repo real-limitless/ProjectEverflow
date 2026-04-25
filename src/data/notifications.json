@@ -1,0 +1,9 @@
+{
+  "notifications": [
+    { "id": 1, "message": "New deployment completed successfully", "time": "5 minutes ago", "type": "success" },
+    { "id": 2, "message": "Server maintenance scheduled for tonight", "time": "1 hour ago", "type": "info" },
+    { "id": 3, "message": "High CPU usage detected on prod-server-01", "time": "2 hours ago", "type": "warning" },
+    { "id": 4, "message": "New team member joined: Alice Brown", "time": "3 hours ago", "type": "info" },
+    { "id": 5, "message": "Security patch available", "time": "5 hours ago", "type": "warning" }
+  ]
+}

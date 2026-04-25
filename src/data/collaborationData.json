@@ -1,0 +1,57 @@
+{
+  "discussions": [
+    {
+      "id": 1,
+      "title": "Best Practices for Prompt Engineering in AI Apps",
+      "author": "Sarah Chen",
+      "replies": 24,
+      "views": 156,
+      "category": "AI Development",
+      "lastActivity": "2 hours ago"
+    },
+    {
+      "id": 2,
+      "title": "Seeking Collaboration: Healthcare Data Analysis Tool",
+      "author": "Dr. James Wilson",
+      "replies": 12,
+      "views": 89,
+      "category": "Project Collaboration",
+      "lastActivity": "5 hours ago"
+    },
+    {
+      "id": 3,
+      "title": "How to Pass Security Review for AI Applications",
+      "author": "Emily Johnson",
+      "replies": 31,
+      "views": 203,
+      "category": "Compliance & Security",
+      "lastActivity": "1 day ago"
+    }
+  ],
+  "forkedProjects": [
+    {
+      "id": 1,
+      "originalProject": "AI Document Analyzers",
+      "forkedBy": "Michael Rodriguez",
+      "forkName": "PDF-Specific Document Analyzer",
+      "forkDate": "2025-10-07",
+      "status": "Active Development"
+    },
+    {
+      "id": 2,
+      "originalProject": "Smart Code Assistant",
+      "forkedBy": "Lisa Park",
+      "forkName": "Python-Focused Code Assistant",
+      "forkDate": "2025-10-05",
+      "status": "Testing Phase"
+    },
+    {
+      "id": 3,
+      "originalProject": "Customer Sentiment Analyzer",
+      "forkedBy": "David Kim",
+      "forkName": "Multi-Language Sentiment Tool",
+      "forkDate": "2025-10-02",
+      "status": "Ready for Review"
+    }
+  ]
+}

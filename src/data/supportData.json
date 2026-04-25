@@ -1,0 +1,24 @@
+{
+  "supportOptions": [
+    {
+      "id": "documentation",
+      "title": "Documentation",
+      "description": "Browse our comprehensive documentation and guides"
+    },
+    {
+      "id": "community-forum",
+      "title": "Community Forum",
+      "description": "Get help from our community of users"
+    },
+    {
+      "id": "submit-ticket",
+      "title": "Submit a Ticket",
+      "description": "Contact our support team directly"
+    },
+    {
+      "id": "live-chat",
+      "title": "Live Chat",
+      "description": "Chat with a support agent in real-time"
+    }
+  ]
+}

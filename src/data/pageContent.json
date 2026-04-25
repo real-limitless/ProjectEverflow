@@ -1,0 +1,27 @@
+{
+  "notFound": {
+    "title": "404",
+    "heading": "Oops! Page not found",
+    "linkText": "Return to Home",
+    "linkUrl": "/"
+  },
+  "applicationPreview": {
+    "title": "Project Preview",
+    "runningText": "Running:",
+    "placeholderText": "Project frontend will be displayed here"
+  },
+  "forkApplication": {
+    "successTitle": "Project Forked Successfully",
+    "successDescription": "has been created and added to your projects.",
+    "defaultForkName": "-fork"
+  },
+  "joinApplication": {
+    "successTitle": "Join Request Submitted",
+    "successDescription": "Your request to join",
+    "successDescription2": "as a",
+    "successDescription3": "has been sent to the project owner."
+  },
+  "errorMessages": {
+    "pageNotFound": "404 Error: User attempted to access non-existent route:"
+  }
+}

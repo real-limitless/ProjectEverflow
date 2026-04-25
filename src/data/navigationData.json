@@ -1,0 +1,77 @@
+{
+  "menuItems": [
+    {
+      "id": 0,
+      "title": "Home",
+      "path": "/",
+      "icon": "HomeIcon"
+    },
+    {
+      "id": 1,
+      "title": "Organizations",
+      "path": "/organizations",
+      "icon": "FolderIcon"
+    },
+    {
+      "id": 2,
+      "title": "My Projects",
+      "path": "/my-applications",
+      "icon": "CubeIcon"
+    },
+    {
+      "id": 3,
+      "title": "Approval Queue",
+      "path": "/approval-queue",
+      "icon": "ListIcon"
+    },
+    {
+      "id": 4,
+      "title": "Collaboration Hub",
+      "path": "/collaboration-hub",
+      "icon": "UsersIcon"
+    },
+    {
+      "id": 5,
+      "title": "Enterprise AI Marketplace",
+      "path": "/marketplace",
+      "icon": "WrenchIcon"
+    },
+    {
+      "id": 6,
+      "title": "Enterprise Chatbot",
+      "path": "/enterprise-chatbot",
+      "icon": "MessageSquare",
+      "isLucide": true
+    },
+    {
+      "id": 7,
+      "title": "Safety & Compliance",
+      "path": "/safety-compliance",
+      "icon": "SecurityIcon"
+    },
+    {
+      "id": 8,
+      "title": "Notifications",
+      "path": "/notifications",
+      "icon": "BellIcon"
+    },
+    {
+      "id": 9,
+      "title": "Settings",
+      "path": "/settings",
+      "icon": "CogIcon"
+    },
+    {
+      "id": 10,
+      "title": "Support",
+      "path": "/support",
+      "icon": "QuestionCircleIcon"
+    },
+    {
+      "id": 11,
+      "title": "About",
+      "path": "/about",
+      "icon": "InfoCircleIcon"
+    }
+  ]
+}
