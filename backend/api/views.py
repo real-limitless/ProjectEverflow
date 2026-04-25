@@ -11,7 +11,9 @@ import aiohttp
 import json
 import random
 import logging
+import threading
 from .workspace_initializer import initialize_project_workspace, WorkspaceInitializer
+from .deployment_runner import run_deployment
 from .llm_config import get_llm_manager
 from .podman_orchestrator import PodmanOrchestrator
 from .compose_parser import load_compose_from_text, build_service_specs
@@ -2144,7 +2146,30 @@ class DeploymentViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(app_id=app_id)
         return queryset
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        app = serializer.validated_data['app']
+        if not user_can_manage_project(request.user, app.environment.project):
+            raise PermissionDenied("You do not have permission to deploy this app")
+
+        deployment = serializer.save(deployed_by=request.user, environment=app.environment)
+
+        # Kick off the real deployment (clone + provision) in a background daemon thread
+        thread = threading.Thread(
+            target=run_deployment,
+            args=(deployment.id,),
+            daemon=True,
+            name=f"deploy-{deployment.id}",
+        )
+        thread.start()
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_202_ACCEPTED, headers=headers)
+
     def perform_create(self, serializer):
+        # Kept for completeness; actual creation now happens in create().
         app = serializer.validated_data['app']
         if not user_can_manage_project(self.request.user, app.environment.project):
             raise PermissionDenied("You do not have permission to deploy this app")
@@ -2249,7 +2274,99 @@ class ProjectServiceViewSet(viewsets.ModelViewSet):
     def list(self, request, *args, **kwargs):
         """List services with live status and port sync from compose file."""
         queryset = list(self.get_queryset())  # Evaluate queryset to list
-        
+
+        # --- Auto-sync: create ProjectService records from compose file if not yet in DB ---
+        project_id_param = request.query_params.get('project')
+        app_id_param = request.query_params.get('app')
+
+        if project_id_param:
+            try:
+                target_project = Project.objects.get(pk=int(project_id_param))
+                volume_name = f"proj-{target_project.id}-workspace"
+
+                target_app = None
+                if app_id_param:
+                    try:
+                        target_app = App.objects.get(pk=int(app_id_param), environment__project=target_project)
+                    except App.DoesNotExist:
+                        pass
+
+                # 1. Try reading compose file from workspace volume
+                compose_text = None
+                try:
+                    workspace_init = WorkspaceInitializer(volume_name)
+                    compose_text = workspace_init._read_compose_file()
+                except Exception:
+                    pass
+
+                # 2. Fall back to raw-compose stored in AppSourceSettings.source_location
+                if not compose_text and target_app:
+                    try:
+                        source_settings = AppSourceSettings.objects.get(app=target_app)
+                        if source_settings.source_kind == 'raw-compose' and source_settings.source_location:
+                            compose_text = source_settings.source_location
+                    except AppSourceSettings.DoesNotExist:
+                        pass
+
+                if compose_text:
+                    try:
+                        compose_data = load_compose_from_text(compose_text)
+                        orch_tmp = PodmanOrchestrator()
+                        limits = orch_tmp._get_resource_limits(target_project.workspace_size)
+                        specs, _ = build_service_specs(
+                            compose=compose_data,
+                            project_id=target_project.id,
+                            workspace_volume=volume_name,
+                            network_name=f"proj-{target_project.id}-net",
+                            default_cpu=limits.get('cpu', '1.0'),
+                            default_mem=limits.get('memory', '2g'),
+                        )
+
+                        existing_names = {s.name for s in queryset}
+
+                        # Ensure a pod record exists for this project
+                        pod_defaults = {'pod_name': f'proj-{target_project.id}-pod', 'status': 'stopped'}
+                        if target_app:
+                            pod_defaults['environment'] = target_app.environment
+                        else:
+                            first_env = Environment.objects.filter(project=target_project).first()
+                            if first_env:
+                                pod_defaults['environment'] = first_env
+                        pod, _ = ProjectPod.objects.get_or_create(project=target_project, defaults=pod_defaults)
+
+                        new_services = []
+                        for spec in specs:
+                            if spec.name in existing_names:
+                                continue
+                            container_name = build_service_container_name(target_project.id, spec.name)
+                            # Strip workspace volume auto-mount from stored config
+                            config_volumes = [v for v in (spec.volumes or []) if v.get('source') != volume_name]
+                            svc, _ = ProjectService.objects.get_or_create(
+                                pod=pod,
+                                name=spec.name,
+                                defaults=dict(
+                                    app=target_app,
+                                    service_type=spec.service_type or 'custom',
+                                    image=spec.image or '',
+                                    container_name=container_name,
+                                    status='stopped',
+                                    ports=spec.ports or [],
+                                    environment=spec.environment or {},
+                                    config={'depends_on': spec.depends_on, 'volumes': config_volumes},
+                                    cpu_limit=spec.cpu_limit,
+                                    memory_limit=spec.memory_limit,
+                                    autostart=spec.autostart,
+                                ),
+                            )
+                            new_services.append(svc)
+
+                        queryset.extend(new_services)
+                    except Exception as sync_exc:
+                        logging.debug(f"Could not auto-sync compose services for project {target_project.id}: {sync_exc}")
+            except (ValueError, Project.DoesNotExist):
+                pass
+        # --- End auto-sync ---
+
         # Group services by project for efficient compose file reading
         services_by_project = {}
         for service in queryset:

@@ -25,6 +25,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/hooks/use-toast';
+import { ProvisioningLogViewer } from './ProvisioningLogViewer';
 import {
   AppSourceKind,
   AppSourceProviderType,
@@ -388,6 +389,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
   const [settings, setSettings] = useState<DeploymentSettingsFormState>(defaultSettings);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [cloneConfirmOpen, setCloneConfirmOpen] = useState(false);
+  const [showDeployLogs, setShowDeployLogs] = useState(false);
   const [registrySearch, setRegistrySearch] = useState('');
   const deferredRegistrySearch = useDeferredValue(registrySearch.trim());
 
@@ -415,6 +417,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
     },
     select: (value) => normalizeApiList(value),
     enabled: app !== null,
+    refetchInterval: showDeployLogs ? 3000 : false,
   });
 
   const { data: appServices = [], isLoading: servicesLoading } = useQuery({
@@ -733,6 +736,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deployments', app!.id] });
       queryClient.invalidateQueries({ queryKey: ['apps'] });
+      setShowDeployLogs(true);
       toast({ title: 'Deployment queued', description: 'A deployment record has been created for this app.' });
     },
     onError: (error) => {
@@ -1472,6 +1476,20 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
               <CardDescription>Recent deployment history for this app. Real-time build logs will connect here in the next backend slice.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              {showDeployLogs && (
+                <ProvisioningLogViewer
+                  projectId={project.id}
+                  autoConnect={showDeployLogs}
+                  onComplete={() => {
+                    setShowDeployLogs(false);
+                    queryClient.invalidateQueries({ queryKey: ['deployments', app!.id] });
+                  }}
+                  onError={() => {
+                    setShowDeployLogs(false);
+                    queryClient.invalidateQueries({ queryKey: ['deployments', app!.id] });
+                  }}
+                />
+              )}
               {deploymentsLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />

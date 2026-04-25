@@ -41,7 +41,7 @@ export const ProvisioningLogViewer: React.FC<ProvisioningLogViewerProps> = ({
     const connectWebSocket = () => {
       try {
         // Get JWT token from localStorage
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem('accessToken');
         if (!token) {
           setConnectionError('No authentication token found');
           return;
