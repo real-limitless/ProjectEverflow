@@ -944,7 +944,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
           <CardTitle>
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.25rem' }}>
               <FolderGit2 style={{ width: '1.25rem', height: '1.25rem' }} />
-              Core Deployment &amp; Git Integration
+              Core Deployment & Git Integration
             </span>
           </CardTitle>
           <CardBody>
@@ -1404,7 +1404,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
                     isDisabled={cloneWorkspaceMutation.isPending}
                     isLoading={cloneWorkspaceMutation.isPending}
                   >
-                    Clone &amp; overwrite workspace
+                    Clone & overwrite workspace
                   </Button>
                 </div>
               </DialogContent>
@@ -1417,7 +1417,7 @@ export function GeneralTab({ project, app, environment, onOpenAppDetails, onOpen
             <CardTitle>
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.25rem' }}>
                 <Clock3 style={{ width: '1.25rem', height: '1.25rem' }} />
-                Webhooks &amp; build queue
+                Webhooks & build queue
               </span>
             </CardTitle>
             <CardBody>

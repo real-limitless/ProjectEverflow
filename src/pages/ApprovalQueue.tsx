@@ -127,7 +127,7 @@ const ApprovalQueue = () => {
     });
   };
 
-  const handleViewProject = (projectId: number) => {
+  const handleViewProject = (_projectId: number) => {
     toast({
       title: "View Project",
       description: "Opening project view...",
