@@ -2,10 +2,22 @@ export interface HarnessDef {
   id: string
   name: string
   description: string
-  category: 'ci' | 'runtime' | 'data' | 'ai' | 'deploy'
+  category: 'ci' | 'runtime' | 'data' | 'ai' | 'deploy' | 'agent'
 }
 
 export const HARNESS_CATALOG: HarnessDef[] = [
+  {
+    id: 'agent-claude-code',
+    name: 'Claude Code',
+    description: 'Anthropic Claude Code CLI inside the project sandbox.',
+    category: 'agent',
+  },
+  {
+    id: 'agent-opencode',
+    name: 'OpenCode',
+    description: 'OpenCode agent CLI inside the project sandbox.',
+    category: 'agent',
+  },
   {
     id: 'ci-github',
     name: 'GitHub Actions CI',
@@ -50,6 +62,9 @@ export const HARNESS_CATALOG: HarnessDef[] = [
   },
 ]
 
+/** Default harnesses for new API-backed projects (matches backend bootstrap). */
+export const DEFAULT_AGENT_HARNESS_IDS = ['agent-claude-code', 'agent-opencode'] as const
+
 export function getHarness(id: string): HarnessDef | undefined {
   return HARNESS_CATALOG.find((h) => h.id === id)
 }
@@ -70,4 +85,11 @@ export function enabledHarnessIds(
 ): string[] {
   if (!harnesses?.length) return []
   return harnesses.filter((h) => h.enabled).map((h) => h.id)
+}
+
+/** Shell command to launch a harness CLI inside the sandbox. */
+export function harnessLaunchCommand(id: string): string | null {
+  if (id === 'agent-claude-code' || id === 'claude-code') return 'claude'
+  if (id === 'agent-opencode' || id === 'opencode') return 'opencode'
+  return null
 }

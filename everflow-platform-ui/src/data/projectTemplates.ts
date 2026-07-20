@@ -32,7 +32,7 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
     description: 'Empty scaffold — add repos and harnesses yourself.',
     icon: '◇',
     defaultRepos: [],
-    defaultHarnessIds: ['ai-sandbox'],
+    defaultHarnessIds: ['agent-claude-code', 'agent-opencode'],
     defaultLayout: 'standard',
   },
   {

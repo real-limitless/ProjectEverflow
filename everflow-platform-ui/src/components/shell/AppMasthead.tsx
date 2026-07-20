@@ -29,6 +29,7 @@ import MoonIcon from '@patternfly/react-icons/dist/esm/icons/moon-icon'
 import SunIcon from '@patternfly/react-icons/dist/esm/icons/sun-icon'
 import UserIcon from '@patternfly/react-icons/dist/esm/icons/user-icon'
 import { usePlaygroundStore } from '@/store/playgroundStore'
+import { useAuthStore } from '@/store/authStore'
 import type { NamedLayoutSnapshot } from '@/lib/namedLayouts'
 
 export function AppMasthead() {
@@ -41,8 +42,13 @@ export function AppMasthead() {
   const toggleTheme = usePlaygroundStore((s) => s.toggleTheme)
   const isSidebarOpen = usePlaygroundStore((s) => s.isSidebarOpen)
   const setSidebarOpen = usePlaygroundStore((s) => s.setSidebarOpen)
+  const user = useAuthStore((s) => s.user)
+  const demoMode = useAuthStore((s) => s.demoMode)
+  const logout = useAuthStore((s) => s.logout)
+  const setLoginOpen = useAuthStore((s) => s.setLoginOpen)
 
   const [layoutOpen, setLayoutOpen] = useState(false)
+  const [userOpen, setUserOpen] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
   const [loadOpen, setLoadOpen] = useState(false)
   const [layoutName, setLayoutName] = useState('')
@@ -140,14 +146,45 @@ export function AppMasthead() {
                   </Button>
                 </ToolbarItem>
                 <ToolbarItem>
-                  <MenuToggle
-                    className="pg-user-toggle"
-                    variant="plain"
-                    icon={<UserIcon />}
-                    isFullHeight
+                  <Dropdown
+                    isOpen={userOpen}
+                    onOpenChange={setUserOpen}
+                    onSelect={() => setUserOpen(false)}
+                    toggle={(toggleRef) => (
+                      <MenuToggle
+                        ref={toggleRef}
+                        className="pg-user-toggle"
+                        variant="plain"
+                        icon={<UserIcon />}
+                        isFullHeight
+                        onClick={() => setUserOpen(!userOpen)}
+                        isExpanded={userOpen}
+                      >
+                        {demoMode ? 'demo' : user?.email || 'Sign in'}
+                      </MenuToggle>
+                    )}
                   >
-                    admin
-                  </MenuToggle>
+                    <DropdownList>
+                      {demoMode ? (
+                        <DropdownItem key="demo" isDisabled>
+                          Demo mode (VITE_DEMO_MODE)
+                        </DropdownItem>
+                      ) : user ? (
+                        <>
+                          <DropdownItem key="email" isDisabled>
+                            {user.email}
+                          </DropdownItem>
+                          <DropdownItem key="logout" onClick={() => logout()}>
+                            Sign out
+                          </DropdownItem>
+                        </>
+                      ) : (
+                        <DropdownItem key="login" onClick={() => setLoginOpen(true)}>
+                          Sign in
+                        </DropdownItem>
+                      )}
+                    </DropdownList>
+                  </Dropdown>
                 </ToolbarItem>
               </ToolbarGroup>
             </ToolbarContent>

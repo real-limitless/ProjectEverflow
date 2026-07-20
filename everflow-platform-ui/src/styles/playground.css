@@ -1145,6 +1145,49 @@
       color: var(--pf-t--global--text--color--regular); font: inherit;
     }
 
+    /* xterm.js sandbox terminal */
+    .term-wrap--xterm {
+      background: #1a1d21;
+    }
+    .term-wrap--xterm .term-toolbar {
+      background: #121417;
+      color: #c8c8c8;
+      border-block-end-color: #2a2f36;
+    }
+    .term-xterm-stack {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+    .term-xterm-pane {
+      flex: 1;
+      min-height: 0;
+      display: none;
+    }
+    .term-xterm-pane.is-active {
+      display: flex;
+      flex-direction: column;
+    }
+    .term-xterm-pane[hidden] {
+      display: none !important;
+    }
+    .sandbox-xterm {
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      height: 100%;
+      padding: 0.35rem 0.5rem 0.5rem;
+      box-sizing: border-box;
+    }
+    .sandbox-xterm .xterm {
+      height: 100%;
+    }
+    .sandbox-xterm .xterm-viewport {
+      overflow-y: auto !important;
+    }
+
     /* Panel tray — light floating card */
     .panel-palette {
       z-index: 40;

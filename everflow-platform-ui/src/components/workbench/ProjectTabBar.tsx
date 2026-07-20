@@ -4,6 +4,7 @@ import CogIcon from '@patternfly/react-icons/dist/esm/icons/cog-icon'
 import PlusIcon from '@patternfly/react-icons/dist/esm/icons/plus-icon'
 import { PROJECTS } from '@/data/projects'
 import { usePlaygroundStore } from '@/store/playgroundStore'
+import { SandboxStatusBadge } from './SandboxStatusBadge'
 
 interface ContextMenuState {
   projectId: string
@@ -67,6 +68,7 @@ export function ProjectTabBar() {
             >
               <span className="dot" />
               <span className="pt-name">{p.name}</span>
+              {id === currentProjectId ? <SandboxStatusBadge projectId={id} /> : null}
               <span
                 className="pt-close"
                 title="Close project tab"

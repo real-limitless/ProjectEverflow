@@ -54,6 +54,15 @@ export interface GitFileChange {
   label?: string
 }
 
+export type SandboxLifecycleStatus =
+  | 'pending'
+  | 'creating'
+  | 'running'
+  | 'stopped'
+  | 'error'
+  | 'destroyed'
+  | string
+
 export interface Project {
   id: string
   name: string
@@ -64,6 +73,14 @@ export interface Project {
   layoutMode?: WorkspaceLayoutMode
   environment?: ProjectEnvironment
   visibility?: ProjectVisibility
+  /** API-backed project (UUID); false for pure local demo seeds */
+  fromApi?: boolean
+  organizationId?: string
+  sandboxName?: string | null
+  sandboxStatus?: SandboxLifecycleStatus
+  sandboxImage?: string | null
+  sandboxError?: string | null
+  sandboxCreatedAt?: string | null
   repos: ProjectRepo[]
   convs: ProjectConv[]
   /** @deprecated Prefer per-conversation messages; kept for seed simplicity */

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   Button,
   FormGroup,
@@ -11,6 +11,12 @@ import {
 import { CreateResourceModal } from '@/components/studio/CreateResourceModal'
 import { EmptySplash } from '@/components/studio/EmptySplash'
 import { FloatingCoachPanel } from '@/components/studio/FloatingCoachPanel'
+import { getProject } from '@/data/projects'
+import {
+  DEFAULT_AGENT_HARNESS_IDS,
+  getHarness,
+  harnessLaunchCommand,
+} from '@/data/harnesses'
 import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { useProjectStudio, useStudioDemoStore } from '@/store/studioDemoStore'
@@ -22,8 +28,23 @@ interface CoachMsg {
 
 export function AgentsPanel() {
   const projectId = usePlaygroundStore((s) => s.currentProjectId) || 'default'
+  const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
+  const openPanelType = usePlaygroundStore((s) => s.openPanelType)
+  const setTerminalPrefill = usePlaygroundStore((s) => s.setTerminalPrefill)
+  const project = getProject(projectId === 'default' ? null : projectId)
+  void catalogVersion
+
   const agents = useProjectStudio(projectId).agents
   const createAgent = useStudioDemoStore((s) => s.createAgent)
+
+  const harnesses = useMemo(() => {
+    const fromProject = project?.harnesses?.filter((h) => h.enabled) || []
+    if (fromProject.length) return fromProject
+    return DEFAULT_AGENT_HARNESS_IDS.map((id) => {
+      const def = getHarness(id)
+      return { id, label: def?.name || id, enabled: true }
+    })
+  }, [project?.harnesses])
 
   const [open, setOpen] = useState(false)
   const [coachOpen, setCoachOpen] = useState(true)
@@ -40,9 +61,12 @@ export function AgentsPanel() {
       text: 'Describe the agent you want (e.g. “review PRs for security”). I’ll draft a name, role, and system prompt you can apply.',
     },
   ])
-  const [draft, setDraft] = useState<{ name: string; role: string; desc: string; systemPrompt: string } | null>(
-    null,
-  )
+  const [draft, setDraft] = useState<{
+    name: string
+    role: string
+    desc: string
+    systemPrompt: string
+  } | null>(null)
 
   const submit = () => {
     if (!name.trim()) return
@@ -62,6 +86,21 @@ export function AgentsPanel() {
     setName('')
     setDesc('')
     setSystemPrompt('')
+  }
+
+  const launchHarness = (id: string) => {
+    const cmd = harnessLaunchCommand(id)
+    if (!cmd) {
+      pushToast('No CLI mapped for this harness', { kind: 'warning' })
+      return
+    }
+    if (project?.fromApi && project.sandboxStatus !== 'running') {
+      pushToast(`Sandbox is ${project.sandboxStatus || 'not ready'}`, { kind: 'warning' })
+      return
+    }
+    openPanelType('terminal')
+    setTerminalPrefill(cmd)
+    pushToast(`Terminal prefilled with \`${cmd}\``, { kind: 'info' })
   }
 
   const sendCoach = () => {
@@ -118,7 +157,37 @@ export function AgentsPanel() {
           </Button>
         </div>
       </div>
+
       <div className="panel-scroll">
+        <div className="section-label">Sandbox harnesses</div>
+        <div className="harness-cards">
+          {harnesses.map((h) => {
+            const def = getHarness(h.id)
+            const cmd = harnessLaunchCommand(h.id)
+            return (
+              <div key={h.id} className="list-card harness-card">
+                <div className="lc-row">
+                  <div className="lc-title">{h.label}</div>
+                  <Label color="blue" isCompact>
+                    {def?.category || 'agent'}
+                  </Label>
+                </div>
+                <div className="lc-meta">{def?.description || 'Runs inside the project sandbox.'}</div>
+                {cmd ? (
+                  <div style={{ marginTop: 8 }}>
+                    <Button size="sm" variant="secondary" onClick={() => launchHarness(h.id)}>
+                      Open in Terminal ({cmd})
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="section-label" style={{ marginTop: 12 }}>
+          Studio agents
+        </div>
         {agents.length === 0 ? (
           <EmptySplash
             title="No agents yet"

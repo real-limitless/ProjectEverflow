@@ -1,10 +1,13 @@
-import { Page } from '@patternfly/react-core'
+import { useEffect } from 'react'
+import { Page, Spinner } from '@patternfly/react-core'
 import { Outlet, useLocation } from 'react-router-dom'
 import { usePlaygroundStore } from '@/store/playgroundStore'
+import { useAuthStore } from '@/store/authStore'
 import { CreateProjectModal } from '@/components/modals/CreateProjectModal'
 import { OpenProjectModal } from '@/components/modals/OpenProjectModal'
 import { ConnectRepoModal } from '@/components/modals/ConnectRepoModal'
 import { ProjectSettingsModal } from '@/components/modals/ProjectSettingsModal'
+import { LoginModal } from '@/components/auth/LoginModal'
 import { PanelPalette } from '@/components/palette/PanelPalette'
 import { AppMasthead } from './AppMasthead'
 import { AppSidebar } from './AppSidebar'
@@ -18,6 +21,14 @@ export function AppShell({ detached = false }: AppShellProps) {
   const isSidebarOpen = usePlaygroundStore((s) => s.isSidebarOpen)
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
   const openProjectIds = usePlaygroundStore((s) => s.openProjectIds)
+  const ready = useAuthStore((s) => s.ready)
+  const bootstrap = useAuthStore((s) => s.bootstrap)
+  const user = useAuthStore((s) => s.user)
+  const demoMode = useAuthStore((s) => s.demoMode)
+
+  useEffect(() => {
+    void bootstrap()
+  }, [bootstrap])
 
   const isPlayground =
     location.pathname === '/' || location.pathname === ''
@@ -31,22 +42,43 @@ export function AppShell({ detached = false }: AppShellProps) {
     )
   }
 
+  if (!ready) {
+    return (
+      <div className="auth-boot-splash">
+        <Spinner size="xl" aria-label="Loading Everflow" />
+      </div>
+    )
+  }
+
+  const blocked = !demoMode && !user
+
   return (
     <>
       <Page
         className={`pg-shell ${isPlayground ? 'pg-shell--playground' : 'pg-shell--standard'}`}
         masthead={<AppMasthead />}
-        sidebar={<AppSidebar />}
+        sidebar={blocked ? undefined : <AppSidebar />}
         mainContainerId="main-content"
         data-sidebar-open={isSidebarOpen ? 'true' : 'false'}
       >
-        <Outlet />
+        {blocked ? (
+          <div className="auth-boot-splash">
+            <p>Sign in to open projects and sandboxes.</p>
+          </div>
+        ) : (
+          <Outlet />
+        )}
       </Page>
-      {isPlayground && hasOpenProject ? <PanelPalette /> : null}
-      <OpenProjectModal />
-      <CreateProjectModal />
-      <ConnectRepoModal />
-      <ProjectSettingsModal />
+      {!blocked && isPlayground && hasOpenProject ? <PanelPalette /> : null}
+      {!blocked ? (
+        <>
+          <OpenProjectModal />
+          <CreateProjectModal />
+          <ConnectRepoModal />
+          <ProjectSettingsModal />
+        </>
+      ) : null}
+      <LoginModal />
     </>
   )
 }

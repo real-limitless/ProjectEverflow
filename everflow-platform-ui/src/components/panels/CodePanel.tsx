@@ -1,10 +1,18 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Button, Spinner } from '@patternfly/react-core'
 import AngleDownIcon from '@patternfly/react-icons/dist/esm/icons/angle-down-icon'
 import AngleRightIcon from '@patternfly/react-icons/dist/esm/icons/angle-right-icon'
 import TimesIcon from '@patternfly/react-icons/dist/esm/icons/times-icon'
-import { getProject } from '@/data/projects'
+import { getProject, updateProjectInCatalog } from '@/data/projects'
+import {
+  ApiError,
+  listSandboxFs,
+  readSandboxFs,
+  writeSandboxFs,
+} from '@/lib/api'
 import { basename, buildFileTree, type FileTreeNode } from '@/lib/fileTree'
 import { highlightCode, lintCode } from '@/lib/syntaxHighlight'
+import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import type { PanelKey } from '@/types/panels'
 import type { GitFileChange, ProjectFile } from '@/types/project'
@@ -79,14 +87,12 @@ function TreeRows({
                 onClick={() => onToggle(node.path)}
                 aria-expanded={isOpen}
               >
-                <span className="tree-chevron" aria-hidden>
-                  {isOpen ? <AngleDownIcon /> : <AngleRightIcon />}
-                </span>
+                {isOpen ? <AngleDownIcon /> : <AngleRightIcon />}
                 <span className="tree-name">{node.name}</span>
               </button>
-              {isOpen && (
+              {isOpen ? (
                 <TreeRows
-                  nodes={node.children}
+                  nodes={node.children || []}
                   depth={depth + 1}
                   activePath={activePath}
                   expanded={expanded}
@@ -94,7 +100,7 @@ function TreeRows({
                   onToggle={onToggle}
                   onOpen={onOpen}
                 />
-              )}
+              ) : null}
             </div>
           )
         }
@@ -119,8 +125,35 @@ function TreeRows({
   )
 }
 
+async function collectRemoteTree(
+  projectId: string,
+  dir: string,
+  acc: ProjectFile[] = [],
+): Promise<ProjectFile[]> {
+  const entries = await listSandboxFs(projectId, dir || '.')
+  for (const e of entries) {
+    if (e.name === '.everflow' || e.name.startsWith('.')) {
+      // still allow listing non-hidden; skip .everflow bulk
+      if (e.name === '.everflow') continue
+    }
+    const path = e.path.includes('/') || dir === '.' || !dir ? e.path : `${dir}/${e.name}`
+    const clean = path.replace(/^\.\//, '')
+    if (e.is_dir) {
+      await collectRemoteTree(projectId, clean, acc)
+    } else {
+      acc.push({
+        path: clean,
+        name: e.name,
+        folder: clean.includes('/') ? clean.slice(0, clean.lastIndexOf('/')) : '',
+      })
+    }
+  }
+  return acc
+}
+
 export function CodePanel({ panelKey }: CodePanelProps) {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
+  const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
   const st = usePlaygroundStore((s) => s.instanceState[panelKey])
   const openCodeFile = usePlaygroundStore((s) => s.openCodeFile)
   const closeCodeFile = usePlaygroundStore((s) => s.closeCodeFile)
@@ -128,8 +161,49 @@ export function CodePanel({ panelKey }: CodePanelProps) {
   const toggleCodeFolder = usePlaygroundStore((s) => s.toggleCodeFolder)
 
   const p = getProject(currentProjectId)
+  void catalogVersion
   const files = p?.files
   const changes = p?.gitChanges
+  const fromApi = Boolean(p?.fromApi)
+  const sandboxRunning = p?.sandboxStatus === 'running'
+
+  const [loadingFs, setLoadingFs] = useState(false)
+  const [fsError, setFsError] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [editMode, setEditMode] = useState(fromApi)
+
+  const refreshTree = useCallback(async () => {
+    if (!p?.fromApi || !currentProjectId || p.sandboxStatus !== 'running') return
+    setLoadingFs(true)
+    setFsError(null)
+    try {
+      const treeFiles = await collectRemoteTree(currentProjectId, '.')
+      const code: Record<string, string> = { ...(p.code || {}) }
+      // Prefetch small set of root files only; open loads on demand
+      for (const f of treeFiles.slice(0, 8)) {
+        if (code[f.path] || code[f.name]) continue
+        try {
+          code[f.path] = await readSandboxFs(currentProjectId, f.path)
+        } catch {
+          /* skip */
+        }
+      }
+      updateProjectInCatalog(currentProjectId, { files: treeFiles, code })
+      usePlaygroundStore.setState({
+        catalogVersion: usePlaygroundStore.getState().catalogVersion + 1,
+      })
+    } catch (e) {
+      setFsError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'FS error')
+    } finally {
+      setLoadingFs(false)
+    }
+  }, [currentProjectId, p?.fromApi, p?.sandboxStatus, p?.code])
+
+  useEffect(() => {
+    void refreshTree()
+  }, [refreshTree])
 
   const changesByPath = useMemo(() => {
     const map = new Map<string, GitFileChange>()
@@ -137,7 +211,6 @@ export function CodePanel({ panelKey }: CodePanelProps) {
     return map
   }, [changes])
 
-  // Include deleted paths in the tree so they remain visible with a D badge
   const treeFiles: ProjectFile[] = useMemo(() => {
     const byPath = new Map((files || []).map((f) => [f.path, f]))
     for (const c of changes || []) {
@@ -185,13 +258,47 @@ export function CodePanel({ panelKey }: CodePanelProps) {
 
   const activeName = activeFileMeta?.name || basename(activePath)
   const rawSource = resolveSource(p?.code, activePath, activeName)
+
+  // Load file content from sandbox when opening
+  useEffect(() => {
+    if (!fromApi || !currentProjectId || !activePath || !sandboxRunning) {
+      setDraft(rawSource)
+      setDirty(false)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const text = await readSandboxFs(currentProjectId, activePath)
+        if (cancelled) return
+        setDraft(text)
+        setDirty(false)
+        updateProjectInCatalog(currentProjectId, {
+          code: { ...(getProject(currentProjectId)?.code || {}), [activePath]: text },
+        })
+        usePlaygroundStore.setState({
+          catalogVersion: usePlaygroundStore.getState().catalogVersion + 1,
+        })
+      } catch {
+        if (!cancelled) {
+          setDraft(rawSource)
+          setDirty(false)
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activePath, currentProjectId, fromApi, sandboxRunning]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const displaySource = fromApi && editMode ? draft : rawSource || draft
   const highlighted = useMemo(
-    () => highlightCode(rawSource, activeName),
-    [rawSource, activeName],
+    () => highlightCode(displaySource, activeName),
+    [displaySource, activeName],
   )
   const diagnostics = useMemo(
-    () => lintCode(rawSource, activeName),
-    [rawSource, activeName],
+    () => lintCode(displaySource, activeName),
+    [displaySource, activeName],
   )
   const diagByLine = useMemo(() => {
     const m = new Map<number, (typeof diagnostics)[0]>()
@@ -201,6 +308,26 @@ export function CodePanel({ panelKey }: CodePanelProps) {
 
   const lines = highlighted ? highlighted.split('\n') : []
   const [showLint, setShowLint] = useState(true)
+
+  const save = async () => {
+    if (!currentProjectId || !activePath || !fromApi) return
+    setSaving(true)
+    try {
+      await writeSandboxFs(currentProjectId, activePath, draft)
+      updateProjectInCatalog(currentProjectId, {
+        code: { ...(getProject(currentProjectId)?.code || {}), [activePath]: draft },
+      })
+      usePlaygroundStore.setState({
+        catalogVersion: usePlaygroundStore.getState().catalogVersion + 1,
+      })
+      setDirty(false)
+      pushToast(`Saved ${activeName}`, { kind: 'success' })
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Save failed', { kind: 'danger' })
+    } finally {
+      setSaving(false)
+    }
+  }
 
   if (!p) {
     return (
@@ -213,16 +340,34 @@ export function CodePanel({ panelKey }: CodePanelProps) {
   return (
     <div className="code-layout">
       <div className="file-tree">
-        <div className="tree-label">Explorer</div>
-        <TreeRows
-          nodes={tree}
-          depth={0}
-          activePath={activePath}
-          expanded={expanded}
-          changesByPath={changesByPath}
-          onToggle={(path) => toggleCodeFolder(panelKey, path)}
-          onOpen={(path) => openCodeFile(panelKey, path)}
-        />
+        <div className="tree-label">
+          Explorer
+          {fromApi ? (
+            <Button
+              variant="link"
+              isInline
+              size="sm"
+              onClick={() => void refreshTree()}
+              isDisabled={loadingFs || !sandboxRunning}
+            >
+              {loadingFs ? <Spinner size="sm" /> : 'Refresh'}
+            </Button>
+          ) : null}
+        </div>
+        {fsError ? <div className="code-fs-error">{fsError}</div> : null}
+        {fromApi && !sandboxRunning ? (
+          <div className="code-empty-msg">Sandbox {p.sandboxStatus || 'pending'}…</div>
+        ) : (
+          <TreeRows
+            nodes={tree}
+            depth={0}
+            activePath={activePath}
+            expanded={expanded}
+            changesByPath={changesByPath}
+            onToggle={(path) => toggleCodeFolder(panelKey, path)}
+            onOpen={(path) => openCodeFile(panelKey, path)}
+          />
+        )}
         {(changes?.length ?? 0) > 0 && (
           <div className="tree-legend" title="From Repository → Changes">
             <span className="badge-m">M</span> modified
@@ -258,7 +403,10 @@ export function CodePanel({ panelKey }: CodePanelProps) {
                         {change.status}
                       </span>
                     )}
-                    <span>{name}</span>
+                    <span>
+                      {name}
+                      {active && dirty ? ' •' : ''}
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -276,6 +424,26 @@ export function CodePanel({ panelKey }: CodePanelProps) {
             })}
           </div>
           <div className="editor-controls">
+            {fromApi ? (
+              <>
+                <button
+                  type="button"
+                  className={`editor-ctrl-btn${editMode ? ' active' : ''}`}
+                  onClick={() => setEditMode((v) => !v)}
+                >
+                  {editMode ? 'Edit' : 'View'}
+                </button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  isDisabled={!dirty || !sandboxRunning}
+                  isLoading={saving}
+                  onClick={() => void save()}
+                >
+                  Save
+                </Button>
+              </>
+            ) : null}
             <button
               type="button"
               className={`editor-ctrl-btn${showLint ? ' active' : ''}`}
@@ -311,12 +479,27 @@ export function CodePanel({ panelKey }: CodePanelProps) {
           </div>
         </div>
 
-        <div
-          className="editor-body"
-          style={{ fontSize: `${fontSize}px` }}
-        >
+        <div className="editor-body" style={{ fontSize: `${fontSize}px` }}>
           {!activePath ? (
             <div className="code-empty-msg">Select a file from the tree to open it.</div>
+          ) : fromApi && editMode ? (
+            <textarea
+              className="code-edit-area"
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value)
+                setDirty(true)
+              }}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+                  e.preventDefault()
+                  void save()
+                }
+              }}
+              spellCheck={false}
+              style={{ fontSize: `${fontSize}px` }}
+              aria-label={`Edit ${activeName}`}
+            />
           ) : lines.length === 0 ? (
             <div className="code-empty-msg">
               {changesByPath.get(activePath)?.status === 'D'
@@ -355,11 +538,9 @@ export function CodePanel({ panelKey }: CodePanelProps) {
           )}
         </div>
 
-        {showLint && diagnostics.length > 0 && (
+        {showLint && diagnostics.length > 0 && !(fromApi && editMode) && (
           <div className="lint-panel" role="status">
-            <div className="lint-panel-title">
-              Problems · {diagnostics.length}
-            </div>
+            <div className="lint-panel-title">Problems · {diagnostics.length}</div>
             <ul className="lint-list">
               {diagnostics.slice(0, 8).map((d) => (
                 <li key={`${d.line}-${d.message}`} className={`lint-item severity-${d.severity}`}>

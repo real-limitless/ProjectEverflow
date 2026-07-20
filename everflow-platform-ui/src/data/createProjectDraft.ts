@@ -6,9 +6,10 @@ import type {
   ProjectVisibility,
   WorkspaceLayoutMode,
 } from '@/types/project'
-import { harnessesFromIds } from './harnesses'
+import { DEFAULT_AGENT_HARNESS_IDS, harnessesFromIds } from './harnesses'
 import { getTemplate, type ProjectTemplateId } from './projectTemplates'
 import { PROJECTS, slugifyProjectName } from './projects'
+import type { ApiProject } from '@/lib/api'
 
 export interface CreateProjectDraft {
   name: string
@@ -34,13 +35,22 @@ export function isSlugTaken(slug: string, excludeId?: string): boolean {
   )
 }
 
-export function createProjectFromDraft(draft: CreateProjectDraft): Project {
+export function createProjectFromDraft(
+  draft: CreateProjectDraft,
+  opts?: { apiProject?: ApiProject },
+): Project {
   const trimmed = draft.name.trim() || 'Untitled project'
-  const baseSlug = slugifyProjectName(draft.slug?.trim() || trimmed)
-  let projectId = baseSlug
-  if (PROJECTS[projectId]) {
+  const baseSlug =
+    opts?.apiProject?.slug || slugifyProjectName(draft.slug?.trim() || trimmed)
+  let projectId = opts?.apiProject?.id || baseSlug
+  if (!opts?.apiProject && PROJECTS[projectId]) {
     projectId = `${baseSlug}-${Math.random().toString(36).slice(2, 6)}`
   }
+
+  const harnessIds =
+    draft.harnessIds.length > 0
+      ? draft.harnessIds
+      : [...DEFAULT_AGENT_HARNESS_IDS]
 
   const template = getTemplate(draft.templateId)
   const repos =
@@ -71,7 +81,7 @@ export function createProjectFromDraft(draft: CreateProjectDraft): Project {
   })
   if (!sawActive && normalizedRepos[0]) normalizedRepos[0].active = true
 
-  const harnesses = harnessesFromIds(draft.harnessIds)
+  const harnesses = harnessesFromIds(harnessIds)
   const includeSample = draft.options.includeSampleData
 
   let files = [
@@ -111,13 +121,21 @@ export function createProjectFromDraft(draft: CreateProjectDraft): Project {
 
   return {
     id: projectId,
-    name: trimmed,
-    description: draft.description?.trim() || '',
+    name: opts?.apiProject?.name || trimmed,
+    description:
+      opts?.apiProject?.description ?? (draft.description?.trim() || ''),
     slug: baseSlug,
     templateId: template.id,
     layoutMode: draft.options.layout || template.defaultLayout,
     environment: draft.options.environment,
     visibility: draft.options.visibility,
+    fromApi: Boolean(opts?.apiProject),
+    organizationId: opts?.apiProject?.organization_id,
+    sandboxName: opts?.apiProject?.sandbox_name,
+    sandboxStatus: opts?.apiProject?.sandbox_status ?? (opts?.apiProject ? 'pending' : undefined),
+    sandboxImage: opts?.apiProject?.sandbox_image,
+    sandboxError: opts?.apiProject?.sandbox_error,
+    sandboxCreatedAt: opts?.apiProject?.sandbox_created_at,
     repos: normalizedRepos,
     harnesses,
     convs: includeSample

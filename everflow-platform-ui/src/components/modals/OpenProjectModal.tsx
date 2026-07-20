@@ -12,6 +12,7 @@ import {
   ModalHeader,
   ModalVariant,
   SearchInput,
+  Spinner,
   ToggleGroup,
   ToggleGroupItem,
 } from '@patternfly/react-core'
@@ -21,6 +22,8 @@ import PlusCircleIcon from '@patternfly/react-icons/dist/esm/icons/plus-circle-i
 import SearchIcon from '@patternfly/react-icons/dist/esm/icons/search-icon'
 import { getProject, listProjectIds } from '@/data/projects'
 import { getTemplate } from '@/data/projectTemplates'
+import { isDemoMode, listProjects } from '@/lib/api'
+import { useAuthStore } from '@/store/authStore'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 type FilterMode = 'all' | 'open' | 'available'
@@ -36,6 +39,8 @@ interface ProjectRow {
   harnessCount: number
   isOpen: boolean
   isActive: boolean
+  sandboxStatus?: string
+  fromApi?: boolean
 }
 
 export function OpenProjectModal() {
@@ -43,27 +48,58 @@ export function OpenProjectModal() {
   const setOpen = usePlaygroundStore((s) => s.setOpenProjectModal)
   const setCreate = usePlaygroundStore((s) => s.setCreateProjectModal)
   const openProject = usePlaygroundStore((s) => s.openProject)
+  const ingestApiProject = usePlaygroundStore((s) => s.ingestApiProject)
   const openProjectIds = usePlaygroundStore((s) => s.openProjectIds)
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
   const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
+  const org = useAuthStore((s) => s.org)
+  const user = useAuthStore((s) => s.user)
   void catalogVersion
 
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<FilterMode>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [loadingApi, setLoadingApi] = useState(false)
+  const [apiError, setApiError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!isOpen) return
     setQuery('')
     setFilter('all')
     setSelectedId(null)
-  }, [isOpen])
+    setApiError(null)
+
+    if (isDemoMode() || !user || !org) return
+
+    let cancelled = false
+    setLoadingApi(true)
+    void listProjects(org.id)
+      .then((projects) => {
+        if (cancelled) return
+        for (const ap of projects) {
+          ingestApiProject(ap)
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) setApiError(e instanceof Error ? e.message : 'Failed to load projects')
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingApi(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, user, org, ingestApiProject])
 
   const rows = useMemo((): ProjectRow[] => {
     return listProjectIds()
       .map((id) => {
         const p = getProject(id)
         if (!p) return null
+        // In API mode hide pure demo seeds unless already open
+        if (!isDemoMode() && user && !p.fromApi && !openProjectIds.includes(id)) {
+          return null
+        }
         const template = getTemplate(p.templateId)
         return {
           id,
@@ -76,11 +112,13 @@ export function OpenProjectModal() {
           harnessCount: p.harnesses?.filter((h) => h.enabled).length ?? 0,
           isOpen: openProjectIds.includes(id),
           isActive: currentProjectId === id,
+          sandboxStatus: p.sandboxStatus,
+          fromApi: p.fromApi,
         } satisfies ProjectRow
       })
       .filter(Boolean)
       .sort((a, b) => a!.name.localeCompare(b!.name)) as ProjectRow[]
-  }, [catalogVersion, openProjectIds, currentProjectId])
+  }, [catalogVersion, openProjectIds, currentProjectId, user])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -110,7 +148,6 @@ export function OpenProjectModal() {
       return
     }
     if (selectedId !== selected.id) setSelectedId(selected.id)
-    // only re-sync when filter results change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered])
 
@@ -138,7 +175,11 @@ export function OpenProjectModal() {
         description="Browse your projects, search, and open one in the workbench."
       />
       <ModalBody>
-        {rows.length === 0 ? (
+        {loadingApi ? (
+          <div className="open-project-loading">
+            <Spinner size="lg" aria-label="Loading projects" />
+          </div>
+        ) : rows.length === 0 ? (
           <EmptyState
             variant={EmptyStateVariant.sm}
             titleText="No projects yet"
@@ -146,7 +187,9 @@ export function OpenProjectModal() {
             icon={CubesIcon}
           >
             <EmptyStateBody>
-              Create a project to get started with the playground workbench.
+              {apiError
+                ? apiError
+                : 'Create a project to get started with the playground workbench.'}
             </EmptyStateBody>
             <EmptyStateFooter>
               <Button variant="primary" icon={<PlusCircleIcon />} onClick={goCreate}>
@@ -204,11 +247,7 @@ export function OpenProjectModal() {
                 </EmptyStateBody>
               </EmptyState>
             ) : (
-              <div
-                className="open-project-list"
-                role="listbox"
-                aria-label="Projects"
-              >
+              <div className="open-project-list" role="listbox" aria-label="Projects">
                 {filtered.map((r) => {
                   const isSelected = selected?.id === r.id
                   return (
@@ -236,13 +275,16 @@ export function OpenProjectModal() {
                               Open
                             </Label>
                           ) : null}
+                          {r.sandboxStatus ? (
+                            <Label color="grey" isCompact>
+                              {r.sandboxStatus}
+                            </Label>
+                          ) : null}
                         </span>
                         <span className="open-project-row-sub">
                           <span className="open-project-row-slug">{r.slug}</span>
                           {r.description ? (
-                            <span className="open-project-row-desc">
-                              · {r.description}
-                            </span>
+                            <span className="open-project-row-desc">· {r.description}</span>
                           ) : null}
                         </span>
                       </span>
@@ -266,11 +308,7 @@ export function OpenProjectModal() {
         )}
       </ModalBody>
       <ModalFooter>
-        <Button
-          variant="primary"
-          onClick={openSelected}
-          isDisabled={!selected}
-        >
+        <Button variant="primary" onClick={openSelected} isDisabled={!selected}>
           {selected?.isOpen && !selected.isActive
             ? 'Switch to project'
             : selected?.isActive

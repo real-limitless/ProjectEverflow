@@ -11,6 +11,7 @@ import {
   getProject,
   listUserCreatedProjects,
   mergeUserProjects,
+  slugifyProjectName,
   updateProjectInCatalog,
 } from '@/data/projects'
 import type { Project } from '@/types/project'
@@ -66,6 +67,14 @@ import {
   cloneMessages,
 } from '@/lib/chatConversation'
 import type { ChatConversation, ChatMessage, ChatMode } from '@/types/panels'
+import {
+  createProject as apiCreateProject,
+  isDemoMode,
+  type ApiProject,
+} from '@/lib/api'
+import { useAuthStore } from '@/store/authStore'
+import { waitForSandbox } from '@/lib/sandboxPoll'
+import { pushToast } from '@/lib/studioToast'
 
 interface PlaygroundState {
   openProjectIds: string[]
@@ -95,6 +104,8 @@ interface PlaygroundState {
   paletteDragging: boolean
   /** Bumps when catalog gains a user-created project (forces UI refresh) */
   catalogVersion: number
+  /** Prefill Terminal input (e.g. from Agents panel) */
+  terminalPrefill: string | null
 
   // derived helpers exposed as methods
   nextGroupId: () => string
@@ -128,9 +139,26 @@ interface PlaygroundState {
   switchProject: (id: string) => void
   openProject: (id: string) => void
   closeProjectTab: (id: string) => void
+  setTerminalPrefill: (cmd: string | null) => void
+  clearTerminalPrefill: () => void
   createProject: (
     draft: import('@/data/createProjectDraft').CreateProjectDraft | string,
-  ) => string | null
+  ) => Promise<string | null>
+  /** Hydrate an API project into the local catalog and open it */
+  ingestApiProject: (
+    apiProject: ApiProject,
+    seed?: Partial<Project>,
+  ) => void
+  patchProjectSandbox: (
+    projectId: string,
+    patch: {
+      sandboxStatus?: string
+      sandboxName?: string | null
+      sandboxError?: string | null
+      sandboxImage?: string | null
+      sandboxCreatedAt?: string | null
+    },
+  ) => void
   resetLayout: () => void
 
   activateTab: (groupId: string, panelId: PanelKey) => void
@@ -441,6 +469,7 @@ function createInitial() {
     paletteMode: 'float' as PaletteMode,
     palettePos: { x: 24, y: typeof window !== 'undefined' ? window.innerHeight - 160 : 600 },
     catalogVersion: 0,
+    terminalPrefill: null as string | null,
   }
 }
 
@@ -461,6 +490,10 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   detachedPanels: new Set(),
   theme: typeof document !== 'undefined' ? loadTheme() : 'light',
   paletteDragging: false,
+  terminalPrefill: null,
+
+  setTerminalPrefill: (cmd) => set({ terminalPrefill: cmd }),
+  clearTerminalPrefill: () => set({ terminalPrefill: null }),
 
   nextGroupId: () => {
     const id = `g${get().groupIdSeq}`
@@ -702,7 +735,80 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     }
   },
 
-  createProject: (input) => {
+  ingestApiProject: (apiProject, seed) => {
+    const existing = getProject(apiProject.id)
+    const project: Project = {
+      id: apiProject.id,
+      name: apiProject.name,
+      slug: apiProject.slug,
+      description: apiProject.description || '',
+      fromApi: true,
+      organizationId: apiProject.organization_id,
+      sandboxName: apiProject.sandbox_name,
+      sandboxStatus: apiProject.sandbox_status || 'pending',
+      sandboxImage: apiProject.sandbox_image,
+      sandboxError: apiProject.sandbox_error,
+      sandboxCreatedAt: apiProject.sandbox_created_at,
+      templateId: existing?.templateId || seed?.templateId || 'blank',
+      layoutMode: existing?.layoutMode || seed?.layoutMode || 'standard',
+      environment: existing?.environment || seed?.environment || 'local',
+      visibility: existing?.visibility || seed?.visibility || 'private',
+      harnesses:
+        existing?.harnesses ||
+        seed?.harnesses ||
+        [
+          { id: 'agent-claude-code', label: 'Claude Code', enabled: true },
+          { id: 'agent-opencode', label: 'OpenCode', enabled: true },
+        ],
+      repos:
+        existing?.repos ||
+        seed?.repos ||
+        [
+          {
+            id: 'main',
+            label: `${apiProject.slug}/app`,
+            active: true,
+            branch: 'main',
+            provider: 'none',
+          },
+        ],
+      convs: existing?.convs || seed?.convs || [{ id: 'c1', title: 'New chat', meta: 'Just now' }],
+      messages: existing?.messages || seed?.messages || [],
+      files: existing?.files || seed?.files || [{ path: 'README.md', name: 'README.md', folder: '' }],
+      code: existing?.code || seed?.code || {
+        'README.md': `# ${apiProject.name}\n\n${apiProject.description || 'Everflow project.'}\n`,
+      },
+      knowledgeFiles: existing?.knowledgeFiles || seed?.knowledgeFiles || [],
+      canvases: existing?.canvases || seed?.canvases || [],
+      termLines:
+        existing?.termLines ||
+        seed?.termLines ||
+        [
+          { cls: 'muted', text: `sandbox@${apiProject.slug}:~$` },
+          { cls: '', text: 'Connected to project sandbox' },
+        ],
+    }
+    addProjectToCatalog(project)
+    set({ catalogVersion: get().catalogVersion + 1 })
+    get().persist()
+  },
+
+  patchProjectSandbox: (projectId, patch) => {
+    const p = getProject(projectId)
+    if (!p) return
+    updateProjectInCatalog(projectId, {
+      sandboxStatus: patch.sandboxStatus ?? p.sandboxStatus,
+      sandboxName: patch.sandboxName !== undefined ? patch.sandboxName : p.sandboxName,
+      sandboxError: patch.sandboxError !== undefined ? patch.sandboxError : p.sandboxError,
+      sandboxImage: patch.sandboxImage !== undefined ? patch.sandboxImage : p.sandboxImage,
+      sandboxCreatedAt:
+        patch.sandboxCreatedAt !== undefined ? patch.sandboxCreatedAt : p.sandboxCreatedAt,
+    })
+    set({ catalogVersion: get().catalogVersion + 1 })
+    get().persist()
+  },
+
+  createProject: async (input) => {
     let draft: CreateProjectDraft
     if (typeof input === 'string') {
       const trimmed = input.trim()
@@ -711,7 +817,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         name: trimmed,
         templateId: 'blank',
         repos: [],
-        harnessIds: ['ai-sandbox'],
+        harnessIds: ['agent-claude-code', 'agent-opencode'],
         options: {
           layout: 'standard',
           includeSampleData: true,
@@ -725,13 +831,32 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       draft = input
     }
 
-    const project =
-      typeof input === 'string'
-        ? createBlankProject(input)
-        : createProjectFromDraft(draft)
-    addProjectToCatalog(project)
+    let project: Project
+    const demo = isDemoMode()
+    const auth = useAuthStore.getState()
 
-    // Seed chats for new project
+    if (!demo && auth.user && auth.org) {
+      const slug = draft.slug?.trim() || slugifyProjectName(draft.name)
+      try {
+        const apiProject = await apiCreateProject(auth.org.id, {
+          name: draft.name.trim(),
+          slug,
+          description: draft.description?.trim() || undefined,
+        })
+        project = createProjectFromDraft(draft, { apiProject })
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Create project failed'
+        pushToast(msg, { kind: 'danger' })
+        return null
+      }
+    } else {
+      project =
+        typeof input === 'string'
+          ? createBlankProject(input)
+          : createProjectFromDraft(draft)
+    }
+
+    addProjectToCatalog(project)
     get().ensureProjectChats(project.id)
 
     const layout = buildDefaultLayout(
@@ -765,6 +890,31 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       paletteVisible: draft.options.dockPalette ? true : s.paletteVisible,
     })
     get().persist()
+
+    // Poll sandbox for API projects (non-blocking)
+    if (project.fromApi) {
+      const pid = project.id
+      void waitForSandbox(pid, {
+        onUpdate: (st) => {
+          get().patchProjectSandbox(pid, {
+            sandboxStatus: st.status,
+            sandboxName: st.sandbox_name,
+            sandboxError: st.error,
+            sandboxImage: st.image,
+            sandboxCreatedAt: st.created_at,
+          })
+        },
+      }).then((st) => {
+        if (st.status === 'running') {
+          pushToast('Sandbox ready', { kind: 'success' })
+        } else if (st.status === 'error') {
+          pushToast(st.error || 'Sandbox failed to start', { kind: 'danger' })
+        }
+      }).catch(() => {
+        /* ignore poll errors */
+      })
+    }
+
     return project.id
   },
 

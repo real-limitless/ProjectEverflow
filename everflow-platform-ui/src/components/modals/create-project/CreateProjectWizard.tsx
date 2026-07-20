@@ -55,6 +55,7 @@ export function CreateProjectWizard({ onClose }: CreateProjectWizardProps) {
   const [draft, setDraft] = useState<WizardDraft>(() => emptyWizardDraft())
   const [slugManual, setSlugManual] = useState(false)
   const [error, setError] = useState('')
+  const [creating, setCreating] = useState(false)
 
   const patch = (p: Partial<WizardDraft>) => {
     setDraft((d) => ({ ...d, ...p }))
@@ -67,7 +68,7 @@ export function CreateProjectWizard({ onClose }: CreateProjectWizardProps) {
 
   const basicsOk = useMemo(() => validateBasics(draft), [draft])
 
-  const finish = () => {
+  const finish = async () => {
     if (!validateBasics(draft)) {
       setError('Fix project name and slug before creating.')
       return
@@ -75,13 +76,23 @@ export function CreateProjectWizard({ onClose }: CreateProjectWizardProps) {
     const payload: WizardDraft = {
       ...draft,
       slug: draft.slug || slugifyProjectName(draft.name),
+      harnessIds:
+        draft.harnessIds.length > 0
+          ? draft.harnessIds
+          : ['agent-claude-code', 'agent-opencode'],
     }
-    const id = createProject(payload)
-    if (!id) {
-      setError('Could not create project. Try a different name or slug.')
-      return
+    setCreating(true)
+    setError('')
+    try {
+      const id = await createProject(payload)
+      if (!id) {
+        setError('Could not create project. Try a different name or slug.')
+        return
+      }
+      onClose()
+    } finally {
+      setCreating(false)
     }
-    onClose()
   }
 
   return (
@@ -129,7 +140,10 @@ export function CreateProjectWizard({ onClose }: CreateProjectWizardProps) {
       <WizardStep
         id="review"
         name="Review"
-        footer={{ nextButtonText: 'Create project' }}
+        footer={{
+          nextButtonText: creating ? 'Creating…' : 'Create project',
+          isNextDisabled: creating,
+        }}
       >
         <ReviewStep draft={draft} />
         {error ? (

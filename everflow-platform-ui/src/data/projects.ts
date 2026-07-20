@@ -298,7 +298,10 @@ export function createBlankProject(name: string, id?: string): Project {
     templateId: 'blank',
     description: '',
     repos: [{ id: 'main', label: `${slug}/app`, active: true, branch: 'main' }],
-    harnesses: [{ id: 'ai-sandbox', label: 'AI sandbox tools', enabled: true }],
+    harnesses: [
+      { id: 'agent-claude-code', label: 'Claude Code', enabled: true },
+      { id: 'agent-opencode', label: 'OpenCode', enabled: true },
+    ],
     layoutMode: 'standard',
     environment: 'local',
     visibility: 'private',

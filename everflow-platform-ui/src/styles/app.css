@@ -1939,3 +1939,92 @@ button.panel-palette-chip.is-visible {
   background: var(--pf-t--global--background--color--action--plain--hover);
   color: var(--pf-t--global--text--color--brand--default);
 }
+
+/* —— Auth + sandbox wiring —— */
+.auth-boot-splash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 50vh;
+  gap: 1rem;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.auth-alert {
+  margin-block-end: 0.75rem;
+}
+
+.sandbox-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-inline-start: 0.35rem;
+}
+
+.term-banner {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  background: color-mix(in srgb, var(--pf-t--global--color--status--warning--default) 18%, transparent);
+  color: var(--pf-t--global--text--color--status--warning--default);
+  border-bottom: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.code-edit-area {
+  width: 100%;
+  height: 100%;
+  min-height: 12rem;
+  border: 0;
+  resize: none;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--pf-t--global--font--family--mono, ui-monospace, monospace);
+  background: transparent;
+  color: var(--pf-t--global--text--color--regular);
+  line-height: 1.45;
+  outline: none;
+}
+
+.code-fs-error {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.7rem;
+  color: var(--pf-t--global--text--color--status--danger--default);
+}
+
+.tree-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+.open-project-loading {
+  display: flex;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.project-tab .sandbox-status-badge .pf-v6-c-label {
+  font-size: 0.6rem;
+}
+
+.term-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.75rem;
+  border-bottom: 1px solid var(--pf-t--global--border--color--default);
+}
+.term-banner--info {
+  background: color-mix(in srgb, var(--pf-t--global--color--status--info--default) 14%, transparent);
+}
+.term-banner--warn {
+  background: color-mix(in srgb, var(--pf-t--global--color--status--warning--default) 18%, transparent);
+  color: var(--pf-t--global--text--color--status--warning--default);
+}
+.term-banner--error {
+  background: color-mix(in srgb, var(--pf-t--global--color--status--danger--default) 14%, transparent);
+  color: var(--pf-t--global--text--color--status--danger--default);
+}
