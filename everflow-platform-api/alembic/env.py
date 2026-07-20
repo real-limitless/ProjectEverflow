@@ -4,7 +4,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import String, pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
@@ -28,11 +28,40 @@ settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
 
+def _is_guid_like(type_) -> bool:
+    """True for fastapi-users GUID and portable VARCHAR/CHAR(36) UUID storage."""
+    name = type(type_).__name__
+    if name == "GUID":
+        return True
+    if isinstance(type_, String) and getattr(type_, "length", None) == 36:
+        return True
+    # Dialect-reflected CHAR(36) / VARCHAR(36)
+    impl = getattr(type_, "impl", None)
+    if impl is not None and isinstance(impl, String) and getattr(impl, "length", None) == 36:
+        return True
+    return False
+
+
+def compare_type(context, inspected_column, metadata_column, inspected_type, metadata_type):  # noqa: ANN001, ARG001
+    """Avoid false positives: migration uses String(36), models use GUID (same storage)."""
+    if _is_guid_like(inspected_type) and _is_guid_like(metadata_type):
+        return False
+    # None = use Alembic default comparison
+    return None
+
+
+def _configure_context(**kwargs) -> None:
+    context.configure(
+        target_metadata=target_metadata,
+        compare_type=compare_type,
+        **kwargs,
+    )
+
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
-    context.configure(
+    _configure_context(
         url=url,
-        target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         render_as_batch=url.startswith("sqlite") if url else False,
@@ -43,9 +72,8 @@ def run_migrations_offline() -> None:
 
 def do_run_migrations(connection: Connection) -> None:
     url = config.get_main_option("sqlalchemy.url") or ""
-    context.configure(
+    _configure_context(
         connection=connection,
-        target_metadata=target_metadata,
         render_as_batch=url.startswith("sqlite"),
     )
     with context.begin_transaction():
