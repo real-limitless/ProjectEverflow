@@ -1,6 +1,6 @@
 import { Button } from '@patternfly/react-core'
 import type { GroupNode } from '@/types/dock'
-import { beginPanelDrag, endPanelDrag } from '@/lib/panelDrag'
+import { beginPanelDrag, endPanelDrag, markPanelDraggingUi } from '@/lib/panelDrag'
 import { panelMetaOf } from '@/lib/panelIds'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { DropOverlay } from './DropOverlay'
@@ -43,22 +43,39 @@ export function DockGroup({ node }: DockGroupProps) {
                 }}
                 onDragStart={(e) => {
                   // Do NOT set React state here — re-render cancels HTML5 drag
+                  if ((e.target as HTMLElement).closest('[data-act]')) {
+                    e.preventDefault()
+                    return
+                  }
                   beginPanelDrag(pid)
                   e.dataTransfer.setData('text/panel-id', pid)
+                  e.dataTransfer.setData('text/plain', pid)
                   e.dataTransfer.effectAllowed = 'move'
                   e.currentTarget.classList.add('dragging')
+                  // Delay overlay enable so the drag gesture locks in first
+                  requestAnimationFrame(() => markPanelDraggingUi())
                 }}
                 onDragEnd={(e) => {
                   e.currentTarget.classList.remove('dragging')
                   endPanelDrag()
                 }}
               >
-                <span className="tab-icon">{meta.icon}</span>
-                <span className="tab-label-text">{panelTabLabel(pid)}</span>
-                <span className="tab-actions">
+                <span className="tab-icon" draggable={false}>
+                  {meta.icon}
+                </span>
+                <span className="tab-label-text" draggable={false}>
+                  {panelTabLabel(pid)}
+                </span>
+                <span
+                  className="tab-actions"
+                  draggable={false}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onDragStart={(e) => e.preventDefault()}
+                >
                   <button
                     type="button"
                     data-act="dup"
+                    draggable={false}
                     title={`Open another ${meta.label}`}
                     onClick={(e) => {
                       e.stopPropagation()
@@ -70,6 +87,7 @@ export function DockGroup({ node }: DockGroupProps) {
                   <button
                     type="button"
                     data-act="detach"
+                    draggable={false}
                     title="Detach to window"
                     onClick={(e) => {
                       e.stopPropagation()
@@ -81,6 +99,7 @@ export function DockGroup({ node }: DockGroupProps) {
                   <button
                     type="button"
                     data-act="close"
+                    draggable={false}
                     title="Close panel (reopen from Panels tray)"
                     onClick={(e) => {
                       e.stopPropagation()
