@@ -174,6 +174,86 @@ async def test_provision_and_exec_with_fake_agent(
 
 
 @pytest.mark.asyncio
+async def test_missing_on_agent_refresh_and_recreate(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeAgentClient()
+    org_id = await _create_org(client, auth_headers, slug="sbx-miss")
+    create = await client.post(
+        f"/api/v1/orgs/{org_id}/projects",
+        headers=auth_headers,
+        json={"name": "Gone", "slug": "gone-box"},
+    )
+    project_id = UUID(create.json()["id"])
+
+    settings = Settings(
+        environment="test",
+        secret_key="test-secret-key-for-jwt-signing-not-for-prod",
+        database_url="sqlite+aiosqlite:///:memory:",
+        sandbox_enabled=True,
+        sandbox_agent_url="http://fake",
+        sandbox_agent_token="t",
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        proj = await sandbox_service._load_project(session, project_id, with_org=True)
+        proj.sandbox_name = sandbox_service.make_sandbox_name(proj.organization.slug, proj.slug)
+        await session.commit()
+        await sandbox_service.provision_project_sandbox(
+            session,
+            project_id,
+            settings=settings,
+            client=fake,  # type: ignore[arg-type]
+        )
+        name = (await sandbox_service._load_project(session, project_id)).sandbox_name
+        assert name in fake.sandboxes
+        # Simulate agent restart / wipe
+        fake.sandboxes.clear()
+
+        refreshed = await sandbox_service.refresh_sandbox_status(
+            session,
+            await sandbox_service._load_project(session, project_id),
+            settings=settings,
+            client=fake,  # type: ignore[arg-type]
+        )
+        assert refreshed.sandbox_status == "error"
+        assert "not found on agent" in (refreshed.sandbox_error or "").lower()
+
+        # Recreate restores sandbox
+        await sandbox_service.recreate_project_sandbox(
+            session,
+            project_id,
+            settings=settings,
+            client=fake,  # type: ignore[arg-type]
+        )
+        again = await sandbox_service._load_project(session, project_id)
+        assert again.sandbox_status == "running"
+        assert again.sandbox_name in fake.sandboxes
+        assert again.sandbox_name in fake.removed  # force path called remove
+
+    monkeypatch.setattr("app.api.v1.sandbox.SandboxAgentClient", lambda settings=None: fake)
+    monkeypatch.setattr("app.services.sandbox.SandboxAgentClient", lambda settings=None: fake)
+
+    # Exec when missing updates DB
+    fake.sandboxes.clear()
+    async with factory() as session:
+        proj = await sandbox_service._load_project(session, project_id)
+        proj.sandbox_status = "running"
+        await session.commit()
+
+    exec_missing = await client.post(
+        f"/api/v1/projects/{project_id}/sandbox/exec",
+        headers=auth_headers,
+        json={"cmd": "echo", "args": ["x"]},
+    )
+    assert exec_missing.status_code == 409
+    assert "recreate" in exec_missing.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
 async def test_make_sandbox_name() -> None:
     assert sandbox_service.make_sandbox_name("Acme!", "my-app") == "ef-acme-my-app"
     long_slug = "x" * 200

@@ -46,6 +46,7 @@ class SandboxAgentClient:
         labels: dict[str, str],
         harnesses: list[str],
         workspace_host_path: str | None = None,
+        replace: bool = False,
     ) -> dict[str, Any]:
         payload = {
             "name": name,
@@ -55,6 +56,7 @@ class SandboxAgentClient:
             "labels": labels,
             "harnesses": harnesses,
             "workspace_host_path": workspace_host_path,
+            "replace": replace,
         }
         return await self._request("POST", "/v1/sandboxes", json=payload, expected=(201, 200))
 

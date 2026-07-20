@@ -26,6 +26,8 @@ SANDBOX_STATUSES = (
     "destroyed",
 )
 
+MISSING_ON_AGENT = "Sandbox not found on agent; recreate to restore"
+
 
 def make_sandbox_name(org_slug: str, project_slug: str) -> str:
     """Deterministic microsandbox name ≤128 bytes."""
@@ -43,7 +45,9 @@ async def provision_project_sandbox(
     *,
     settings: Settings | None = None,
     client: SandboxAgentClient | None = None,
+    force: bool = False,
 ) -> Project:
+    """Create (or force-recreate) the project's sandbox on the agent."""
     settings = settings or get_settings()
     if not settings.sandbox_enabled:
         project = await _load_project(session, project_id)
@@ -64,6 +68,16 @@ async def provision_project_sandbox(
     project.sandbox_image = settings.sandbox_default_image
     await session.commit()
 
+    if force and name:
+        try:
+            await client.stop_sandbox(name)
+        except SandboxAgentError:
+            pass
+        try:
+            await client.remove_sandbox(name)
+        except SandboxAgentError:
+            pass
+
     try:
         await client.create_sandbox(
             name=name,
@@ -77,6 +91,7 @@ async def provision_project_sandbox(
             },
             harnesses=list(settings.sandbox_default_harnesses),
             workspace_host_path=f"/workspaces/{name}",
+            replace=True,
         )
         project.sandbox_status = "running"
         project.sandbox_created_at = datetime.now(timezone.utc)
@@ -95,6 +110,23 @@ async def provision_project_sandbox(
     return project
 
 
+async def recreate_project_sandbox(
+    session: AsyncSession,
+    project_id: UUID,
+    *,
+    settings: Settings | None = None,
+    client: SandboxAgentClient | None = None,
+) -> Project:
+    """Force remove (if any) then provision again. Workspace path is preserved."""
+    return await provision_project_sandbox(
+        session,
+        project_id,
+        settings=settings,
+        client=client,
+        force=True,
+    )
+
+
 async def destroy_project_sandbox(
     session: AsyncSession,
     project: Project,
@@ -110,7 +142,6 @@ async def destroy_project_sandbox(
 
     client = client or SandboxAgentClient(settings)
     try:
-        # Best-effort stop then remove
         try:
             await client.stop_sandbox(project.sandbox_name)
         except SandboxAgentError:
@@ -123,6 +154,19 @@ async def destroy_project_sandbox(
         project.sandbox_status = "error"
         project.sandbox_error = f"destroy failed: {exc}"[:2000]
     await session.commit()
+
+
+async def mark_sandbox_missing(
+    session: AsyncSession,
+    project: Project,
+    *,
+    message: str = MISSING_ON_AGENT,
+) -> Project:
+    project.sandbox_status = "error"
+    project.sandbox_error = message[:2000]
+    await session.commit()
+    await session.refresh(project)
+    return project
 
 
 async def refresh_sandbox_status(
@@ -142,23 +186,19 @@ async def refresh_sandbox_status(
     try:
         info = await client.get_sandbox(project.sandbox_name)
         live = str(info.get("status") or project.sandbox_status)
-        # Normalize agent statuses to our enum
         if live in SANDBOX_STATUSES:
             project.sandbox_status = live
-        elif live in ("unknown",):
-            pass
-        else:
+        elif live not in ("unknown",):
             project.sandbox_status = live if live else project.sandbox_status
+        if project.sandbox_status == "running":
+            project.sandbox_error = None
         await session.commit()
         await session.refresh(project)
     except SandboxAgentError as exc:
         if exc.status_code == 404:
-            if project.sandbox_status == "running":
-                project.sandbox_status = "error"
-                project.sandbox_error = "Sandbox missing on agent"
-                await session.commit()
-                await session.refresh(project)
-        # Agent down: keep DB status
+            # DB out of sync with agent (restart, wipe, manual delete)
+            await mark_sandbox_missing(session, project)
+        # Agent unreachable: keep DB status (avoid false recreate loops)
     return project
 
 

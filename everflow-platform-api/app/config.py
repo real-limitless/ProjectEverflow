@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     sandbox_enabled: bool = True
     sandbox_agent_url: str = "http://localhost:8090"
     sandbox_agent_token: str = "change-me"
-    sandbox_default_image: str = "ubuntu:24.04"
+    sandbox_default_image: str = "python"
     sandbox_default_memory_mib: int = 2048
     sandbox_default_cpus: int = 2
     sandbox_default_harnesses: StrList = Field(
