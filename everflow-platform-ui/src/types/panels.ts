@@ -108,7 +108,14 @@ export interface PanelInstanceState {
   title?: string
   convId?: string
   messages?: ChatMessage[]
+  /** Active code file path (or legacy file name) */
   file?: string
+  /** Open editor tabs (paths); active is `file` */
+  openFiles?: string[]
+  /** Editor font size in px */
+  codeFontSize?: number
+  /** Expanded folder paths in the file tree */
+  expandedFolders?: string[]
   /** Chat: hide conversation list for focus mode */
   railCollapsed?: boolean
   model?: string

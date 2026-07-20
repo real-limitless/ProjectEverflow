@@ -1,13 +1,20 @@
 import { create } from 'zustand'
 import { PANEL_META } from '@/data/panelMeta'
 import {
+  createProjectFromDraft,
+  type CreateProjectDraft,
+} from '@/data/createProjectDraft'
+import {
   PROJECTS,
   addProjectToCatalog,
   createBlankProject,
   getProject,
   listUserCreatedProjects,
   mergeUserProjects,
+  updateProjectInCatalog,
 } from '@/data/projects'
+import type { Project } from '@/types/project'
+import type { WorkspaceLayoutMode } from '@/types/project'
 import {
   addPanelToGroup,
   addTabToGroup,
@@ -79,6 +86,9 @@ interface PlaygroundState {
   openProjectModal: boolean
   createProjectModal: boolean
   connectRepoModal: boolean
+  projectSettingsOpen: boolean
+  /** Project id targeted by Project settings (defaults to current when opening) */
+  projectSettingsProjectId: string | null
   dragPanelId: string | null
   detachedPanels: Set<string>
   theme: ThemeMode
@@ -103,6 +113,9 @@ interface PlaygroundState {
   setOpenProjectModal: (v: boolean) => void
   setCreateProjectModal: (v: boolean) => void
   setConnectRepoModal: (v: boolean) => void
+  openProjectSettings: (projectId?: string | null) => void
+  closeProjectSettings: () => void
+  updateProject: (projectId: string, patch: Partial<Project>) => boolean
   setDragPanelId: (id: string | null) => void
   setPaletteDragging: (v: boolean) => void
   setTheme: (theme: ThemeMode) => void
@@ -115,7 +128,9 @@ interface PlaygroundState {
   switchProject: (id: string) => void
   openProject: (id: string) => void
   closeProjectTab: (id: string) => void
-  createProject: (name: string) => string | null
+  createProject: (
+    draft: import('@/data/createProjectDraft').CreateProjectDraft | string,
+  ) => string | null
   resetLayout: () => void
 
   activateTab: (groupId: string, panelId: PanelKey) => void
@@ -154,6 +169,10 @@ interface PlaygroundState {
   ) => void
 
   setCodeFile: (panelKey: PanelKey, file: string) => void
+  openCodeFile: (panelKey: PanelKey, filePath: string) => void
+  closeCodeFile: (panelKey: PanelKey, filePath: string) => void
+  setCodeFontSize: (panelKey: PanelKey, size: number) => void
+  toggleCodeFolder: (panelKey: PanelKey, folderPath: string) => void
   detachPanel: (panelId: PanelKey) => void
   reattachPanel: (panelId: PanelKey) => void
 }
@@ -171,12 +190,31 @@ function seedInstances(
   }
 }
 
+/** Expand top-level folders (and shallow parents) so the tree is usable on first open. */
+function defaultExpandedFolders(
+  files: { path: string }[] | undefined,
+): string[] {
+  if (!files?.length) return []
+  const dirs = new Set<string>()
+  for (const f of files) {
+    const parts = f.path.split('/').filter(Boolean)
+    if (parts.length > 1) dirs.add(parts[0])
+    // expand one more level when deeply nested so demos show content
+    if (parts.length > 2) dirs.add(parts.slice(0, 2).join('/'))
+  }
+  return [...dirs]
+}
+
+const CODE_FONT_MIN = 10
+const CODE_FONT_MAX = 22
+
 function buildDefaultLayout(
   nextGroupId: () => string,
   spawn: (type: PanelType, opts?: Partial<PanelInstanceState>) => PanelKey,
   ensure: (key: PanelKey, opts?: Partial<PanelInstanceState>) => void,
   projectId: string,
   chats?: ChatConversation[],
+  layoutMode: WorkspaceLayoutMode = 'standard',
 ): LayoutNode {
   const keys = seedInstances((t) => {
     const k = spawn(t)
@@ -195,7 +233,70 @@ function buildDefaultLayout(
       enabledMcps: DEFAULT_CHAT_MCPS,
       enabledSkills: DEFAULT_CHAT_SKILLS,
     })
-    ensure(keys.code, { file: p.files[0]?.name })
+    const first = p.files[0]?.path || p.files[0]?.name
+    ensure(keys.code, {
+      file: first,
+      openFiles: first ? [first] : [],
+      codeFontSize: 12,
+      expandedFolders: defaultExpandedFolders(p.files),
+    })
+  }
+
+  if (layoutMode === 'chat-first') {
+    return {
+      type: 'split',
+      direction: 'horizontal',
+      sizes: [55, 45],
+      children: [
+        {
+          type: 'group',
+          id: nextGroupId(),
+          tabs: [keys.chat],
+          active: keys.chat,
+        },
+        {
+          type: 'group',
+          id: nextGroupId(),
+          tabs: [keys.preview, keys.code, keys.terminal, keys.repository],
+          active: keys.preview,
+        },
+      ],
+    }
+  }
+
+  if (layoutMode === 'code-first') {
+    return {
+      type: 'split',
+      direction: 'horizontal',
+      sizes: [55, 45],
+      children: [
+        {
+          type: 'group',
+          id: nextGroupId(),
+          tabs: [keys.code, keys.repository, keys.knowledge],
+          active: keys.code,
+        },
+        {
+          type: 'split',
+          direction: 'vertical',
+          sizes: [60, 40],
+          children: [
+            {
+              type: 'group',
+              id: nextGroupId(),
+              tabs: [keys.preview, keys.chat],
+              active: keys.preview,
+            },
+            {
+              type: 'group',
+              id: nextGroupId(),
+              tabs: [keys.terminal],
+              active: keys.terminal,
+            },
+          ],
+        },
+      ],
+    }
   }
 
   return {
@@ -354,6 +455,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   openProjectModal: false,
   createProjectModal: false,
   connectRepoModal: false,
+  projectSettingsOpen: false,
+  projectSettingsProjectId: null,
   dragPanelId: null,
   detachedPanels: new Set(),
   theme: typeof document !== 'undefined' ? loadTheme() : 'light',
@@ -454,6 +557,28 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   setOpenProjectModal: (v) => set({ openProjectModal: v }),
   setCreateProjectModal: (v) => set({ createProjectModal: v }),
   setConnectRepoModal: (v) => set({ connectRepoModal: v }),
+
+  openProjectSettings: (projectId) => {
+    const id = projectId || get().currentProjectId
+    if (!id || !PROJECTS[id]) return
+    set({
+      projectSettingsOpen: true,
+      projectSettingsProjectId: id,
+    })
+  },
+
+  closeProjectSettings: () => {
+    set({ projectSettingsOpen: false, projectSettingsProjectId: null })
+  },
+
+  updateProject: (projectId, patch) => {
+    const updated = updateProjectInCatalog(projectId, patch)
+    if (!updated) return false
+    set({ catalogVersion: get().catalogVersion + 1 })
+    get().persist()
+    return true
+  },
+
   setDragPanelId: (id) => set({ dragPanelId: id }),
   setPaletteDragging: (v) => set({ paletteDragging: v }),
 
@@ -577,11 +702,38 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     }
   },
 
-  createProject: (name) => {
-    const trimmed = name.trim()
-    if (!trimmed) return null
-    const project = createBlankProject(trimmed)
+  createProject: (input) => {
+    let draft: CreateProjectDraft
+    if (typeof input === 'string') {
+      const trimmed = input.trim()
+      if (!trimmed) return null
+      draft = {
+        name: trimmed,
+        templateId: 'blank',
+        repos: [],
+        harnessIds: ['ai-sandbox'],
+        options: {
+          layout: 'standard',
+          includeSampleData: true,
+          environment: 'local',
+          visibility: 'private',
+          dockPalette: true,
+        },
+      }
+    } else {
+      if (!input.name.trim()) return null
+      draft = input
+    }
+
+    const project =
+      typeof input === 'string'
+        ? createBlankProject(input)
+        : createProjectFromDraft(draft)
     addProjectToCatalog(project)
+
+    // Seed chats for new project
+    get().ensureProjectChats(project.id)
+
     const layout = buildDefaultLayout(
       () => get().nextGroupId(),
       (t, o) => get().spawnPanelKey(t, o),
@@ -589,6 +741,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         get().ensureInstanceState(k, o)
       },
       project.id,
+      undefined,
+      project.layoutMode || draft.options.layout,
     )
     const s = get()
     const projectLayouts = { ...s.projectLayouts }
@@ -607,6 +761,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       catalogVersion: s.catalogVersion + 1,
       createProjectModal: false,
       openProjectModal: false,
+      paletteMode: draft.options.dockPalette ? s.paletteMode : s.paletteMode,
+      paletteVisible: draft.options.dockPalette ? true : s.paletteVisible,
     })
     get().persist()
     return project.id
@@ -682,7 +838,13 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       })
     }
     if (type === 'code') {
-      get().ensureInstanceState(key, { file: p?.files[0]?.name })
+      const first = p?.files[0]?.path || p?.files[0]?.name
+      get().ensureInstanceState(key, {
+        file: first,
+        openFiles: first ? [first] : [],
+        codeFontSize: 12,
+        expandedFolders: defaultExpandedFolders(p?.files),
+      })
     }
     const first = firstGroup(get().layout)
     if (first) {
@@ -1015,7 +1177,40 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   },
 
   setCodeFile: (panelKey, file) => {
-    get().ensureInstanceState(panelKey, { file })
+    get().openCodeFile(panelKey, file)
+  },
+
+  openCodeFile: (panelKey, filePath) => {
+    const st = get().instanceState[panelKey]
+    const open = st?.openFiles ? [...st.openFiles] : []
+    if (!open.includes(filePath)) open.push(filePath)
+    get().ensureInstanceState(panelKey, { file: filePath, openFiles: open })
+  },
+
+  closeCodeFile: (panelKey, filePath) => {
+    const st = get().instanceState[panelKey]
+    const open = (st?.openFiles || []).filter((f) => f !== filePath)
+    let active = st?.file
+    if (active === filePath) {
+      active = open[open.length - 1] || ''
+    }
+    get().ensureInstanceState(panelKey, {
+      file: active,
+      openFiles: open,
+    })
+  },
+
+  setCodeFontSize: (panelKey, size) => {
+    const clamped = Math.min(CODE_FONT_MAX, Math.max(CODE_FONT_MIN, Math.round(size)))
+    get().ensureInstanceState(panelKey, { codeFontSize: clamped })
+  },
+
+  toggleCodeFolder: (panelKey, folderPath) => {
+    const st = get().instanceState[panelKey]
+    const cur = new Set(st?.expandedFolders || [])
+    if (cur.has(folderPath)) cur.delete(folderPath)
+    else cur.add(folderPath)
+    get().ensureInstanceState(panelKey, { expandedFolders: [...cur] })
   },
 
   detachPanel: (panelId) => {

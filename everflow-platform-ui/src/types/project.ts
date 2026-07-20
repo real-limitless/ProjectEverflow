@@ -1,10 +1,27 @@
 import type { ChatConversation, ChatMessage } from './panels'
 
+export type RepoProvider = 'github' | 'gitlab' | 'other' | 'none'
+
 export interface ProjectRepo {
   id: string
   label: string
   active: boolean
+  url?: string
+  branch?: string
+  provider?: RepoProvider
 }
+
+export interface ProjectHarness {
+  id: string
+  label: string
+  enabled: boolean
+}
+
+export type WorkspaceLayoutMode = 'standard' | 'chat-first' | 'code-first'
+
+export type ProjectVisibility = 'private' | 'public'
+
+export type ProjectEnvironment = 'local' | 'staging' | 'production-stub'
 
 export interface ProjectConv {
   id: string
@@ -21,9 +38,32 @@ export interface ProjectFile {
   folder: string
 }
 
+/** Git working-tree status for a path (from Repository → Changes). */
+export type GitChangeStatus = 'M' | 'A' | 'D' | 'R' | 'U'
+
+export interface GitFileChange {
+  path: string
+  status: GitChangeStatus
+  /** Lines added vs base (e.g. HEAD) */
+  additions: number
+  /** Lines deleted vs base */
+  deletions: number
+  /** Optional unified diff preview for Repository panel */
+  diffPreview?: string
+  /** Display name override (defaults to basename of path) */
+  label?: string
+}
+
 export interface Project {
   id: string
   name: string
+  description?: string
+  slug?: string
+  templateId?: string
+  harnesses?: ProjectHarness[]
+  layoutMode?: WorkspaceLayoutMode
+  environment?: ProjectEnvironment
+  visibility?: ProjectVisibility
   repos: ProjectRepo[]
   convs: ProjectConv[]
   /** @deprecated Prefer per-conversation messages; kept for seed simplicity */
@@ -32,6 +72,8 @@ export interface Project {
   conversations?: ChatConversation[]
   files: ProjectFile[]
   code: Record<string, string>
+  /** Working-tree changes surfaced in Code tree + Repository panel */
+  gitChanges?: GitFileChange[]
   knowledgeFiles: { name: string; path: string }[]
   canvases: { name: string; desc: string }[]
   termLines: { cls: string; text: string }[]
