@@ -24,7 +24,15 @@ export function PanelHost({ panelKey }: PanelHostProps) {
 
   return (
     <div
-      style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}
+      className="panel-host"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: 0,
+        flex: 1,
+        overflow: 'hidden',
+      }}
       data-panel-content={panelKey}
     >
       {type === 'chat' && <ChatPanel panelKey={panelKey} />}

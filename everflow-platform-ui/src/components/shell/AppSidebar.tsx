@@ -17,10 +17,13 @@ export function AppSidebar() {
   const location = useLocation()
   const sidebarCollapsed = usePlaygroundStore((s) => s.sidebarCollapsed)
   const setSidebarCollapsed = usePlaygroundStore((s) => s.setSidebarCollapsed)
+  const isSidebarOpen = usePlaygroundStore((s) => s.isSidebarOpen)
   const paletteMode = usePlaygroundStore((s) => s.paletteMode)
+  const paletteDragging = usePlaygroundStore((s) => s.paletteDragging)
+  const slotEmpty = paletteMode !== 'docked' && !paletteDragging
 
   return (
-    <PageSidebar id="sidebar">
+    <PageSidebar id="sidebar" isSidebarOpen={isSidebarOpen}>
       <PageSidebarBody className="pg-sidebar-body-flex">
         <div className="pg-nav-wrap">
           <Nav className="pg-nav" aria-label="Global">
@@ -32,14 +35,31 @@ export function AppSidebar() {
                     ? location.pathname === '/' || location.pathname === ''
                     : location.pathname.startsWith(item.path)
                 return (
-                  <NavItem key={item.id} itemId={item.id} isActive={isActive}>
-                    <NavLink to={item.path} title={item.label}>
-                      <span className="pf-v6-c-nav__link-icon">
+                  <NavItem
+                    key={item.id}
+                    itemId={item.id}
+                    isActive={isActive}
+                    className="pg-nav-item"
+                  >
+                    <NavLink
+                      to={item.path}
+                      title={item.label}
+                      end={item.path === '/'}
+                      className={({ isActive: routeActive }) =>
+                        `pg-nav-link${routeActive || isActive ? ' is-active' : ''}`
+                      }
+                      aria-label={item.label}
+                    >
+                      <span className="pg-nav-icon" aria-hidden>
                         <Icon />
                       </span>
-                      <span className="pf-v6-c-nav__link-text">{item.label}</span>
+                      <span className="pf-v6-c-nav__link-text pg-nav-text">
+                        {item.label}
+                      </span>
                       {item.badge ? (
-                        <Badge isRead={false}>{item.badge}</Badge>
+                        <Badge isRead={false} className="pg-nav-badge">
+                          {item.badge}
+                        </Badge>
                       ) : null}
                     </NavLink>
                   </NavItem>
@@ -49,20 +69,35 @@ export function AppSidebar() {
           </Nav>
         </div>
         <div
-          className={`nav-palette-slot${paletteMode === 'docked' ? '' : ' is-empty'}`}
+          className={`nav-palette-slot${slotEmpty ? ' is-empty' : ''}${paletteDragging ? ' is-dragging-palette' : ''}`}
           id="navPaletteSlot"
-          title="Dock panel tray here"
-        />
+          title="Drop panel tray here"
+        >
+          {paletteDragging ? (
+            <div className="nav-palette-drop-hint" aria-hidden>
+              Drop panel tray here
+            </div>
+          ) : null}
+        </div>
         <div className="pg-sidebar-footer">
           <Button
             className="pg-collapse-btn"
             variant="plain"
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={
+              sidebarCollapsed
+                ? 'Expand sidebar labels'
+                : 'Collapse to icons only'
+            }
+            aria-label={
+              sidebarCollapsed
+                ? 'Expand sidebar labels'
+                : 'Collapse to icons only'
+            }
           >
             {sidebarCollapsed ? <AngleRightIcon /> : <AngleLeftIcon />}
             <span className="pg-collapse-label">
-              {sidebarCollapsed ? 'Expand' : 'Collapse'}
+              {sidebarCollapsed ? 'Expand' : 'Icons only'}
             </span>
           </Button>
         </div>

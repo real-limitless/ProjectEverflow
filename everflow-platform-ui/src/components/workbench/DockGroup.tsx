@@ -1,5 +1,6 @@
 import { Button } from '@patternfly/react-core'
 import type { GroupNode } from '@/types/dock'
+import { beginPanelDrag, endPanelDrag } from '@/lib/panelDrag'
 import { panelMetaOf } from '@/lib/panelIds'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { DropOverlay } from './DropOverlay'
@@ -14,15 +15,14 @@ export function DockGroup({ node }: DockGroupProps) {
   const closePanel = usePlaygroundStore((s) => s.closePanel)
   const duplicatePanel = usePlaygroundStore((s) => s.duplicatePanel)
   const detachPanel = usePlaygroundStore((s) => s.detachPanel)
-  const setDragPanelId = usePlaygroundStore((s) => s.setDragPanelId)
   const panelTabLabel = usePlaygroundStore((s) => s.panelTabLabel)
-  const dragPanelId = usePlaygroundStore((s) => s.dragPanelId)
+  const setPaletteVisible = usePlaygroundStore((s) => s.setPaletteVisible)
 
   const empty = node.tabs.length === 0
 
   return (
     <div
-      className={`dock-group${empty ? ' empty-drop' : ''}${dragPanelId ? ' drop-target' : ''}`}
+      className={`dock-group${empty ? ' empty-drop' : ''}`}
       data-group-id={node.id}
     >
       <div className="tab-bar">
@@ -34,7 +34,7 @@ export function DockGroup({ node }: DockGroupProps) {
             return (
               <div
                 key={pid}
-                className={`panel-tab${active ? ' active' : ''}${dragPanelId === pid ? ' dragging' : ''}`}
+                className={`panel-tab${active ? ' active' : ''}`}
                 draggable
                 title={panelTabLabel(pid)}
                 onClick={(e) => {
@@ -42,11 +42,16 @@ export function DockGroup({ node }: DockGroupProps) {
                   activateTab(node.id, pid)
                 }}
                 onDragStart={(e) => {
-                  setDragPanelId(pid)
+                  // Do NOT set React state here — re-render cancels HTML5 drag
+                  beginPanelDrag(pid)
                   e.dataTransfer.setData('text/panel-id', pid)
                   e.dataTransfer.effectAllowed = 'move'
+                  e.currentTarget.classList.add('dragging')
                 }}
-                onDragEnd={() => setDragPanelId(null)}
+                onDragEnd={(e) => {
+                  e.currentTarget.classList.remove('dragging')
+                  endPanelDrag()
+                }}
               >
                 <span className="tab-icon">{meta.icon}</span>
                 <span className="tab-label-text">{panelTabLabel(pid)}</span>
@@ -76,10 +81,11 @@ export function DockGroup({ node }: DockGroupProps) {
                   <button
                     type="button"
                     data-act="close"
-                    title="Close"
+                    title="Close panel (reopen from Panels tray)"
                     onClick={(e) => {
                       e.stopPropagation()
                       closePanel(pid)
+                      setPaletteVisible(true)
                     }}
                   >
                     ×
@@ -109,7 +115,7 @@ export function DockGroup({ node }: DockGroupProps) {
           <div className="empty-group">
             Drop a panel here
             <br />
-            <span style={{ fontSize: 11, opacity: 0.7 }}>or use the tray below</span>
+            <span style={{ fontSize: 11, opacity: 0.7 }}>or use the Panels tray</span>
           </div>
         ) : (
           <div className="empty-group">Select a tab</div>

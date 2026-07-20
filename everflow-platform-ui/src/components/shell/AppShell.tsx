@@ -1,5 +1,5 @@
 import { Page } from '@patternfly/react-core'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { OpenProjectModal } from '@/components/modals/OpenProjectModal'
 import { ConnectRepoModal } from '@/components/modals/ConnectRepoModal'
@@ -12,7 +12,12 @@ interface AppShellProps {
 }
 
 export function AppShell({ detached = false }: AppShellProps) {
+  const location = useLocation()
   const sidebarCollapsed = usePlaygroundStore((s) => s.sidebarCollapsed)
+  const isSidebarOpen = usePlaygroundStore((s) => s.isSidebarOpen)
+
+  const isPlayground =
+    location.pathname === '/' || location.pathname === ''
 
   if (detached) {
     return (
@@ -25,15 +30,16 @@ export function AppShell({ detached = false }: AppShellProps) {
   return (
     <>
       <Page
-        className="pg-shell"
+        className={`pg-shell ${isPlayground ? 'pg-shell--playground' : 'pg-shell--standard'}`}
         masthead={<AppMasthead />}
         sidebar={<AppSidebar />}
-        isManagedSidebar
-        data-collapsed={sidebarCollapsed ? 'true' : 'false'}
+        mainContainerId="main-content"
+        data-collapsed={sidebarCollapsed && isSidebarOpen ? 'true' : 'false'}
+        data-sidebar-open={isSidebarOpen ? 'true' : 'false'}
       >
         <Outlet />
       </Page>
-      <PanelPalette />
+      {isPlayground ? <PanelPalette /> : null}
       <OpenProjectModal />
       <ConnectRepoModal />
     </>

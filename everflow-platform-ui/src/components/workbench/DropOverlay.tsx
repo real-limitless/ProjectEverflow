@@ -1,4 +1,5 @@
 import type { DropEdge } from '@/types/dock'
+import { endPanelDrag, getDraggingPanelId } from '@/lib/panelDrag'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 const ZONES: DropEdge[] = ['left', 'right', 'top', 'bottom', 'center']
@@ -9,7 +10,6 @@ interface DropOverlayProps {
 
 export function DropOverlay({ groupId }: DropOverlayProps) {
   const dropPanel = usePlaygroundStore((s) => s.dropPanel)
-  const dragPanelId = usePlaygroundStore((s) => s.dragPanelId)
 
   return (
     <div className="drop-overlay">
@@ -33,7 +33,8 @@ export function DropOverlay({ groupId }: DropOverlayProps) {
             e.preventDefault()
             e.currentTarget.classList.remove('hot')
             const panelId =
-              e.dataTransfer.getData('text/panel-id') || dragPanelId
+              e.dataTransfer.getData('text/panel-id') || getDraggingPanelId()
+            endPanelDrag()
             if (!panelId) return
             dropPanel(panelId, groupId, z)
           }}
