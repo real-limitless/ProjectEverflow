@@ -1,84 +1,36 @@
 import { useEffect, useState } from 'react'
-import {
-  Button,
-  Form,
-  FormGroup,
-  Modal,
-  ModalBody,
-  ModalFooter,
-  ModalHeader,
-  ModalVariant,
-  TextInput,
-} from '@patternfly/react-core'
+import { Modal, ModalBody, ModalVariant } from '@patternfly/react-core'
 import { usePlaygroundStore } from '@/store/playgroundStore'
+import { CreateProjectWizard } from './create-project/CreateProjectWizard'
 
 export function CreateProjectModal() {
   const isOpen = usePlaygroundStore((s) => s.createProjectModal)
   const setOpen = usePlaygroundStore((s) => s.setCreateProjectModal)
-  const createProject = usePlaygroundStore((s) => s.createProject)
-  const [name, setName] = useState('')
-  const [error, setError] = useState('')
+  // Remount wizard when opened so draft resets
+  const [instance, setInstance] = useState(0)
 
   useEffect(() => {
-    if (isOpen) {
-      setName('')
-      setError('')
-    }
+    if (isOpen) setInstance((n) => n + 1)
   }, [isOpen])
-
-  const submit = () => {
-    const trimmed = name.trim()
-    if (!trimmed) {
-      setError('Enter a project name')
-      return
-    }
-    const id = createProject(trimmed)
-    if (!id) setError('Could not create project')
-  }
 
   return (
     <Modal
-      variant={ModalVariant.small}
+      variant={ModalVariant.large}
       isOpen={isOpen}
-      onClose={() => setOpen(false)}
-      aria-labelledby="createProjectModalTitle"
+      // WizardHeader provides the close control; omit onClose so PF does not
+      // also render .pf-v6-c-modal-box__close (duplicate X).
+      onEscapePress={() => setOpen(false)}
+      aria-label="Create project wizard"
+      className="create-project-modal"
     >
-      <ModalHeader title="Create project" labelId="createProjectModalTitle" />
-      <ModalBody>
-        <Form
-          onSubmit={(e) => {
-            e.preventDefault()
-            submit()
-          }}
-        >
-          <FormGroup label="Project name" isRequired fieldId="create-project-name">
-            <TextInput
-              id="create-project-name"
-              value={name}
-              onChange={(_e, v) => {
-                setName(v)
-                if (error) setError('')
-              }}
-              placeholder="e.g. My app"
-              autoFocus
-              validated={error ? 'error' : 'default'}
-            />
-            {error ? (
-              <div className="pf-v6-c-form__helper-text pf-m-error" style={{ marginTop: 6 }}>
-                {error}
-              </div>
-            ) : null}
-          </FormGroup>
-        </Form>
+      <ModalBody className="create-project-modal-body">
+        {isOpen ? (
+          <CreateProjectWizard
+            key={instance}
+            onClose={() => setOpen(false)}
+          />
+        ) : null}
       </ModalBody>
-      <ModalFooter>
-        <Button variant="primary" onClick={submit}>
-          Create
-        </Button>
-        <Button variant="link" onClick={() => setOpen(false)}>
-          Cancel
-        </Button>
-      </ModalFooter>
     </Modal>
   )
 }

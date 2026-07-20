@@ -18,6 +18,393 @@ body,
   overflow: hidden;
 }
 
+/* —— Open project browser modal —— */
+.open-project-modal .pf-v6-c-modal-box__body {
+  min-height: 20rem;
+}
+
+.open-project-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  min-height: 18rem;
+}
+
+.open-project-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.open-project-search {
+  width: 100%;
+}
+
+.open-project-filters {
+  flex-wrap: wrap;
+}
+
+.open-project-meta {
+  font-size: 0.8rem;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.open-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: min(50vh, 22rem);
+  overflow: auto;
+  padding: 0.15rem;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: var(--pf-t--global--border--radius--medium, 8px);
+  background: var(--pf-t--global--background--color--secondary--default);
+}
+
+.open-project-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
+  width: 100%;
+  text-align: start;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0.65rem 0.75rem;
+  background: var(--pf-t--global--background--color--primary--default);
+  color: inherit;
+  cursor: pointer;
+}
+
+.open-project-row:hover {
+  border-color: var(--pf-t--global--border--color--default);
+  background: color-mix(
+    in srgb,
+    var(--pf-t--global--color--brand--default) 4%,
+    var(--pf-t--global--background--color--primary--default)
+  );
+}
+
+.open-project-row.is-selected {
+  border-color: var(--pf-t--global--border--color--brand--default);
+  box-shadow: inset 0 0 0 1px var(--pf-t--global--border--color--brand--default);
+  background: color-mix(
+    in srgb,
+    var(--pf-t--global--color--brand--default) 8%,
+    var(--pf-t--global--background--color--primary--default)
+  );
+}
+
+.open-project-row-icon {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 6px;
+  color: var(--pf-t--global--color--brand--default);
+  background: color-mix(
+    in srgb,
+    var(--pf-t--global--color--brand--default) 12%,
+    transparent
+  );
+  flex-shrink: 0;
+}
+
+.open-project-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.open-project-row-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.open-project-row-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.open-project-row-sub {
+  font-size: 0.8rem;
+  color: var(--pf-t--global--text--color--subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.open-project-row-slug {
+  font-family: var(--pf-t--global--font--family--mono, ui-monospace, monospace);
+  font-size: 0.78rem;
+}
+
+.open-project-row-desc {
+  opacity: 0.9;
+}
+
+.open-project-row-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.open-project-chip {
+  font-size: 0.75rem;
+  color: var(--pf-t--global--text--color--subtle);
+  white-space: nowrap;
+}
+
+.open-project-stats {
+  font-size: 0.72rem;
+  color: var(--pf-t--global--text--color--subtle);
+  white-space: nowrap;
+}
+
+.open-project-empty-filter {
+  margin-block: 1.5rem;
+}
+
+@media (max-width: 640px) {
+  .open-project-row {
+    grid-template-columns: auto 1fr;
+  }
+  .open-project-row-meta {
+    grid-column: 2;
+    align-items: flex-start;
+  }
+}
+
+/* —— Create project wizard modal —— */
+.create-project-modal.pf-v6-c-modal-box,
+.create-project-modal .pf-v6-c-modal-box {
+  /* Prefer a taller dialog so step forms need less inner scrolling */
+  max-height: min(92vh, 56rem);
+}
+
+.create-project-modal .pf-v6-c-modal-box__body,
+.create-project-modal-body {
+  padding: 0 !important;
+  overflow: hidden;
+  /* Let the wizard define vertical space instead of a short fixed body */
+  max-height: none;
+}
+
+.create-project-modal .pf-v6-c-wizard {
+  --pf-v6-c-wizard__nav--Width: 12rem;
+  min-height: min(78vh, 52rem);
+  height: min(78vh, 52rem);
+}
+
+.create-wizard-lead {
+  margin: 0 0 1rem;
+  color: var(--pf-t--global--text--color--subtle);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.create-wizard-form {
+  max-width: 36rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.create-wizard-help.is-error {
+  color: var(--pf-t--global--text--color--status--danger--default);
+}
+
+.create-wizard-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
+  gap: 0.65rem;
+}
+
+.create-wizard-template-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  text-align: start;
+  padding: 0.85rem 0.9rem;
+  border-radius: var(--pf-t--global--border--radius--medium, 8px);
+  border: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--primary--default);
+  color: inherit;
+  cursor: pointer;
+  min-height: 7.5rem;
+}
+
+.create-wizard-template-card:hover {
+  border-color: var(--pf-t--global--border--color--brand--default);
+}
+
+.create-wizard-template-card.is-selected {
+  border-color: var(--pf-t--global--border--color--brand--default);
+  box-shadow: inset 0 0 0 1px var(--pf-t--global--border--color--brand--default);
+  background: color-mix(
+    in srgb,
+    var(--pf-t--global--color--brand--default) 8%,
+    transparent
+  );
+}
+
+.create-wizard-template-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.create-wizard-template-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.create-wizard-template-desc {
+  font-size: 0.75rem;
+  color: var(--pf-t--global--text--color--subtle);
+  line-height: 1.35;
+}
+
+.create-wizard-repo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.create-wizard-empty-hint {
+  color: var(--pf-t--global--text--color--subtle);
+  font-size: 0.9rem;
+}
+
+.create-wizard-repo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.create-wizard-repo-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1.6fr 0.7fr auto auto;
+  gap: 0.5rem;
+  align-items: end;
+  padding: 0.65rem;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 6px;
+}
+
+.create-wizard-primary {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  padding-bottom: 0.4rem;
+}
+
+/* —— Project settings modal —— */
+.project-settings-modal .project-settings-tabs {
+  margin-block-end: 1rem;
+}
+
+.project-settings-body {
+  min-height: 16rem;
+  max-height: min(60vh, 28rem);
+  overflow-y: auto;
+  padding-inline-end: 0.15rem;
+}
+
+/* Project tab context menu */
+.project-tab-context-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 11rem;
+  padding: 0.25rem;
+  border-radius: var(--pf-t--global--border--radius--medium, 6px);
+  border: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--primary--default);
+  box-shadow: var(
+    --pf-t--global--box-shadow--md,
+    0 4px 12px rgba(0, 0, 0, 0.15)
+  );
+}
+
+.project-tab-context-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--pf-t--global--text--color--regular);
+  font-size: 0.85rem;
+  padding: 0.4rem 0.65rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.project-tab-context-item:hover {
+  background: var(--pf-t--global--background--color--action--plain--hover);
+}
+
+.project-tab-context-sep {
+  height: 1px;
+  margin: 0.25rem 0.35rem;
+  background: var(--pf-t--global--border--color--default);
+}
+
+.create-wizard-harness-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.create-wizard-harness-item {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 6px;
+}
+
+.create-wizard-harness-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.create-wizard-harness-meta {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pf-t--global--text--color--subtle);
+  font-weight: 600;
+}
+
+.create-wizard-error {
+  margin-top: 1rem;
+  color: var(--pf-t--global--text--color--status--danger--default);
+  font-size: 0.9rem;
+}
+
+.create-wizard-review .pf-v6-c-description-list {
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 700px) {
+  .create-wizard-repo-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .pg-main-workbench--empty {
   align-items: center;
   justify-content: center;
@@ -672,8 +1059,8 @@ body,
 
 /* Preview multi-service toolbar */
 .preview-toolbar {
-  flex-direction: column;
-  align-items: stretch !important;
+  flex-direction: row;
+  align-items: center !important;
   gap: 0.5rem;
 }
 
@@ -683,6 +1070,7 @@ body,
   align-items: center;
   width: 100%;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .preview-service-toggle {
@@ -690,9 +1078,23 @@ body,
   flex-shrink: 0;
 }
 
+/* Device tabs sit in the address-bar row; stay compact so path field can grow */
+.preview-device-tabs {
+  flex-shrink: 0;
+}
+
+.preview-device-tabs.panel-pf-tabs,
+.preview-toolbar .preview-device-tabs,
+.panel-toolbar .preview-device-tabs {
+  margin: 0;
+  flex: 0 0 auto;
+  min-width: 0;
+  background: transparent;
+}
+
 .preview-address-group {
   flex: 1;
-  min-width: 0;
+  min-width: 6rem;
 }
 
 .preview-code-block {
@@ -706,7 +1108,8 @@ body,
   white-space: pre-wrap;
 }
 
-.project-tabs-actions .pg-add-project {
+.project-tabs-actions .pg-add-project,
+.project-tabs-actions .pg-project-settings {
   min-width: 2rem;
   height: 2rem;
   padding: 0;
@@ -716,9 +1119,15 @@ body,
   color: var(--pf-t--global--text--color--subtle);
 }
 
-.project-tabs-actions .pg-add-project:hover {
+.project-tabs-actions .pg-add-project:hover,
+.project-tabs-actions .pg-project-settings:hover {
   color: var(--pf-t--global--text--color--regular);
   background: var(--pf-t--global--background--color--action--plain--hover);
+}
+
+.project-tabs-actions .pg-project-settings:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .pg-sidebar-body-flex {
@@ -1370,7 +1779,18 @@ button.panel-palette-chip.is-visible {
 .preview-frame {
   display: flex;
   justify-content: center;
+  align-items: flex-start;
   background: var(--pf-t--global--background--color--secondary--default);
+  min-height: 0;
+  flex: 1;
+}
+
+/* Full-tab open webpage viewer — no device chrome, edge to edge */
+.preview-frame.preview-frame-full {
+  justify-content: stretch;
+  align-items: stretch;
+  background: var(--pf-t--global--background--color--primary--default);
+  padding: 0;
 }
 
 .preview-device {
@@ -1382,46 +1802,61 @@ button.panel-palette-chip.is-visible {
   overflow: hidden;
   background: var(--pf-t--global--background--color--primary--default);
   box-shadow: var(--pf-t--global--box-shadow--sm);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  transition: max-width 0.2s ease;
+}
+
+.preview-device.full {
+  max-width: none;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  height: 100%;
+  flex: 1;
+}
+
+.preview-device.desktop {
+  max-width: 960px;
 }
 
 .preview-device.tablet {
   max-width: 720px;
 }
+
 .preview-device.mobile {
   max-width: 380px;
 }
 
+/* Minimal path strip for framed device modes only (no Mac traffic-light chrome) */
 .preview-chrome {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.4rem 0.65rem;
+  padding: 0.35rem 0.65rem;
   background: var(--pf-t--global--background--color--secondary--default);
   border-block-end: 1px solid var(--pf-t--global--border--color--default);
   font-size: 0.7rem;
+  flex-shrink: 0;
 }
 
-.preview-chrome .dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-}
-.preview-chrome .dot.r {
-  background: #ef4444;
-}
-.preview-chrome .dot.y {
-  background: #eab308;
-}
-.preview-chrome .dot.g {
-  background: #22c55e;
-}
 .preview-chrome .url {
-  margin-inline-start: 0.5rem;
   color: var(--pf-t--global--text--color--subtle);
   font-family: var(--pg-mono, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .preview-body {
+  padding: 1.5rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.preview-device.full .preview-body {
   padding: 1.5rem;
 }
 
