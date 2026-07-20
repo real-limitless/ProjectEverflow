@@ -1,6 +1,13 @@
 import { create } from 'zustand'
 import { PANEL_META } from '@/data/panelMeta'
-import { PROJECTS } from '@/data/projects'
+import {
+  PROJECTS,
+  addProjectToCatalog,
+  createBlankProject,
+  getProject,
+  listUserCreatedProjects,
+  mergeUserProjects,
+} from '@/data/projects'
 import {
   addPanelToGroup,
   addTabToGroup,
@@ -14,7 +21,7 @@ import {
   setSizesAtPath,
   splitGroup,
 } from '@/lib/dockTree'
-import { loadPersisted, savePersisted } from '@/lib/layoutPersist'
+import { emptyGroup, loadPersisted, savePersisted } from '@/lib/layoutPersist'
 import {
   applyThemeClass,
   deleteNamedLayout as deleteNamedLayoutStorage,
@@ -30,18 +37,38 @@ import type { DropEdge, LayoutNode } from '@/types/dock'
 import type { PanelInstanceState, PanelKey, PanelType } from '@/types/panels'
 import type { PaletteMode } from '@/types/project'
 import {
+  DEFAULT_CHAT_AGENTS,
   DEFAULT_CHAT_MCPS,
   DEFAULT_CHAT_MODEL,
+  DEFAULT_CHAT_MODE,
   DEFAULT_CHAT_SKILLS,
   DEFAULT_CHAT_TOOLS,
+  agentById,
 } from '@/data/chatCatalog'
+import {
+  cloneConversations,
+  demoAssistantReply,
+  emptyConversation,
+  findConversation,
+  seedProjectConversations,
+  sortConversations,
+  syncPanelFromConversation,
+  updateConvMetrics,
+  deriveTitleFromMessages,
+  newMessageId,
+  cloneMessages,
+} from '@/lib/chatConversation'
+import type { ChatConversation, ChatMessage, ChatMode } from '@/types/panels'
 
 interface PlaygroundState {
   openProjectIds: string[]
-  currentProjectId: string
+  /** null when no project tab is open */
+  currentProjectId: string | null
   layout: LayoutNode
   projectLayouts: Record<string, LayoutNode>
   instanceState: Record<string, PanelInstanceState>
+  /** Working copy of conversations per project (mutable demo state) */
+  projectChats: Record<string, ChatConversation[]>
   groupIdSeq: number
   instanceSeq: number
   sidebarCollapsed: boolean
@@ -50,11 +77,14 @@ interface PlaygroundState {
   palettePos: { x: number; y: number }
   paletteVisible: boolean
   openProjectModal: boolean
+  createProjectModal: boolean
   connectRepoModal: boolean
   dragPanelId: string | null
   detachedPanels: Set<string>
   theme: ThemeMode
   paletteDragging: boolean
+  /** Bumps when catalog gains a user-created project (forces UI refresh) */
+  catalogVersion: number
 
   // derived helpers exposed as methods
   nextGroupId: () => string
@@ -71,6 +101,7 @@ interface PlaygroundState {
   setPalettePos: (pos: { x: number; y: number }) => void
   setPaletteVisible: (v: boolean) => void
   setOpenProjectModal: (v: boolean) => void
+  setCreateProjectModal: (v: boolean) => void
   setConnectRepoModal: (v: boolean) => void
   setDragPanelId: (id: string | null) => void
   setPaletteDragging: (v: boolean) => void
@@ -84,6 +115,7 @@ interface PlaygroundState {
   switchProject: (id: string) => void
   openProject: (id: string) => void
   closeProjectTab: (id: string) => void
+  createProject: (name: string) => string | null
   resetLayout: () => void
 
   activateTab: (groupId: string, panelId: PanelKey) => void
@@ -98,8 +130,29 @@ interface PlaygroundState {
   ) => void
   resizeSplit: (pathToSplit: number[], sizes: number[]) => void
   setActiveRepo: (repoId: string) => void
+
+  ensureProjectChats: (projectId: string | null | undefined) => ChatConversation[]
+  getConversations: (projectId?: string | null) => ChatConversation[]
+  getActiveConversation: (panelKey: PanelKey) => ChatConversation | undefined
   appendChatMessage: (panelKey: PanelKey, text: string) => void
   setChatConv: (panelKey: PanelKey, convId: string) => void
+  newChatConversation: (panelKey: PanelKey) => void
+  renameConversation: (projectId: string, convId: string, title: string) => void
+  deleteConversation: (projectId: string, convId: string, panelKey?: PanelKey) => void
+  pinConversation: (projectId: string, convId: string, pinned?: boolean) => void
+  aiTitleConversation: (projectId: string, convId: string) => void
+  forkConversation: (panelKey: PanelKey, fromMessageId: string) => void
+  editUserMessage: (panelKey: PanelKey, messageId: string, text: string) => void
+  retryAssistantMessage: (panelKey: PanelKey, messageId: string) => void
+  setChatMode: (panelKey: PanelKey, mode: ChatMode) => void
+  setConversationAgents: (panelKey: PanelKey, agentIds: string[]) => void
+  updateConversationMessages: (
+    projectId: string,
+    convId: string,
+    messages: ChatMessage[],
+    lastAssistant?: ChatMessage,
+  ) => void
+
   setCodeFile: (panelKey: PanelKey, file: string) => void
   detachPanel: (panelId: PanelKey) => void
   reattachPanel: (panelId: PanelKey) => void
@@ -123,19 +176,24 @@ function buildDefaultLayout(
   spawn: (type: PanelType, opts?: Partial<PanelInstanceState>) => PanelKey,
   ensure: (key: PanelKey, opts?: Partial<PanelInstanceState>) => void,
   projectId: string,
+  chats?: ChatConversation[],
 ): LayoutNode {
   const keys = seedInstances((t) => {
     const k = spawn(t)
     ensure(k)
     return k
   })
-  // seed chat with project messages
+  // seed chat with project conversations
   const p = PROJECTS[projectId]
-  if (p) {
+  const convList = chats?.length ? chats : seedProjectConversations(projectId)
+  const primary = convList[0]
+  if (p && primary) {
     ensure(keys.chat, {
-      convId: p.convs[0]?.id,
-      title: p.convs[0]?.title,
-      messages: JSON.parse(JSON.stringify(p.messages)) as PanelInstanceState['messages'],
+      ...syncPanelFromConversation(primary),
+      model: DEFAULT_CHAT_MODEL,
+      enabledTools: DEFAULT_CHAT_TOOLS,
+      enabledMcps: DEFAULT_CHAT_MCPS,
+      enabledSkills: DEFAULT_CHAT_SKILLS,
     })
     ensure(keys.code, { file: p.files[0]?.name })
   }
@@ -178,6 +236,7 @@ function createInitial() {
   let groupIdSeq = 1
   let instanceSeq = 1
   const instanceState: Record<string, PanelInstanceState> = {}
+  const projectChats: Record<string, ChatConversation[]> = {}
 
   const nextGroupId = () => `g${groupIdSeq++}`
   const spawnPanelKey = (type: PanelType, opts: Partial<PanelInstanceState> = {}): PanelKey => {
@@ -195,47 +254,92 @@ function createInitial() {
     return instanceState[key]
   }
 
-  const openProjectIds = ['aura', 'callour']
-  const currentProjectId = 'aura'
+  const defaultOpenIds = ['aura', 'callour']
+  const defaultCurrentId = 'aura'
+  projectChats[defaultCurrentId] = seedProjectConversations(defaultCurrentId)
   const projectLayouts: Record<string, LayoutNode> = {}
   const layout = buildDefaultLayout(
     nextGroupId,
     spawnPanelKey,
     ensureInstanceState,
-    currentProjectId,
+    defaultCurrentId,
+    projectChats[defaultCurrentId],
   )
-  projectLayouts[currentProjectId] = cloneLayout(layout)
+  projectLayouts[defaultCurrentId] = cloneLayout(layout)
 
   const persisted = loadPersisted()
   if (persisted) {
-    const ids = (persisted.openProjectIds || openProjectIds).filter((id) => PROJECTS[id])
+    // Restore user-created projects before validating open ids
+    mergeUserProjects(persisted.userProjects)
+
+    const rawOpen = Array.isArray(persisted.openProjectIds)
+      ? persisted.openProjectIds
+      : defaultOpenIds
+    // Preserve empty list when user closed all projects
+    const ids = rawOpen.filter((id) => PROJECTS[id])
+    const persistedCurrent = persisted.currentProjectId
+    const currentProjectId =
+      persistedCurrent && PROJECTS[persistedCurrent] && ids.includes(persistedCurrent)
+        ? persistedCurrent
+        : ids[0] ?? null
+
+    if (currentProjectId) {
+      projectChats[currentProjectId] = seedProjectConversations(currentProjectId)
+    }
+
+    let nextLayout = emptyGroup('g-empty')
+    if (currentProjectId) {
+      nextLayout = persisted.projectLayouts[currentProjectId]
+        ? cloneLayout(persisted.projectLayouts[currentProjectId])
+        : buildDefaultLayout(
+            nextGroupId,
+            spawnPanelKey,
+            ensureInstanceState,
+            currentProjectId,
+            projectChats[currentProjectId],
+          )
+    }
+
+    // Refresh chat instance messages from seeds when present
+    const restoredState = { ...(persisted.instanceState || instanceState) }
+    if (currentProjectId && projectChats[currentProjectId]?.[0]) {
+      for (const [key, st] of Object.entries(restoredState)) {
+        if (st.type === 'chat' || key.startsWith('chat:')) {
+          const conv =
+            findConversation(projectChats[currentProjectId], st.convId) ||
+            projectChats[currentProjectId][0]
+          Object.assign(st, syncPanelFromConversation(conv))
+        }
+      }
+    }
+
     return {
-      openProjectIds: ids.length ? ids : openProjectIds,
-      currentProjectId: PROJECTS[persisted.currentProjectId]
-        ? persisted.currentProjectId
-        : ids[0] || currentProjectId,
-      layout: persisted.projectLayouts[persisted.currentProjectId]
-        ? cloneLayout(persisted.projectLayouts[persisted.currentProjectId])
-        : layout,
-      projectLayouts: persisted.projectLayouts,
-      instanceState: persisted.instanceState || instanceState,
+      openProjectIds: ids,
+      currentProjectId,
+      layout: nextLayout,
+      projectLayouts: { ...projectLayouts, ...persisted.projectLayouts },
+      instanceState: restoredState,
+      projectChats,
       groupIdSeq: persisted.groupIdSeq || groupIdSeq,
       instanceSeq: persisted.instanceSeq || instanceSeq,
       paletteMode: persisted.paletteMode || ('float' as PaletteMode),
       palettePos: persisted.palettePos || { x: 24, y: window.innerHeight - 160 },
+      catalogVersion: 0,
     }
   }
 
   return {
-    openProjectIds,
-    currentProjectId,
+    openProjectIds: defaultOpenIds,
+    currentProjectId: defaultCurrentId,
     layout,
     projectLayouts,
     instanceState,
+    projectChats,
     groupIdSeq,
     instanceSeq,
     paletteMode: 'float' as PaletteMode,
     palettePos: { x: 24, y: typeof window !== 'undefined' ? window.innerHeight - 160 : 600 },
+    catalogVersion: 0,
   }
 }
 
@@ -243,10 +347,12 @@ const initial = createInitial()
 
 export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   ...initial,
+  projectChats: initial.projectChats || {},
   sidebarCollapsed: false,
   isSidebarOpen: true,
   paletteVisible: true,
   openProjectModal: false,
+  createProjectModal: false,
   connectRepoModal: false,
   dragPanelId: null,
   detachedPanels: new Set(),
@@ -316,9 +422,9 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   persist: () => {
     const s = get()
-    const projectLayouts = {
-      ...s.projectLayouts,
-      [s.currentProjectId]: cloneLayout(s.layout),
+    const projectLayouts = { ...s.projectLayouts }
+    if (s.currentProjectId) {
+      projectLayouts[s.currentProjectId] = cloneLayout(s.layout)
     }
     set({ projectLayouts })
     savePersisted({
@@ -330,6 +436,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       projectLayouts,
       paletteMode: s.paletteMode,
       palettePos: s.palettePos,
+      userProjects: listUserCreatedProjects(),
     })
   },
 
@@ -345,6 +452,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   },
   setPaletteVisible: (v) => set({ paletteVisible: v }),
   setOpenProjectModal: (v) => set({ openProjectModal: v }),
+  setCreateProjectModal: (v) => set({ createProjectModal: v }),
   setConnectRepoModal: (v) => set({ connectRepoModal: v }),
   setDragPanelId: (id) => set({ dragPanelId: id }),
   setPaletteDragging: (v) => set({ paletteDragging: v }),
@@ -362,7 +470,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   saveNamedLayout: (name) => {
     const s = get()
     const trimmed = name.trim()
-    if (!trimmed) return
+    if (!trimmed || !s.currentProjectId) return
     persistNamedLayout({
       id: `nl-${Date.now()}`,
       name: trimmed,
@@ -398,13 +506,23 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   deleteNamedLayout: (id) => deleteNamedLayoutStorage(id),
 
   switchProject: (id) => {
-    if (!PROJECTS[id]) return
+    if (!getProject(id)) return
     const s = get()
     if (id === s.currentProjectId) return
-    const projectLayouts = {
-      ...s.projectLayouts,
-      [s.currentProjectId]: cloneLayout(s.layout),
+    const projectLayouts = { ...s.projectLayouts }
+    if (s.currentProjectId) {
+      projectLayouts[s.currentProjectId] = cloneLayout(s.layout)
     }
+    // Ensure conversations for target project exist before layout seed
+    if (!s.projectChats[id]?.length) {
+      set({
+        projectChats: {
+          ...get().projectChats,
+          [id]: seedProjectConversations(id),
+        },
+      })
+    }
+    const chats = get().projectChats[id]
     let layout = projectLayouts[id]
     if (!layout) {
       layout = buildDefaultLayout(
@@ -414,6 +532,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
           get().ensureInstanceState(k, o)
         },
         id,
+        chats,
       )
       projectLayouts[id] = cloneLayout(layout)
     } else {
@@ -428,25 +547,74 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   openProject: (id) => {
     get().switchProject(id)
-    set({ openProjectModal: false })
+    set({ openProjectModal: false, createProjectModal: false })
   },
 
   closeProjectTab: (id) => {
     const s = get()
-    if (s.openProjectIds.length <= 1) return
+    const projectLayouts = { ...s.projectLayouts }
+    if (s.currentProjectId) {
+      projectLayouts[s.currentProjectId] = cloneLayout(s.layout)
+    }
     const openProjectIds = s.openProjectIds.filter((x) => x !== id)
+    if (openProjectIds.length === 0) {
+      set({
+        openProjectIds: [],
+        currentProjectId: null,
+        projectLayouts,
+        layout: emptyGroup('g-empty'),
+      })
+      get().persist()
+      return
+    }
     if (s.currentProjectId === id) {
       const next = openProjectIds[0]
-      set({ openProjectIds })
+      set({ openProjectIds, projectLayouts })
       get().switchProject(next)
     } else {
-      set({ openProjectIds })
+      set({ openProjectIds, projectLayouts })
       get().persist()
     }
   },
 
+  createProject: (name) => {
+    const trimmed = name.trim()
+    if (!trimmed) return null
+    const project = createBlankProject(trimmed)
+    addProjectToCatalog(project)
+    const layout = buildDefaultLayout(
+      () => get().nextGroupId(),
+      (t, o) => get().spawnPanelKey(t, o),
+      (k, o) => {
+        get().ensureInstanceState(k, o)
+      },
+      project.id,
+    )
+    const s = get()
+    const projectLayouts = { ...s.projectLayouts }
+    if (s.currentProjectId) {
+      projectLayouts[s.currentProjectId] = cloneLayout(s.layout)
+    }
+    projectLayouts[project.id] = cloneLayout(layout)
+    const openProjectIds = s.openProjectIds.includes(project.id)
+      ? s.openProjectIds
+      : [...s.openProjectIds, project.id]
+    set({
+      openProjectIds,
+      currentProjectId: project.id,
+      layout,
+      projectLayouts,
+      catalogVersion: s.catalogVersion + 1,
+      createProjectModal: false,
+      openProjectModal: false,
+    })
+    get().persist()
+    return project.id
+  },
+
   resetLayout: () => {
     const id = get().currentProjectId
+    if (!id) return
     const layout = buildDefaultLayout(
       () => get().nextGroupId(),
       (t, o) => get().spawnPanelKey(t, o),
@@ -479,9 +647,18 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     if (!type) return
     const opts: Partial<PanelInstanceState> = {}
     if (type === 'chat') {
-      opts.convId = `n${Date.now()}`
-      opts.title = 'New chat'
-      opts.messages = []
+      const conv = emptyConversation()
+      const projectId = get().currentProjectId
+      if (projectId) {
+        const list = [conv, ...get().ensureProjectChats(projectId)]
+        set({ projectChats: { ...get().projectChats, [projectId]: list } })
+      }
+      Object.assign(opts, syncPanelFromConversation(conv), {
+        model: DEFAULT_CHAT_MODEL,
+        enabledTools: DEFAULT_CHAT_TOOLS,
+        enabledMcps: DEFAULT_CHAT_MCPS,
+        enabledSkills: DEFAULT_CHAT_SKILLS,
+      })
     }
     const key = get().spawnPanelKey(type, opts)
     const layout = addTabToGroup(get().layout, groupId, key)
@@ -492,16 +669,19 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   openPanelType: (type) => {
     const key = get().spawnPanelKey(type)
     get().ensureInstanceState(key)
+    const p = getProject(get().currentProjectId)
     if (type === 'chat') {
-      const p = PROJECTS[get().currentProjectId]
+      const chats = get().ensureProjectChats(get().currentProjectId)
+      const primary = chats[0]
       get().ensureInstanceState(key, {
-        convId: p?.convs[0]?.id,
-        title: p?.convs[0]?.title || 'Chat',
-        messages: p ? JSON.parse(JSON.stringify(p.messages)) : [],
+        ...syncPanelFromConversation(primary),
+        model: DEFAULT_CHAT_MODEL,
+        enabledTools: DEFAULT_CHAT_TOOLS,
+        enabledMcps: DEFAULT_CHAT_MCPS,
+        enabledSkills: DEFAULT_CHAT_SKILLS,
       })
     }
     if (type === 'code') {
-      const p = PROJECTS[get().currentProjectId]
       get().ensureInstanceState(key, { file: p?.files[0]?.name })
     }
     const first = firstGroup(get().layout)
@@ -559,41 +739,279 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     void repoId
   },
 
+  ensureProjectChats: (projectId) => {
+    if (!projectId) return []
+    const existing = get().projectChats[projectId]
+    if (existing?.length) return existing
+    const seeded = seedProjectConversations(projectId)
+    set({
+      projectChats: { ...get().projectChats, [projectId]: seeded },
+    })
+    return seeded
+  },
+
+  getConversations: (projectId) => {
+    const id = projectId === undefined ? get().currentProjectId : projectId
+    return sortConversations(get().ensureProjectChats(id))
+  },
+
+  getActiveConversation: (panelKey) => {
+    const st = get().instanceState[panelKey]
+    const projectId = get().currentProjectId
+    if (!projectId || !st?.convId) return undefined
+    const list = get().ensureProjectChats(projectId)
+    return findConversation(list, st.convId)
+  },
+
+  updateConversationMessages: (projectId, convId, messages, lastAssistant) => {
+    const list = cloneConversations(get().ensureProjectChats(projectId))
+    const idx = list.findIndex((c) => c.id === convId)
+    if (idx < 0) return
+    let conv = { ...list[idx], messages: cloneMessages(messages) }
+    conv = updateConvMetrics(conv, lastAssistant)
+    list[idx] = conv
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
+  },
+
   appendChatMessage: (panelKey, text) => {
+    const projectId = get().currentProjectId
+    if (!projectId) return
     const st = get().ensureInstanceState(panelKey, {
       model: DEFAULT_CHAT_MODEL,
       enabledTools: DEFAULT_CHAT_TOOLS,
       enabledMcps: DEFAULT_CHAT_MCPS,
       enabledSkills: DEFAULT_CHAT_SKILLS,
+      enabledAgents: DEFAULT_CHAT_AGENTS,
+      chatMode: DEFAULT_CHAT_MODE,
     })
+    let convId = st.convId
+    if (!convId) {
+      const conv = emptyConversation(text.slice(0, 48) || 'New chat')
+      const list = [...get().ensureProjectChats(projectId), conv]
+      set({ projectChats: { ...get().projectChats, [projectId]: list } })
+      convId = conv.id
+      get().ensureInstanceState(panelKey, syncPanelFromConversation(conv))
+    }
+
     const model = st.model || DEFAULT_CHAT_MODEL
     const tools = st.enabledTools || []
-    const mcps = st.enabledMcps || []
-    const skills = st.enabledSkills || []
-    const messages = [
-      ...(st.messages || []),
-      { role: 'user' as const, text },
-      {
-        role: 'assistant' as const,
-        text: `Demo reply via **${model}** · tools: ${tools.length ? tools.join(', ') : 'none'} · MCPs: ${mcps.length ? mcps.join(', ') : 'none'} · skills: ${skills.length ? skills.join(', ') : 'none'}. Wire to everflow-ai-workspace later.`,
-        thinking: 'Demo mode: no backend LLM connected — selections are UI-only.',
-      },
-    ]
-    get().ensureInstanceState(panelKey, { messages })
+    const mode = (st.chatMode || DEFAULT_CHAT_MODE) as ChatMode
+    const agents = st.enabledAgents || DEFAULT_CHAT_AGENTS
+
+    const userMsg: ChatMessage = {
+      id: newMessageId('u'),
+      role: 'user',
+      text,
+      blocks: [{ type: 'text', text }],
+      createdAt: new Date().toISOString(),
+    }
+    const assistantMsgs = demoAssistantReply({
+      userText: text,
+      model,
+      mode,
+      tools,
+      agents,
+    })
+    const messages = [...(st.messages || []), userMsg, ...assistantMsgs]
+    const last = assistantMsgs[assistantMsgs.length - 1]
+    get().updateConversationMessages(projectId, convId, messages, last)
+    get().ensureInstanceState(panelKey, {
+      convId,
+      messages,
+      title: st.title || deriveTitleFromMessages(messages),
+    })
   },
 
   setChatConv: (panelKey, convId) => {
-    const p = PROJECTS[get().currentProjectId]
-    const conv = p?.convs.find((c) => c.id === convId)
-    const isPrimary = conv && p?.convs[0] && conv.id === p.convs[0].id
+    const projectId = get().currentProjectId
+    if (!projectId) return
+    const list = get().ensureProjectChats(projectId)
+    const conv = findConversation(list, convId)
     get().ensureInstanceState(panelKey, {
-      convId,
-      title: conv?.title || 'Chat',
-      messages:
-        isPrimary && p
-          ? (JSON.parse(JSON.stringify(p.messages)) as PanelInstanceState['messages'])
-          : [],
+      ...syncPanelFromConversation(conv),
+      model: get().instanceState[panelKey]?.model || DEFAULT_CHAT_MODEL,
+      enabledTools: get().instanceState[panelKey]?.enabledTools || DEFAULT_CHAT_TOOLS,
+      enabledMcps: get().instanceState[panelKey]?.enabledMcps || DEFAULT_CHAT_MCPS,
+      enabledSkills: get().instanceState[panelKey]?.enabledSkills || DEFAULT_CHAT_SKILLS,
     })
+  },
+
+  newChatConversation: (panelKey) => {
+    const projectId = get().currentProjectId
+    if (!projectId) return
+    const conv = emptyConversation()
+    const list = [conv, ...get().ensureProjectChats(projectId)]
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
+    get().ensureInstanceState(panelKey, {
+      ...syncPanelFromConversation(conv),
+      model: DEFAULT_CHAT_MODEL,
+      enabledTools: DEFAULT_CHAT_TOOLS,
+      enabledMcps: DEFAULT_CHAT_MCPS,
+      enabledSkills: DEFAULT_CHAT_SKILLS,
+    })
+  },
+
+  renameConversation: (projectId, convId, title) => {
+    const trimmed = title.trim()
+    if (!trimmed) return
+    const list = cloneConversations(get().ensureProjectChats(projectId))
+    const idx = list.findIndex((c) => c.id === convId)
+    if (idx < 0) return
+    list[idx] = { ...list[idx], title: trimmed }
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
+    // Sync open chat panels
+    for (const [key, st] of Object.entries(get().instanceState)) {
+      if (st.convId === convId) {
+        get().ensureInstanceState(key as PanelKey, { title: trimmed })
+      }
+    }
+  },
+
+  deleteConversation: (projectId, convId, panelKey) => {
+    let list = cloneConversations(get().ensureProjectChats(projectId)).filter(
+      (c) => c.id !== convId,
+    )
+    if (list.length === 0) {
+      list = [emptyConversation()]
+    }
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
+    if (panelKey) {
+      const st = get().instanceState[panelKey]
+      if (st?.convId === convId) {
+        get().ensureInstanceState(panelKey, syncPanelFromConversation(list[0]))
+      }
+    }
+  },
+
+  pinConversation: (projectId, convId, pinned) => {
+    const list = cloneConversations(get().ensureProjectChats(projectId))
+    const idx = list.findIndex((c) => c.id === convId)
+    if (idx < 0) return
+    list[idx] = {
+      ...list[idx],
+      pinned: pinned === undefined ? !list[idx].pinned : pinned,
+    }
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
+  },
+
+  aiTitleConversation: (projectId, convId) => {
+    const list = cloneConversations(get().ensureProjectChats(projectId))
+    const idx = list.findIndex((c) => c.id === convId)
+    if (idx < 0) return
+    const title = deriveTitleFromMessages(list[idx].messages)
+    list[idx] = { ...list[idx], title, meta: 'AI titled · just now' }
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
+    for (const [key, st] of Object.entries(get().instanceState)) {
+      if (st.convId === convId) {
+        get().ensureInstanceState(key as PanelKey, { title })
+      }
+    }
+  },
+
+  forkConversation: (panelKey, fromMessageId) => {
+    const projectId = get().currentProjectId
+    if (!projectId) return
+    const st = get().instanceState[panelKey]
+    const src = get().getActiveConversation(panelKey)
+    if (!src || !st) return
+    const cutIdx = src.messages.findIndex((m) => m.id === fromMessageId)
+    if (cutIdx < 0) return
+    const forked = emptyConversation(`Fork: ${src.title}`)
+    forked.messages = cloneMessages(src.messages.slice(0, cutIdx + 1))
+    forked.agents = cloneConversations([src])[0].agents
+    forked.chatMode = src.chatMode
+    forked.metrics = { ...src.metrics }
+    forked.meta = 'Forked · just now'
+    const list = [forked, ...get().ensureProjectChats(projectId)]
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
+    get().ensureInstanceState(panelKey, syncPanelFromConversation(forked))
+  },
+
+  editUserMessage: (panelKey, messageId, text) => {
+    const projectId = get().currentProjectId
+    if (!projectId) return
+    const st = get().ensureInstanceState(panelKey)
+    const convId = st.convId
+    if (!convId) return
+    const msgs = cloneMessages(st.messages || [])
+    const idx = msgs.findIndex((m) => m.id === messageId && m.role === 'user')
+    if (idx < 0) return
+    msgs[idx] = {
+      ...msgs[idx],
+      text,
+      blocks: [{ type: 'text', text }],
+    }
+    // Truncate after this user message and re-run demo assistant
+    const kept = msgs.slice(0, idx + 1)
+    const mode = (st.chatMode || DEFAULT_CHAT_MODE) as ChatMode
+    const assistantMsgs = demoAssistantReply({
+      userText: text,
+      model: st.model || DEFAULT_CHAT_MODEL,
+      mode,
+      tools: st.enabledTools || DEFAULT_CHAT_TOOLS,
+      agents: st.enabledAgents || DEFAULT_CHAT_AGENTS,
+    })
+    const next = [...kept, ...assistantMsgs]
+    const last = assistantMsgs[assistantMsgs.length - 1]
+    get().updateConversationMessages(projectId, convId, next, last)
+    get().ensureInstanceState(panelKey, { messages: next })
+  },
+
+  retryAssistantMessage: (panelKey, messageId) => {
+    const projectId = get().currentProjectId
+    if (!projectId) return
+    const st = get().ensureInstanceState(panelKey)
+    const convId = st.convId
+    if (!convId) return
+    const msgs = cloneMessages(st.messages || [])
+    const idx = msgs.findIndex((m) => m.id === messageId && m.role === 'assistant')
+    if (idx < 0) return
+    // Find preceding user message
+    let userText = 'Retry'
+    for (let i = idx - 1; i >= 0; i--) {
+      if (msgs[i].role === 'user') {
+        userText = msgs[i].text || msgs[i].blocks?.find((b) => b.text)?.text || userText
+        break
+      }
+    }
+    const kept = msgs.slice(0, idx)
+    const assistantMsgs = demoAssistantReply({
+      userText,
+      model: st.model || DEFAULT_CHAT_MODEL,
+      mode: (st.chatMode || DEFAULT_CHAT_MODE) as ChatMode,
+      tools: st.enabledTools || DEFAULT_CHAT_TOOLS,
+      agents: st.enabledAgents || DEFAULT_CHAT_AGENTS,
+      retry: true,
+    })
+    const next = [...kept, ...assistantMsgs]
+    const last = assistantMsgs[assistantMsgs.length - 1]
+    get().updateConversationMessages(projectId, convId, next, last)
+    get().ensureInstanceState(panelKey, { messages: next })
+  },
+
+  setChatMode: (panelKey, mode) => {
+    const projectId = get().currentProjectId
+    get().ensureInstanceState(panelKey, { chatMode: mode })
+    const st = get().instanceState[panelKey]
+    if (!projectId || !st?.convId) return
+    const list = cloneConversations(get().ensureProjectChats(projectId))
+    const idx = list.findIndex((c) => c.id === st.convId)
+    if (idx < 0) return
+    list[idx] = { ...list[idx], chatMode: mode }
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
+  },
+
+  setConversationAgents: (panelKey, agentIds) => {
+    const projectId = get().currentProjectId
+    const agents = agentIds.map((id) => agentById(id))
+    get().ensureInstanceState(panelKey, { enabledAgents: agentIds })
+    const st = get().instanceState[panelKey]
+    if (!projectId || !st?.convId) return
+    const list = cloneConversations(get().ensureProjectChats(projectId))
+    const idx = list.findIndex((c) => c.id === st.convId)
+    if (idx < 0) return
+    list[idx] = { ...list[idx], agents }
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
   },
 
   setCodeFile: (panelKey, file) => {
@@ -602,6 +1020,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   detachPanel: (panelId) => {
     const s = get()
+    if (!s.currentProjectId) return
     const layout = removePanelFromLayout(s.layout, panelId, () => get().nextGroupId())
     const detached = new Set(s.detachedPanels)
     detached.add(panelId)
