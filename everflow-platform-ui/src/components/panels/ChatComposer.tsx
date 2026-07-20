@@ -10,15 +10,18 @@ import {
 } from '@patternfly/react-core'
 import ClockIcon from '@patternfly/react-icons/dist/esm/icons/clock-icon'
 import PaperPlaneIcon from '@patternfly/react-icons/dist/esm/icons/paper-plane-icon'
-import BoltIcon from '@patternfly/react-icons/dist/esm/icons/bolt-icon'
+import UsersIcon from '@patternfly/react-icons/dist/esm/icons/users-icon'
 import WrenchIcon from '@patternfly/react-icons/dist/esm/icons/wrench-icon'
 import OutlinedStarIcon from '@patternfly/react-icons/dist/esm/icons/outlined-star-icon'
 import {
+  CHAT_AGENTS,
   CHAT_MCPS,
   CHAT_MODELS,
   CHAT_SKILLS,
   CHAT_TOOLS,
+  modeLabel,
 } from '@/data/chatCatalog'
+import type { ChatMode } from '@/types/panels'
 
 interface ChatComposerProps {
   draft: string
@@ -28,12 +31,13 @@ interface ChatComposerProps {
   tools: string[]
   mcps: string[]
   skills: string[]
-  mode: 'ask' | 'auto'
+  agents: string[]
+  mode: ChatMode
   onModelChange: (id: string) => void
   onToolsChange: (ids: string[]) => void
   onMcpsChange: (ids: string[]) => void
   onSkillsChange: (ids: string[]) => void
-  onModeChange: (mode: 'ask' | 'auto') => void
+  onAgentsChange: (ids: string[]) => void
 }
 
 function toggle(list: string[], id: string) {
@@ -48,12 +52,13 @@ export function ChatComposer({
   tools,
   mcps,
   skills,
+  agents,
   mode,
   onModelChange,
   onToolsChange,
   onMcpsChange,
   onSkillsChange,
-  onModeChange,
+  onAgentsChange,
 }: ChatComposerProps) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const [modelOpen, setModelOpen] = useState(false)
@@ -131,6 +136,31 @@ export function ChatComposer({
             hasAutoWidth
             bodyContent={
               <div className="composer-popover-list">
+                <div className="composer-popover-title">Agents in this chat</div>
+                {CHAT_AGENTS.map((a) => (
+                  <Checkbox
+                    key={a.id}
+                    id={`ca-${a.id}`}
+                    label={a.name}
+                    description={a.role}
+                    isChecked={agents.includes(a.id)}
+                    onChange={() => onAgentsChange(toggle(agents, a.id))}
+                  />
+                ))}
+              </div>
+            }
+          >
+            <button type="button" className="composer-icon-btn" title="Agents">
+              <UsersIcon />
+              <span className="composer-icon-count">{agents.length}</span>
+            </button>
+          </Popover>
+
+          <Popover
+            position="top"
+            hasAutoWidth
+            bodyContent={
+              <div className="composer-popover-list">
                 <div className="composer-popover-title">Skills</div>
                 {CHAT_SKILLS.map((s) => (
                   <Checkbox
@@ -150,15 +180,6 @@ export function ChatComposer({
               <span className="composer-icon-count">{skills.length}</span>
             </button>
           </Popover>
-
-          <button
-            type="button"
-            className={`composer-icon-btn${mode === 'auto' ? ' is-on' : ''}`}
-            title={mode === 'auto' ? 'Auto mode on' : 'Ask mode — click for Auto'}
-            onClick={() => onModeChange(mode === 'auto' ? 'ask' : 'auto')}
-          >
-            <BoltIcon />
-          </button>
 
           <Select
             isOpen={modelOpen}
@@ -201,8 +222,9 @@ export function ChatComposer({
         </div>
       </div>
       <div className="chat-composer-hint">
-        Enter to send · Shift+Enter newline · / for skills · {mode === 'auto' ? 'Auto' : 'Ask'} ·{' '}
+        Enter to send · Shift+Enter newline · / for skills · {modeLabel(mode)} ·{' '}
         {modelLabel}
+        {agents.length ? ` · ${agents.length} agents` : ''}
       </div>
     </div>
   )
