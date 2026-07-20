@@ -87,6 +87,25 @@ Production ── alembic upgrade head ──►  same revision chain
 | Revision | Description |
 |----------|-------------|
 | `001` | Initial users, oauth accounts, organizations, projects |
+| `002` | Project sandbox lifecycle columns (`sandbox_name`, `sandbox_status`, …) |
+
+## Sandboxes
+
+When `SANDBOX_ENABLED=true`, creating a project asks the internal **sandbox-agent**
+(microsandbox control plane) to start a detached microVM. Clients never call the
+agent; they use Everflow routes:
+
+| Method | Path |
+|--------|------|
+| GET | `/api/v1/projects/{id}/sandbox` |
+| POST | `/api/v1/projects/{id}/sandbox/retry` |
+| POST | `/api/v1/projects/{id}/sandbox/start` \| `/stop` |
+| POST | `/api/v1/projects/{id}/sandbox/exec` |
+| GET/PUT | `/api/v1/projects/{id}/sandbox/fs` / `fs/content` |
+
+Env: `SANDBOX_AGENT_URL`, `SANDBOX_AGENT_TOKEN`, `SANDBOX_DEFAULT_IMAGE`, etc.
+See root [docker-compose.yml](../docker-compose.yml) and [everflow-sandbox-agent](../everflow-sandbox-agent/).
+
 
 ## Auth
 

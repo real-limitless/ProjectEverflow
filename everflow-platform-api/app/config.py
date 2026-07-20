@@ -1,10 +1,44 @@
 """Application settings loaded from environment / .env."""
 
-from functools import lru_cache
-from typing import Literal
+from __future__ import annotations
 
-from pydantic import Field, field_validator
+import json
+from functools import lru_cache
+from typing import Annotated, Literal
+
+from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+try:
+    # pydantic-settings v2.7+: skip JSON decode of complex env values so comma lists work
+    from pydantic_settings import NoDecode
+except ImportError:  # pragma: no cover
+    NoDecode = None  # type: ignore[misc, assignment]
+
+
+def _parse_str_list(value: object) -> list[str]:
+    """Accept JSON arrays or comma-separated env strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            parsed = json.loads(raw)
+            if not isinstance(parsed, list):
+                raise ValueError("expected a JSON array of strings")
+            return [str(v).strip() for v in parsed if str(v).strip()]
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    return [str(value).strip()]
+
+
+if NoDecode is not None:
+    StrList = Annotated[list[str], NoDecode, BeforeValidator(_parse_str_list)]
+else:
+    StrList = Annotated[list[str], BeforeValidator(_parse_str_list)]
 
 
 class Settings(BaseSettings):
@@ -19,7 +53,7 @@ class Settings(BaseSettings):
     debug: bool = True
     secret_key: str = "change-me-in-production-use-a-long-random-string"
     database_url: str = "sqlite+aiosqlite:///./data/everflow.db"
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    cors_origins: StrList = Field(default_factory=lambda: ["http://localhost:5173"])
     access_token_expire_minutes: int = 60
     frontend_url: str = "http://localhost:5173"
 
@@ -29,17 +63,17 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     oauth_redirect_base_url: str = "http://localhost:8000"
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, value: object) -> object:
-        if isinstance(value, str):
-            raw = value.strip()
-            if raw.startswith("["):
-                import json
-
-                return json.loads(raw)
-            return [part.strip() for part in raw.split(",") if part.strip()]
-        return value
+    # Internal sandbox-agent (never exposed to browsers)
+    sandbox_enabled: bool = True
+    sandbox_agent_url: str = "http://localhost:8090"
+    sandbox_agent_token: str = "change-me"
+    sandbox_default_image: str = "ubuntu:24.04"
+    sandbox_default_memory_mib: int = 2048
+    sandbox_default_cpus: int = 2
+    sandbox_default_harnesses: StrList = Field(
+        default_factory=lambda: ["agent-claude-code", "agent-opencode"],
+    )
+    sandbox_agent_timeout_seconds: float = 120.0
 
     @property
     def is_sqlite(self) -> bool:

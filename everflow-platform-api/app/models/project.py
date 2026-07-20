@@ -28,6 +28,14 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # microsandbox lifecycle (provisioned via internal sandbox-agent)
+    sandbox_name: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    sandbox_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sandbox_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sandbox_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

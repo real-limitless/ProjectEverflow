@@ -1,0 +1,43 @@
+"""Public sandbox schemas (client-facing via Everflow API)."""
+
+from datetime import datetime
+from typing import Any
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+
+class SandboxStatusRead(BaseModel):
+    project_id: UUID
+    sandbox_name: str | None
+    status: str
+    image: str | None = None
+    error: str | None = None
+    created_at: datetime | None = None
+    agent: dict[str, Any] | None = None
+
+
+class SandboxExecRequest(BaseModel):
+    cmd: str = Field(min_length=1)
+    args: list[str] = Field(default_factory=list)
+    cwd: str | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+    timeout_seconds: float | None = Field(default=120, ge=1, le=3600)
+
+
+class SandboxExecResult(BaseModel):
+    exit_code: int
+    stdout: str
+    stderr: str
+
+
+class SandboxFsWriteRequest(BaseModel):
+    content: str
+    encoding: str = "utf-8"
+
+
+class SandboxFsEntry(BaseModel):
+    path: str
+    name: str
+    is_dir: bool
+    size: int | None = None

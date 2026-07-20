@@ -2,18 +2,19 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.auth.users import current_active_user
+from app.config import Settings, get_settings
 from app.core.deps import get_org_membership, get_project_for_member
-from app.db.session import get_async_session
-from app.models.organization import OrganizationMember
+from app.db.session import get_async_session, get_session_factory
+from app.models.organization import Organization, OrganizationMember
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
+from app.services.sandbox import destroy_project_sandbox, make_sandbox_name, provision_project_sandbox
 
 router = APIRouter(tags=["projects"])
 
@@ -43,6 +44,14 @@ async def _require_project_admin(
     return membership
 
 
+async def _bg_provision(project_id: UUID) -> None:
+    """Background task: provision sandbox with a fresh DB session."""
+    settings = get_settings()
+    factory = get_session_factory()
+    async with factory() as session:
+        await provision_project_sandbox(session, project_id, settings=settings)
+
+
 @router.get("/orgs/{org_id}/projects", response_model=list[ProjectRead])
 async def list_projects(
     org_id: UUID,
@@ -63,14 +72,23 @@ async def list_projects(
 async def create_project(
     org_id: UUID,
     body: ProjectCreate,
+    background_tasks: BackgroundTasks,
     _: OrganizationMember = Depends(get_org_membership),
     session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
 ) -> Project:
+    org_result = await session.execute(select(Organization).where(Organization.id == org_id))
+    org = org_result.scalar_one()
+
+    sandbox_name = make_sandbox_name(org.slug, body.slug) if settings.sandbox_enabled else None
     project = Project(
         organization_id=org_id,
         name=body.name,
         slug=body.slug,
         description=body.description,
+        sandbox_name=sandbox_name,
+        sandbox_status="pending" if settings.sandbox_enabled else "destroyed",
+        sandbox_image=settings.sandbox_default_image if settings.sandbox_enabled else None,
     )
     session.add(project)
     try:
@@ -82,6 +100,10 @@ async def create_project(
             detail="Project slug already exists in this organization",
         ) from None
     await session.refresh(project)
+
+    if settings.sandbox_enabled:
+        background_tasks.add_task(_bg_provision, project.id)
+
     return project
 
 
@@ -127,7 +149,16 @@ async def delete_project(
     project: Project = Depends(get_project_for_member),
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
 ) -> None:
     await _require_project_admin(project, user, session)
-    await session.delete(project)
-    await session.commit()
+
+    # Load with org if needed — destroy uses sandbox_name only
+    await destroy_project_sandbox(session, project, settings=settings)
+
+    # Re-fetch after destroy commit (session may have committed)
+    result = await session.execute(select(Project).where(Project.id == project.id))
+    project = result.scalar_one_or_none()
+    if project is not None:
+        await session.delete(project)
+        await session.commit()

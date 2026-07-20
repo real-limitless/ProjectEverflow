@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import health, orgs, projects
+from app.api.v1 import health, orgs, projects, sandbox
 from app.auth.oauth import build_github_client, build_google_client
 from app.auth.users import auth_backend, fastapi_users
 from app.config import get_settings
@@ -13,6 +13,7 @@ api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health.router)
 api_router.include_router(orgs.router)
 api_router.include_router(projects.router)
+api_router.include_router(sandbox.router)
 
 # Auth: register, JWT login/logout, users/me
 api_router.include_router(

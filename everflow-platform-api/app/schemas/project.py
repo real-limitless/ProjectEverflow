@@ -31,5 +31,10 @@ class ProjectRead(BaseModel):
     name: str
     slug: str
     description: str | None
+    sandbox_name: str | None = None
+    sandbox_status: str = "pending"
+    sandbox_image: str | None = None
+    sandbox_error: str | None = None
+    sandbox_created_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

@@ -1,0 +1,171 @@
+"""HTTP client for the internal sandbox-agent service."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import httpx
+
+from app.config import Settings, get_settings
+
+
+class SandboxAgentError(Exception):
+    def __init__(self, message: str, *, status_code: int | None = None, body: Any = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
+
+
+class SandboxAgentClient:
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._settings.sandbox_agent_token}",
+            "Content-Type": "application/json",
+        }
+
+    def _url(self, path: str) -> str:
+        base = self._settings.sandbox_agent_url.rstrip("/")
+        return f"{base}{path}"
+
+    async def health(self) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.get(self._url("/health"))
+            res.raise_for_status()
+            return res.json()
+
+    async def create_sandbox(
+        self,
+        *,
+        name: str,
+        image: str,
+        cpus: int,
+        memory_mib: int,
+        labels: dict[str, str],
+        harnesses: list[str],
+        workspace_host_path: str | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "name": name,
+            "image": image,
+            "cpus": cpus,
+            "memory_mib": memory_mib,
+            "labels": labels,
+            "harnesses": harnesses,
+            "workspace_host_path": workspace_host_path,
+        }
+        return await self._request("POST", "/v1/sandboxes", json=payload, expected=(201, 200))
+
+    async def get_sandbox(self, name: str) -> dict[str, Any]:
+        return await self._request("GET", f"/v1/sandboxes/{name}")
+
+    async def start_sandbox(self, name: str) -> dict[str, Any]:
+        return await self._request("POST", f"/v1/sandboxes/{name}/start")
+
+    async def stop_sandbox(self, name: str) -> dict[str, Any]:
+        return await self._request("POST", f"/v1/sandboxes/{name}/stop")
+
+    async def remove_sandbox(self, name: str) -> None:
+        await self._request("POST", f"/v1/sandboxes/{name}/remove", expected=(204, 404))
+
+    async def exec(
+        self,
+        name: str,
+        *,
+        cmd: str,
+        args: list[str] | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        timeout_seconds: float | None = 120,
+    ) -> dict[str, Any]:
+        payload = {
+            "cmd": cmd,
+            "args": args or [],
+            "cwd": cwd,
+            "env": env or {},
+            "timeout_seconds": timeout_seconds,
+        }
+        return await self._request("POST", f"/v1/sandboxes/{name}/exec", json=payload)
+
+    async def bootstrap(self, name: str, harnesses: list[str]) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/v1/sandboxes/{name}/bootstrap",
+            json={"harnesses": harnesses},
+        )
+
+    async def list_fs(self, name: str, path: str = ".") -> list[dict[str, Any]]:
+        data = await self._request(
+            "GET",
+            f"/v1/sandboxes/{name}/fs",
+            params={"path": path},
+        )
+        return list(data) if isinstance(data, list) else []
+
+    async def read_fs(self, name: str, path: str) -> str:
+        async with httpx.AsyncClient(timeout=self._settings.sandbox_agent_timeout_seconds) as client:
+            res = await client.get(
+                self._url(f"/v1/sandboxes/{name}/fs/content"),
+                headers=self._headers(),
+                params={"path": path},
+            )
+            if res.status_code >= 400:
+                raise SandboxAgentError(
+                    res.text or res.reason_phrase,
+                    status_code=res.status_code,
+                    body=res.text,
+                )
+            return res.text
+
+    async def write_fs(self, name: str, path: str, content: str) -> None:
+        await self._request(
+            "PUT",
+            f"/v1/sandboxes/{name}/fs/content",
+            params={"path": path},
+            json={"content": content},
+            expected=(204,),
+        )
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        expected: tuple[int, ...] = (200,),
+    ) -> Any:
+        timeout = self._settings.sandbox_agent_timeout_seconds
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                res = await client.request(
+                    method,
+                    self._url(path),
+                    headers=self._headers(),
+                    json=json,
+                    params=params,
+                )
+        except httpx.RequestError as exc:
+            raise SandboxAgentError(f"sandbox-agent unreachable: {exc}") from exc
+
+        if res.status_code not in expected:
+            detail: Any
+            try:
+                detail = res.json()
+            except Exception:  # noqa: BLE001
+                detail = res.text
+            msg = (
+                detail.get("detail")
+                if isinstance(detail, dict) and "detail" in detail
+                else str(detail) or res.reason_phrase
+            )
+            raise SandboxAgentError(str(msg), status_code=res.status_code, body=detail)
+
+        if res.status_code == 204 or not res.content:
+            return None
+        content_type = res.headers.get("content-type", "")
+        if "application/json" in content_type:
+            return res.json()
+        return res.text

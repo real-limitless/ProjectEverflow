@@ -15,7 +15,10 @@ async def test_health(client: AsyncClient) -> None:
 async def test_ready(client: AsyncClient) -> None:
     response = await client.get("/api/v1/ready")
     assert response.status_code == 200
-    assert response.json()["status"] == "ready"
+    body = response.json()
+    assert body["status"] == "ready"
+    assert "sandbox" in body
+    assert body["sandbox"]["enabled"] is False
 
 
 @pytest.mark.asyncio

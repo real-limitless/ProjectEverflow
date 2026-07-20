@@ -26,6 +26,9 @@ def test_settings() -> Settings:
         github_client_secret="",
         google_client_id="",
         google_client_secret="",
+        sandbox_enabled=False,
+        sandbox_agent_url="http://sandbox-agent-test:8090",
+        sandbox_agent_token="test-agent-token",
     )
 
 
@@ -36,6 +39,9 @@ async def client(test_settings: Settings, monkeypatch: pytest.MonkeyPatch) -> As
     monkeypatch.setenv("SECRET_KEY", test_settings.secret_key)
     monkeypatch.setenv("DATABASE_URL", test_settings.database_url)
     monkeypatch.setenv("DEBUG", "false")
+    monkeypatch.setenv("SANDBOX_ENABLED", "false")
+    monkeypatch.setenv("SANDBOX_AGENT_URL", test_settings.sandbox_agent_url)
+    monkeypatch.setenv("SANDBOX_AGENT_TOKEN", test_settings.sandbox_agent_token)
     get_settings.cache_clear()
 
     from sqlalchemy import event, pool
