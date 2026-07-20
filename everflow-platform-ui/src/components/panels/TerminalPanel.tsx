@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Button } from '@patternfly/react-core'
-import { PROJECTS } from '@/data/projects'
+import { getProject } from '@/data/projects'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 export function TerminalPanel() {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
-  const p = PROJECTS[currentProjectId]
+  const p = getProject(currentProjectId)
   const [lines, setLines] = useState(p?.termLines || [])
   const [cmd, setCmd] = useState('')
 
   useEffect(() => {
-    setLines(PROJECTS[currentProjectId]?.termLines || [])
+    setLines(getProject(currentProjectId)?.termLines || [])
   }, [currentProjectId])
 
   const run = () => {

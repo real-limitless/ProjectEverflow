@@ -18,6 +18,116 @@ body,
   overflow: hidden;
 }
 
+.pg-main-workbench--empty {
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: var(--pf-t--global--background--color--primary--default);
+}
+
+/* Empty / no-project splash */
+.project-splash {
+  width: 100%;
+  max-width: 32rem;
+  display: flex;
+  justify-content: center;
+}
+
+.project-splash-card {
+  width: 100%;
+  text-align: center;
+  padding: 2rem 1.75rem;
+  border-radius: var(--pf-t--global--border--radius--medium, 8px);
+  border: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--secondary--default);
+  box-shadow: var(--pf-t--global--box-shadow--sm);
+}
+
+.project-splash-icon {
+  display: grid;
+  place-items: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  margin: 0 auto 1rem;
+  border-radius: 999px;
+  color: var(--pf-t--global--color--brand--default);
+  background: color-mix(
+    in srgb,
+    var(--pf-t--global--color--brand--default) 12%,
+    transparent
+  );
+  font-size: 1.5rem;
+}
+
+.project-splash-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--pf-t--global--text--color--regular);
+}
+
+.project-splash-desc {
+  margin: 0 0 1.25rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.project-splash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-bottom: 1.25rem;
+}
+
+.project-splash-list {
+  border-block-start: 1px solid var(--pf-t--global--border--color--default);
+  padding-block-start: 1rem;
+  text-align: start;
+}
+
+.project-splash-list-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pf-t--global--text--color--subtle);
+  margin-bottom: 0.5rem;
+}
+
+.project-splash-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.project-splash-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--primary--default);
+  color: var(--pf-t--global--text--color--regular);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.project-splash-chip:hover {
+  border-color: var(--pf-t--global--border--color--brand--default);
+  color: var(--pf-t--global--text--color--brand--default);
+}
+
+.project-splash-chip .dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--pf-t--global--color--status--success--default, #3e8635);
+  flex-shrink: 0;
+}
+
 /* Shared shell */
 .pf-v6-c-page.pg-shell {
   height: 100vh;

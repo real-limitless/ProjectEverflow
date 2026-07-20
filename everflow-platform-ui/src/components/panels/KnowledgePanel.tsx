@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { Tabs, Tab, TabTitleText } from '@patternfly/react-core'
-import { PROJECTS } from '@/data/projects'
+import { getProject } from '@/data/projects'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 export function KnowledgePanel() {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
-  const p = PROJECTS[currentProjectId]
+  const p = getProject(currentProjectId)
   const [sub, setSub] = useState<'files' | 'canvas' | 'rag'>('files')
 
   return (

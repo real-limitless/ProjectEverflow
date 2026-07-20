@@ -1,4 +1,4 @@
-import { PROJECTS } from '@/data/projects'
+import { getProject } from '@/data/projects'
 import type { PanelKey } from '@/types/panels'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
@@ -10,7 +10,7 @@ export function CodePanel({ panelKey }: CodePanelProps) {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
   const st = usePlaygroundStore((s) => s.instanceState[panelKey])
   const setCodeFile = usePlaygroundStore((s) => s.setCodeFile)
-  const p = PROJECTS[currentProjectId]
+  const p = getProject(currentProjectId)
   const file = st?.file || p?.files[0]?.name || ''
   const codeHtml = p?.code[file] || ''
   const lines = codeHtml.split('\n')

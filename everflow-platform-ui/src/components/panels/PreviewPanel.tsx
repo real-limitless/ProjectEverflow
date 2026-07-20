@@ -14,12 +14,12 @@ import {
 } from '@patternfly/react-core'
 import SyncAltIcon from '@patternfly/react-icons/dist/esm/icons/sync-alt-icon'
 import { getPreviewServices } from '@/data/previewServices'
-import { PROJECTS } from '@/data/projects'
+import { getProject } from '@/data/projects'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 export function PreviewPanel() {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
-  const p = PROJECTS[currentProjectId]
+  const p = getProject(currentProjectId)
   const services = useMemo(
     () => getPreviewServices(currentProjectId),
     [currentProjectId],
