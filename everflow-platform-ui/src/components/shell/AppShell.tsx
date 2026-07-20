@@ -4,6 +4,7 @@ import { usePlaygroundStore } from '@/store/playgroundStore'
 import { CreateProjectModal } from '@/components/modals/CreateProjectModal'
 import { OpenProjectModal } from '@/components/modals/OpenProjectModal'
 import { ConnectRepoModal } from '@/components/modals/ConnectRepoModal'
+import { ProjectSettingsModal } from '@/components/modals/ProjectSettingsModal'
 import { PanelPalette } from '@/components/palette/PanelPalette'
 import { AppMasthead } from './AppMasthead'
 import { AppSidebar } from './AppSidebar'
@@ -45,6 +46,7 @@ export function AppShell({ detached = false }: AppShellProps) {
       <OpenProjectModal />
       <CreateProjectModal />
       <ConnectRepoModal />
+      <ProjectSettingsModal />
     </>
   )
 }
