@@ -4,6 +4,7 @@ import '@patternfly/react-core/dist/styles/base.css'
 import './styles/playground.css'
 import './styles/app.css'
 import './styles/chat.css'
+import './styles/studio-panels.css'
 import { applyThemeClass, loadTheme } from '@/lib/namedLayouts'
 import App from './App'
 

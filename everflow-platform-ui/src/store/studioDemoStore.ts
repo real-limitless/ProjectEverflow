@@ -1,0 +1,1093 @@
+import { useEffect } from 'react'
+import { create } from 'zustand'
+import { getStudioExtras } from '@/data/studioExtras'
+import { getProject } from '@/data/projects'
+import type {
+  AgentDefinition,
+  BackgroundJob,
+  DeployHost,
+  DeployRecord,
+  DeployRun,
+  DeployService,
+  EnvEntry,
+  HttpToolDef,
+  KnowledgeCanvas,
+  KnowledgeDoc,
+  McpServerDef,
+  MindMap,
+  ProjectStudioState,
+  PullRequest,
+  RepoIssue,
+  SqlResult,
+  TestCase,
+  TestSuite,
+  WorkflowDef,
+  WorkflowRun,
+  WfNodeKind,
+} from '@/types/studio'
+
+function uid(prefix: string) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+/** Stable fallback seeds so Zustand getSnapshot never allocates a new object each call. */
+const seedCache = new Map<string, ProjectStudioState>()
+
+function getStableSeed(projectId: string): ProjectStudioState {
+  let seeded = seedCache.get(projectId)
+  if (!seeded) {
+    seeded = seedProject(projectId)
+    seedCache.set(projectId, seeded)
+  }
+  return seeded
+}
+
+function resolveProjectId(projectId: string | null | undefined): string {
+  return projectId || 'default'
+}
+
+function seedProject(projectId: string): ProjectStudioState {
+  const d = getStudioExtras(projectId)
+  const p = getProject(projectId)
+
+  const issues: RepoIssue[] = [
+    {
+      id: 'iss-42',
+      number: 42,
+      title: 'MetricCard warning at 67%',
+      body: 'Thresholds fire too early on staging metrics. Repro: load dashboard with sample scrape.',
+      status: 'open',
+      labels: ['bug', 'frontend'],
+      author: 'you',
+      updatedAt: '2m ago',
+      comments: [
+        { id: 'c1', author: 'agent', body: 'Thresholds updated in PR draft — see Changes.', createdAt: '2m ago' },
+      ],
+    },
+    {
+      id: 'iss-41',
+      number: 41,
+      title: 'Document sandbox attach flow',
+      body: 'Add runbook for first-time node attach.',
+      status: 'open',
+      labels: ['docs'],
+      author: 'rafi',
+      updatedAt: '1d ago',
+      comments: [],
+    },
+    {
+      id: 'iss-38',
+      number: 38,
+      title: 'Redis health flaky in CI',
+      body: 'Ping timeout under load.',
+      status: 'closed',
+      labels: ['infra'],
+      author: 'siti',
+      updatedAt: '3d ago',
+      comments: [],
+    },
+  ]
+
+  const pullRequests: PullRequest[] = [
+    {
+      id: 'pr-12',
+      number: 12,
+      title: 'Fix MetricCard warning threshold',
+      body: 'Adjust band to 80% and add unit tests.',
+      status: 'open',
+      base: 'main',
+      head: 'fix/metric-threshold',
+      author: 'you',
+      updatedAt: '2m ago',
+      checks: [
+        { name: 'lint', status: 'ok' },
+        { name: 'unit', status: 'pending' },
+        { name: 'preview', status: 'ok' },
+      ],
+      reviewStatus: 'pending',
+    },
+    {
+      id: 'pr-11',
+      number: 11,
+      title: 'Wire nginx health checks',
+      body: 'Probe /healthz on proxy.',
+      status: 'merged',
+      base: 'main',
+      head: 'feat/nginx-health',
+      author: 'you',
+      updatedAt: 'yesterday',
+      checks: [
+        { name: 'lint', status: 'ok' },
+        { name: 'unit', status: 'ok' },
+      ],
+      reviewStatus: 'approved',
+    },
+    {
+      id: 'pr-10',
+      number: 10,
+      title: 'Draft: deploy pipeline UI',
+      body: 'WIP remote compose stages.',
+      status: 'draft',
+      base: 'main',
+      head: 'feat/deploy-pipeline',
+      author: 'ayu',
+      updatedAt: '2d ago',
+      checks: [],
+      reviewStatus: 'pending',
+    },
+  ]
+
+  const commits = [
+    {
+      id: 'c-a91',
+      hash: 'a91f3c2b8e4d',
+      shortHash: 'a91f3c2',
+      message: 'Fix MetricCard warning threshold',
+      author: 'you',
+      when: '2m ago',
+      parents: ['c-b02'],
+      branchLabels: ['fix/metric-threshold', 'HEAD'],
+      files: ['src/MetricCard.tsx', 'src/MetricCard.test.tsx'],
+      isHead: true,
+    },
+    {
+      id: 'c-b02',
+      hash: 'b02e881c1a90',
+      shortHash: 'b02e881',
+      message: 'Wire nginx health checks',
+      author: 'you',
+      when: 'yesterday',
+      parents: ['c-c11'],
+      branchLabels: ['main'],
+      files: ['deploy/nginx.conf'],
+    },
+    {
+      id: 'c-c11',
+      hash: 'c11d404a77fe',
+      shortHash: 'c11d404',
+      message: 'Add metrics scrape workflow',
+      author: 'rafi',
+      when: '3d ago',
+      parents: ['c-d20'],
+      branchLabels: [],
+      files: ['workflows/scrape.json'],
+    },
+    {
+      id: 'c-d20',
+      hash: 'd20f991e55aa',
+      shortHash: 'd20f991',
+      message: 'Initial studio layout',
+      author: 'ayu',
+      when: '1w ago',
+      parents: [],
+      branchLabels: [],
+      files: ['src/App.tsx'],
+    },
+    {
+      id: 'c-e33',
+      hash: 'e33a102bb901',
+      shortHash: 'e33a102',
+      message: 'Experiment: dark chart tokens',
+      author: 'you',
+      when: '4d ago',
+      parents: ['c-c11'],
+      branchLabels: ['experiment/charts'],
+      files: ['src/styles/charts.css'],
+    },
+  ]
+
+  const workflows: WorkflowDef[] = d.workflows.map((w, i) => ({
+    id: `wf-${i}`,
+    name: w.name,
+    status: w.status,
+    trigger: w.trigger,
+    runs: w.runs,
+    nodes: d.wfNodes.map((n, j) => ({
+      id: `n-${i}-${j}`,
+      type: 'studio',
+      position: { x: 80 + j * 180, y: 120 + (j % 2) * 40 },
+      data: {
+        label: n.label,
+        kind: (n.cls === 'trigger'
+          ? 'trigger'
+          : n.cls === 'llm'
+            ? 'llm'
+            : n.cls === 'code'
+              ? 'code'
+              : n.cls === 'http'
+                ? 'http'
+                : 'unknown') as WfNodeKind,
+        params: {},
+      },
+    })),
+    edges: d.wfNodes.slice(0, -1).map((_, j) => ({
+      id: `e-${i}-${j}`,
+      source: `n-${i}-${j}`,
+      target: `n-${i}-${j + 1}`,
+    })),
+  }))
+
+  const workflowRuns: WorkflowRun[] = d.wfRuns.map((r) => ({
+    ...r,
+    workflowId: workflows[0]?.id ?? 'wf-0',
+    log: [`started ${r.id}`, `status=${r.status}`, `duration=${r.dur}`],
+  }))
+
+  const canvases: KnowledgeCanvas[] = (p?.canvases ?? [{ name: 'Architecture', desc: 'System sketch' }]).map(
+    (c, i) => ({
+      id: `cv-${i}`,
+      name: c.name,
+      desc: c.desc,
+      docIds: [],
+    }),
+  )
+
+  const docs: KnowledgeDoc[] = [
+    {
+      id: 'doc-1',
+      name: 'runbook.pdf',
+      mime: 'application/pdf',
+      sizeLabel: '2.4 MB',
+      status: 'indexed',
+      chunks: 128,
+      canvasId: canvases[0]?.id,
+    },
+  ]
+
+  if (canvases[0]) canvases[0].docIds = ['doc-1']
+
+  const mindMaps: MindMap[] = [
+    {
+      id: 'mm-1',
+      name: 'Product map',
+      nodes: [
+        { id: 'r', label: d.projectName, parentId: null },
+        { id: 'a', label: 'Studio', parentId: 'r' },
+        { id: 'b', label: 'Deploy', parentId: 'r' },
+        { id: 'c', label: 'Agents', parentId: 'a' },
+        { id: 'd', label: 'Workflows', parentId: 'a' },
+      ],
+    },
+  ]
+
+  const tables = d.tables.map((t) => ({
+    ...t,
+    columns: t.name === 'users' ? ['id', 'email', 'role'] : ['name', 'status', 'cpu'],
+  }))
+
+  const jobs: BackgroundJob[] = d.jobs.map((j, i) => ({
+    id: `job-${i}`,
+    title: j.title,
+    type: j.title.toLowerCase().includes('index') ? 'index' : 'custom',
+    status: j.status as BackgroundJob['status'],
+    progress: j.progress,
+  }))
+
+  const agents: AgentDefinition[] = d.agents.map((a) => ({
+    id: a.id,
+    name: a.name,
+    role: a.name.includes('Deploy') ? 'reviewer' : a.name.includes('General') ? 'general' : 'coder',
+    desc: a.desc,
+    systemPrompt: `You are ${a.name}. ${a.desc}. Be concise and safe.`,
+    tools: ['file_read', 'git_status'],
+    active: a.active,
+  }))
+
+  const httpTools: HttpToolDef[] = d.httpTools.map((t, i) => ({
+    id: `tool-${i}`,
+    name: t.name,
+    method: t.method,
+    url: `https://api.example.com/${t.name}`,
+    headers: '',
+    on: t.on,
+  }))
+
+  const mcps: McpServerDef[] = d.mcps.map((m, i) => ({
+    id: `mcp-${i}`,
+    name: m.name,
+    transport: m.transport,
+    endpoint: m.transport.includes('stdio') ? 'npx -y @example/mcp' : 'https://mcp.example.com/sse',
+    on: m.on,
+  }))
+
+  const envEntries: EnvEntry[] = [
+    ...d.envVars.map((e, i) => ({
+      id: `env-${i}`,
+      key: e.key,
+      value: e.value,
+      kind: 'env' as const,
+      attachedTo: [] as string[],
+    })),
+    ...d.secrets.map((e, i) => ({
+      id: `sec-${i}`,
+      key: e.key,
+      value: e.value,
+      kind: 'secret' as const,
+      attachedTo: e.key.includes('DATABASE') ? ['postgres'] : e.key.includes('STRIPE') ? ['billing'] : ['llm'],
+      revealed: false,
+    })),
+  ]
+
+  const testSuites: TestSuite[] = [
+    {
+      id: 'suite-1',
+      name: 'unit',
+      cases: [
+        {
+          id: 'tc-1',
+          name: 'MetricCard › warning threshold at 67%',
+          type: 'unit',
+          command: 'vitest run MetricCard',
+          lastStatus: d.tests.failedN ? 'failed' : 'passed',
+          error: d.tests.failedN ? 'expected 80, received 67' : undefined,
+        },
+        {
+          id: 'tc-2',
+          name: 'HealthCheck › redis ping timeout',
+          type: 'unit',
+          command: 'vitest run HealthCheck',
+          lastStatus: d.tests.failed.includes('HealthCheck › redis ping timeout') ? 'failed' : 'passed',
+          error: d.tests.failed.includes('HealthCheck › redis ping timeout') ? 'Timeout 2000ms' : undefined,
+        },
+        {
+          id: 'tc-3',
+          name: 'Auth › login happy path',
+          type: 'unit',
+          command: 'vitest run Auth',
+          lastStatus: 'passed',
+        },
+      ],
+    },
+    {
+      id: 'suite-2',
+      name: 'e2e smoke',
+      cases: [
+        {
+          id: 'tc-4',
+          name: 'Playground loads dock',
+          type: 'e2e',
+          command: 'playwright test smoke',
+          lastStatus: 'passed',
+        },
+      ],
+    },
+  ]
+
+  const deployHosts: DeployHost[] = [
+    {
+      id: 'host-1',
+      name: 'edge-01',
+      host: 'edge-01.internal',
+      status: 'online',
+      user: 'everflow',
+      port: 22,
+      tags: ['edge', 'prod'],
+      lastSeen: 'just now',
+      orchestrator: 'podman-compose',
+      cpuPct: 34,
+      memPct: 52,
+    },
+    {
+      id: 'host-2',
+      name: 'gpu-lab',
+      host: 'gpu-lab.lan',
+      status: 'offline',
+      user: 'lab',
+      port: 22,
+      tags: ['gpu'],
+      lastSeen: '3h ago',
+      orchestrator: 'podman-compose',
+      cpuPct: 0,
+      memPct: 12,
+    },
+    {
+      id: 'host-3',
+      name: 'staging-box',
+      host: 'staging.internal',
+      status: 'online',
+      user: 'deploy',
+      port: 22,
+      tags: ['staging'],
+      lastSeen: '1m ago',
+      orchestrator: 'podman-compose',
+      cpuPct: 18,
+      memPct: 41,
+    },
+  ]
+
+  const deploys: DeployRecord[] = d.deploys.map((dep, i) => ({
+    id: `dep-${i}`,
+    env: dep.env,
+    url: dep.url,
+    status: dep.status,
+    when: dep.when,
+    hostId: i === 0 ? 'host-1' : 'host-3',
+    composeFile: i === 0 ? 'compose.preview.yml' : 'podman-compose.staging.yml',
+    runId: `run-seed-${i}`,
+  }))
+
+  const deployRuns: DeployRun[] = [
+    {
+      id: 'run-seed-0',
+      hostId: 'host-1',
+      env: 'Preview',
+      composeFile: 'compose.preview.yml',
+      action: 'up',
+      status: 'ok',
+      startedAt: 'Just now',
+      finishedAt: 'Just now',
+      durationLabel: '12s',
+      stages: [
+        { id: 's1', name: 'Connect', status: 'ok' },
+        { id: 's2', name: 'Validate compose', status: 'ok' },
+        { id: 's3', name: 'podman-compose up -d', status: 'ok' },
+        { id: 's4', name: 'Health checks', status: 'ok' },
+      ],
+      logLines: [
+        '[seed] pipeline start · action=up · host=edge-01',
+        '[seed] podman-compose -f compose.preview.yml up -d',
+        '[seed] all checks passed',
+        '[seed] pipeline complete',
+      ],
+      attachedEnvIds: envEntries.filter((e) => e.key === 'VITE_API_URL').map((e) => e.id),
+    },
+    {
+      id: 'run-seed-1',
+      hostId: 'host-3',
+      env: 'Staging',
+      composeFile: 'podman-compose.staging.yml',
+      action: 'up',
+      status: 'ok',
+      startedAt: '3h ago',
+      finishedAt: '3h ago',
+      durationLabel: '28s',
+      stages: [
+        { id: 's1', name: 'Connect', status: 'ok' },
+        { id: 's2', name: 'Validate compose', status: 'ok' },
+        { id: 's3', name: 'podman-compose up -d', status: 'ok' },
+      ],
+      logLines: ['[seed] staging deploy completed'],
+      attachedEnvIds: envEntries.filter((e) => e.kind === 'secret').slice(0, 1).map((e) => e.id),
+    },
+  ]
+
+  const deployServices: DeployService[] = [
+    {
+      id: 'svc-p-0',
+      name: 'web',
+      image: 'everflow/web:preview',
+      ports: '5173:5173',
+      status: 'running',
+      stack: 'compose.preview.yml',
+      env: 'Preview',
+      hostId: 'host-1',
+    },
+    {
+      id: 'svc-p-1',
+      name: 'api',
+      image: 'everflow/api:preview',
+      ports: '8000:8000',
+      status: 'running',
+      stack: 'compose.preview.yml',
+      env: 'Preview',
+      hostId: 'host-1',
+    },
+  ]
+
+  return {
+    issues,
+    pullRequests,
+    commits,
+    workflows,
+    workflowRuns,
+    canvases,
+    docs,
+    mindMaps,
+    tables,
+    dbConn: d.dbConn,
+    sqlDefault: d.sqlDefault,
+    migrations: [{ name: '001_init.sql', status: 'applied' }, { name: '002_metrics.sql', status: 'applied' }],
+    jobs,
+    agents,
+    httpTools,
+    mcps,
+    envEntries,
+    testSuites,
+    lastTestRun: {
+      suiteId: 'suite-1',
+      status: d.tests.failedN ? 'failed' : 'passed',
+      summary: d.tests.summary,
+      passed: d.tests.passed,
+      failedN: d.tests.failedN,
+      failed: d.tests.failed,
+    },
+    deployHosts,
+    deploys,
+    deployTimeline: d.deployTimeline,
+    composeFiles: ['podman-compose.yml', 'podman-compose.staging.yml', 'compose.preview.yml'],
+    deployRuns,
+    deployServices,
+  }
+}
+
+interface StudioDemoState {
+  byProject: Record<string, ProjectStudioState>
+  ensure: (projectId: string) => ProjectStudioState
+  get: (projectId: string | null | undefined) => ProjectStudioState
+  update: (projectId: string, fn: (s: ProjectStudioState) => ProjectStudioState) => void
+
+  // Issues
+  createIssue: (projectId: string, data: { title: string; body: string; labels: string[] }) => void
+  updateIssue: (projectId: string, id: string, patch: Partial<RepoIssue>) => void
+  deleteIssue: (projectId: string, id: string) => void
+
+  // PRs
+  createPr: (projectId: string, data: { title: string; body: string; base: string; head: string }) => void
+
+  // Jobs
+  createJob: (projectId: string, data: { title: string; type: string; schedule?: string }) => void
+  killJob: (projectId: string, id: string) => void
+
+  // Agents
+  createAgent: (projectId: string, data: Omit<AgentDefinition, 'id'>) => void
+  updateAgent: (projectId: string, id: string, patch: Partial<AgentDefinition>) => void
+
+  // Tools / MCP
+  createTool: (projectId: string, data: Omit<HttpToolDef, 'id'>) => void
+  deleteTool: (projectId: string, id: string) => void
+  createMcp: (projectId: string, data: Omit<McpServerDef, 'id'>) => void
+  deleteMcp: (projectId: string, id: string) => void
+  toggleTool: (projectId: string, id: string) => void
+  toggleMcp: (projectId: string, id: string) => void
+
+  // Env
+  createEnvEntry: (projectId: string, data: Omit<EnvEntry, 'id' | 'revealed'>) => void
+  deleteEnvEntry: (projectId: string, id: string) => void
+  toggleReveal: (projectId: string, id: string) => void
+
+  // Tests
+  createSuite: (projectId: string, name: string) => void
+  createTestCase: (projectId: string, suiteId: string, data: Omit<TestCase, 'id'>) => void
+  runSuite: (projectId: string, suiteId: string) => void
+
+  // Knowledge
+  addDoc: (projectId: string, doc: Omit<KnowledgeDoc, 'id' | 'status' | 'chunks'>) => void
+  setDocStatus: (projectId: string, id: string, status: KnowledgeDoc['status'], chunks?: number) => void
+  createMindMap: (projectId: string, name: string) => void
+  addMindNode: (projectId: string, mapId: string, label: string, parentId: string | null) => void
+
+  // Deploy
+  addHost: (
+    projectId: string,
+    data: Omit<DeployHost, 'id' | 'status' | 'cpuPct' | 'memPct' | 'lastSeen'>,
+  ) => void
+  updateHost: (projectId: string, id: string, patch: Partial<DeployHost>) => void
+  removeHost: (projectId: string, id: string) => void
+  saveDeployRun: (projectId: string, run: DeployRun) => void
+  finalizeDeployRun: (
+    projectId: string,
+    run: DeployRun,
+    opts: { url?: string; services: DeployService[] },
+  ) => void
+
+  // Workflows
+  setWorkflowGraph: (
+    projectId: string,
+    workflowId: string,
+    nodes: WorkflowDef['nodes'],
+    edges: WorkflowDef['edges'],
+  ) => void
+  addWorkflowRun: (projectId: string, run: WorkflowRun) => void
+  importN8n: (projectId: string, json: unknown) => string | null
+
+  // SQL demo
+  runSql: (projectId: string, sql: string) => SqlResult
+}
+
+export const useStudioDemoStore = create<StudioDemoState>((set, get) => ({
+  byProject: {},
+
+  ensure: (projectId: string) => {
+    const id = resolveProjectId(projectId)
+    const existing = get().byProject[id]
+    if (existing) return existing
+    const seeded = getStableSeed(id)
+    // Promote into store without allocating a new seed on every snapshot.
+    set((s) => {
+      if (s.byProject[id]) return s
+      return { byProject: { ...s.byProject, [id]: seeded } }
+    })
+    return get().byProject[id] ?? seeded
+  },
+
+  get: (projectId) => {
+    const id = resolveProjectId(projectId)
+    // Pure read for selectors — never set(), always same reference until update().
+    return get().byProject[id] ?? getStableSeed(id)
+  },
+
+  update: (projectId, fn) => {
+    const id = resolveProjectId(projectId)
+    const cur = get().byProject[id] ?? getStableSeed(id)
+    const next = fn(cur)
+    seedCache.set(id, next)
+    set((s) => ({ byProject: { ...s.byProject, [id]: next } }))
+  },
+
+  createIssue: (projectId, data) => {
+    get().update(projectId, (s) => {
+      const number = Math.max(0, ...s.issues.map((i) => i.number)) + 1
+      const issue: RepoIssue = {
+        id: uid('iss'),
+        number,
+        title: data.title,
+        body: data.body,
+        status: 'open',
+        labels: data.labels,
+        author: 'you',
+        updatedAt: 'just now',
+        comments: [],
+      }
+      return { ...s, issues: [issue, ...s.issues] }
+    })
+  },
+
+  updateIssue: (projectId, id, patch) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      issues: s.issues.map((i) => (i.id === id ? { ...i, ...patch, updatedAt: 'just now' } : i)),
+    }))
+  },
+
+  deleteIssue: (projectId, id) => {
+    get().update(projectId, (s) => ({ ...s, issues: s.issues.filter((i) => i.id !== id) }))
+  },
+
+  createPr: (projectId, data) => {
+    get().update(projectId, (s) => {
+      const number = Math.max(0, ...s.pullRequests.map((p) => p.number)) + 1
+      const pr: PullRequest = {
+        id: uid('pr'),
+        number,
+        title: data.title,
+        body: data.body,
+        status: 'open',
+        base: data.base,
+        head: data.head,
+        author: 'you',
+        updatedAt: 'just now',
+        checks: [
+          { name: 'lint', status: 'pending' },
+          { name: 'unit', status: 'pending' },
+        ],
+        reviewStatus: 'pending',
+      }
+      return { ...s, pullRequests: [pr, ...s.pullRequests] }
+    })
+  },
+
+  createJob: (projectId, data) => {
+    get().update(projectId, (s) => {
+      const job: BackgroundJob = {
+        id: uid('job'),
+        title: data.title,
+        type: data.type,
+        status: 'queued',
+        progress: 'waiting',
+        schedule: data.schedule,
+      }
+      return { ...s, jobs: [job, ...s.jobs] }
+    })
+    // demo promote to running
+    window.setTimeout(() => {
+      get().update(projectId, (s) => ({
+        ...s,
+        jobs: s.jobs.map((j) =>
+          j.title === data.title && j.status === 'queued'
+            ? { ...j, status: 'run', progress: 'step 1/3' }
+            : j,
+        ),
+      }))
+    }, 800)
+  },
+
+  killJob: (projectId, id) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      jobs: s.jobs.map((j) =>
+        j.id === id && (j.status === 'run' || j.status === 'queued')
+          ? { ...j, status: 'cancelled', progress: 'killed (demo)' }
+          : j,
+      ),
+    }))
+  },
+
+  createAgent: (projectId, data) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      agents: [{ ...data, id: uid('agent') }, ...s.agents],
+    }))
+  },
+
+  updateAgent: (projectId, id, patch) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      agents: s.agents.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+    }))
+  },
+
+  createTool: (projectId, data) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      httpTools: [{ ...data, id: uid('tool') }, ...s.httpTools],
+    }))
+  },
+
+  deleteTool: (projectId, id) => {
+    get().update(projectId, (s) => ({ ...s, httpTools: s.httpTools.filter((t) => t.id !== id) }))
+  },
+
+  createMcp: (projectId, data) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      mcps: [{ ...data, id: uid('mcp') }, ...s.mcps],
+    }))
+  },
+
+  deleteMcp: (projectId, id) => {
+    get().update(projectId, (s) => ({ ...s, mcps: s.mcps.filter((m) => m.id !== id) }))
+  },
+
+  toggleTool: (projectId, id) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      httpTools: s.httpTools.map((t) => (t.id === id ? { ...t, on: !t.on } : t)),
+    }))
+  },
+
+  toggleMcp: (projectId, id) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      mcps: s.mcps.map((m) => (m.id === id ? { ...m, on: !m.on } : m)),
+    }))
+  },
+
+  createEnvEntry: (projectId, data) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      envEntries: [{ ...data, id: uid('env'), revealed: false }, ...s.envEntries],
+    }))
+  },
+
+  deleteEnvEntry: (projectId, id) => {
+    get().update(projectId, (s) => ({ ...s, envEntries: s.envEntries.filter((e) => e.id !== id) }))
+  },
+
+  toggleReveal: (projectId, id) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      envEntries: s.envEntries.map((e) => (e.id === id ? { ...e, revealed: !e.revealed } : e)),
+    }))
+  },
+
+  createSuite: (projectId, name) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      testSuites: [...s.testSuites, { id: uid('suite'), name, cases: [] }],
+    }))
+  },
+
+  createTestCase: (projectId, suiteId, data) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      testSuites: s.testSuites.map((suite) =>
+        suite.id === suiteId
+          ? { ...suite, cases: [...suite.cases, { ...data, id: uid('tc') }] }
+          : suite,
+      ),
+    }))
+  },
+
+  runSuite: (projectId, suiteId) => {
+    get().update(projectId, (s) => {
+      const suite = s.testSuites.find((x) => x.id === suiteId)
+      if (!suite) return s
+      const failed = suite.cases.filter((c) => c.lastStatus === 'failed').map((c) => c.name)
+      const passed = suite.cases.filter((c) => c.lastStatus !== 'failed').length
+      return {
+        ...s,
+        lastTestRun: {
+          suiteId,
+          status: failed.length ? 'failed' : 'passed',
+          summary: `${passed} passed · ${failed.length} failed`,
+          passed,
+          failedN: failed.length,
+          failed,
+        },
+      }
+    })
+  },
+
+  addDoc: (projectId, doc) => {
+    const id = uid('doc')
+    get().update(projectId, (s) => ({
+      ...s,
+      docs: [{ ...doc, id, status: 'uploading', chunks: 0 }, ...s.docs],
+    }))
+    const steps: KnowledgeDoc['status'][] = ['chunking', 'embedding', 'indexed']
+    steps.forEach((status, i) => {
+      window.setTimeout(() => {
+        get().setDocStatus(projectId, id, status, status === 'indexed' ? 48 + Math.floor(Math.random() * 80) : undefined)
+      }, (i + 1) * 700)
+    })
+  },
+
+  setDocStatus: (projectId, id, status, chunks) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      docs: s.docs.map((d) =>
+        d.id === id ? { ...d, status, chunks: chunks ?? d.chunks } : d,
+      ),
+    }))
+  },
+
+  createMindMap: (projectId, name) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      mindMaps: [
+        ...s.mindMaps,
+        { id: uid('mm'), name, nodes: [{ id: 'r', label: name, parentId: null }] },
+      ],
+    }))
+  },
+
+  addMindNode: (projectId, mapId, label, parentId) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      mindMaps: s.mindMaps.map((m) =>
+        m.id === mapId
+          ? { ...m, nodes: [...m.nodes, { id: uid('mn'), label, parentId }] }
+          : m,
+      ),
+    }))
+  },
+
+  addHost: (projectId, data) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      deployHosts: [
+        ...s.deployHosts,
+        {
+          ...data,
+          id: uid('host'),
+          status: 'online',
+          lastSeen: 'just now',
+          orchestrator: data.orchestrator ?? 'podman-compose',
+          cpuPct: 10 + Math.floor(Math.random() * 30),
+          memPct: 20 + Math.floor(Math.random() * 40),
+        },
+      ],
+    }))
+  },
+
+  updateHost: (projectId, id, patch) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      deployHosts: s.deployHosts.map((h) => (h.id === id ? { ...h, ...patch } : h)),
+    }))
+  },
+
+  removeHost: (projectId, id) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      deployHosts: s.deployHosts.filter((h) => h.id !== id),
+      deployServices: s.deployServices.filter((svc) => svc.hostId !== id),
+    }))
+  },
+
+  saveDeployRun: (projectId, run) => {
+    get().update(projectId, (s) => {
+      const exists = s.deployRuns.some((r) => r.id === run.id)
+      return {
+        ...s,
+        deployRuns: exists
+          ? s.deployRuns.map((r) => (r.id === run.id ? run : r))
+          : [run, ...s.deployRuns],
+      }
+    })
+  },
+
+  finalizeDeployRun: (projectId, run, opts) => {
+    get().update(projectId, (s) => {
+      const host = s.deployHosts.find((h) => h.id === run.hostId)
+      const rec: DeployRecord | null =
+        run.status === 'ok' && run.action !== 'validate'
+          ? {
+              id: uid('dep'),
+              env: run.env,
+              url:
+                opts.url ??
+                `https://${run.env.toLowerCase()}.${host?.name ?? 'host'}.local`,
+              status: run.action === 'down' ? 'stopped' : 'ok',
+              when: 'Just now',
+              hostId: run.hostId,
+              composeFile: run.composeFile,
+              runId: run.id,
+            }
+          : null
+
+      let services = s.deployServices
+      if (run.action === 'down' && run.status === 'ok') {
+        services = s.deployServices.map((svc) =>
+          svc.hostId === run.hostId && svc.env === run.env
+            ? { ...svc, status: 'stopped' as const }
+            : svc,
+        )
+      } else if (opts.services.length > 0) {
+        // replace stack services for this host+env
+        services = [
+          ...opts.services,
+          ...s.deployServices.filter(
+            (svc) => !(svc.hostId === run.hostId && svc.env === run.env),
+          ),
+        ]
+      }
+
+      const exists = s.deployRuns.some((r) => r.id === run.id)
+      return {
+        ...s,
+        deployRuns: exists
+          ? s.deployRuns.map((r) => (r.id === run.id ? run : r))
+          : [run, ...s.deployRuns],
+        deploys: rec ? [rec, ...s.deploys.filter((d) => !(d.env === run.env && d.hostId === run.hostId))] : s.deploys,
+        deployServices: services,
+        deployTimeline: [
+          {
+            time: 'Just now',
+            msg: `${run.action} · ${run.env} · ${run.composeFile} on ${host?.name ?? run.hostId} → ${run.status}`,
+          },
+          ...s.deployTimeline,
+        ],
+      }
+    })
+  },
+
+  setWorkflowGraph: (projectId, workflowId, nodes, edges) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      workflows: s.workflows.map((w) => (w.id === workflowId ? { ...w, nodes, edges } : w)),
+    }))
+  },
+
+  addWorkflowRun: (projectId, run) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      workflowRuns: [run, ...s.workflowRuns],
+      workflows: s.workflows.map((w) =>
+        w.id === run.workflowId ? { ...w, runs: w.runs + 1 } : w,
+      ),
+    }))
+  },
+
+  importN8n: (projectId, json) => {
+    try {
+      const raw = json as {
+        name?: string
+        nodes?: { name?: string; type?: string; position?: [number, number] | { x: number; y: number } }[]
+        connections?: Record<string, { main?: { node: string }[][] }>
+      }
+      const nodes = (raw.nodes ?? []).map((n, i) => {
+        const pos = Array.isArray(n.position)
+          ? { x: n.position[0] ?? i * 160, y: n.position[1] ?? 100 }
+          : n.position ?? { x: i * 160, y: 100 }
+        const t = (n.type || '').toLowerCase()
+        let kind: WfNodeKind = 'unknown'
+        if (t.includes('trigger') || t.includes('webhook') || t.includes('cron')) kind = 'trigger'
+        else if (t.includes('http')) kind = 'http'
+        else if (t.includes('openai') || t.includes('llm') || t.includes('agent')) kind = 'llm'
+        else if (t.includes('code') || t.includes('function')) kind = 'code'
+        else if (t.includes('if') || t.includes('switch')) kind = 'condition'
+        else if (t.includes('slack') || t.includes('email') || t.includes('notify')) kind = 'notify'
+        return {
+          id: `imp-${i}`,
+          type: 'studio',
+          position: pos,
+          data: { label: n.name || `Node ${i + 1}`, kind, params: { n8nType: n.type || 'unknown' } },
+        }
+      })
+      const nameToId = new Map(nodes.map((n) => [n.data.label, n.id]))
+      const edges: WorkflowDef['edges'] = []
+      Object.entries(raw.connections || {}).forEach(([from, conn]) => {
+        const source = nameToId.get(from)
+        conn.main?.forEach((chain) => {
+          chain.forEach((link) => {
+            const target = nameToId.get(link.node)
+            if (source && target) edges.push({ id: uid('e'), source, target })
+          })
+        })
+      })
+      const id = uid('wf')
+      get().update(projectId, (s) => ({
+        ...s,
+        workflows: [
+          {
+            id,
+            name: raw.name || 'Imported n8n workflow',
+            status: 'idle',
+            trigger: 'imported',
+            runs: 0,
+            nodes,
+            edges,
+          },
+          ...s.workflows,
+        ],
+      }))
+      return id
+    } catch {
+      return null
+    }
+  },
+
+  runSql: (projectId, sql) => {
+    const s = get().ensure(projectId)
+    const q = sql.trim().toLowerCase()
+    if (!q) return { columns: [], rows: [], error: 'Empty query' }
+    if (q.includes('error') || q.includes('drop ')) {
+      return { columns: [], rows: [], error: 'Demo engine refused query (simulated error)' }
+    }
+    const table = s.tables.find((t) => q.includes(t.name.toLowerCase()))
+    if (table) {
+      const cols = table.columns ?? ['col']
+      const rows = Array.from({ length: Math.min(5, table.rows) }, (_, i) =>
+        cols.map((_c, j) => (j === 0 ? `${table.name}_${i + 1}` : String((i + 1) * (j + 3)))),
+      )
+      return { columns: cols, rows, rowCount: rows.length }
+    }
+    // default sample from studioExtras shape
+    const extras = getStudioExtras(projectId)
+    if (extras.sqlRows.length) {
+      return {
+        columns: extras.sqlRows[0].map((_, i) => `c${i + 1}`),
+        rows: extras.sqlRows,
+        rowCount: extras.sqlRows.length,
+      }
+    }
+    return { columns: ['result'], rows: [['ok']], rowCount: 1 }
+  },
+}))
+
+/**
+ * Safe React subscription for project studio state.
+ * Selects a stable byProject entry (or cached seed) and ensures the project is in the store once.
+ */
+export function useProjectStudio(projectId: string | null | undefined): ProjectStudioState {
+  const id = resolveProjectId(projectId)
+  const state = useStudioDemoStore((s) => s.byProject[id] ?? s.get(id))
+  const ensure = useStudioDemoStore((s) => s.ensure)
+
+  useEffect(() => {
+    ensure(id)
+  }, [id, ensure])
+
+  return state
+}

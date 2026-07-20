@@ -3,6 +3,7 @@ import { AppShell } from '@/components/shell/AppShell'
 import { PlaygroundPage } from '@/pages/PlaygroundPage'
 import { PlaceholderPage } from '@/pages/PlaceholderPage'
 import { DetachedPanelPage } from '@/pages/DetachedPanelPage'
+import { StudioToastHost } from '@/components/studio/StudioToastHost'
 
 function AppRoutes() {
   const [params] = useSearchParams()
@@ -44,6 +45,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AppRoutes />
+      <StudioToastHost />
     </BrowserRouter>
   )
 }
