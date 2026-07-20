@@ -1,0 +1,297 @@
+/* App-level shell overrides for full-viewport IDE */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.pg-main-workbench {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Page main must flex for dock chain — full-bleed IDE (no PF glass card inset) */
+.pf-v6-c-page.pg-shell {
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+}
+
+.pf-v6-c-page.pg-shell .pf-v6-c-page__main,
+.pf-v6-c-page.pg-shell .pf-v6-c-page__main-container,
+.pf-v6-c-page.pg-shell .pf-v6-c-page__main-body,
+.pf-v6-c-page.pg-shell main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  flex: 1;
+  padding: 0 !important;
+  height: 100%;
+}
+
+/* Kill PF6 main “card” (white island on gray page) so workbench is full-bleed */
+.pf-v6-c-page.pg-shell .pf-v6-c-page__main-container {
+  margin: 0 !important;
+  max-height: 100% !important;
+  align-self: stretch !important;
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  background: var(--pf-t--global--background--color--secondary--default) !important;
+  z-index: auto;
+}
+
+.pf-v6-c-page.pg-shell .pf-v6-c-page__main-body,
+.pf-v6-c-page.pg-shell .pf-v6-c-page__main {
+  background: transparent !important;
+}
+
+.project-tabs-actions .pg-add-project {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0;
+  font-size: 1.125rem;
+  line-height: 1;
+  border-radius: var(--pf-t--global--border--radius--small);
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.project-tabs-actions .pg-add-project:hover {
+  color: var(--pf-t--global--text--color--regular);
+  background: var(--pf-t--global--background--color--action--plain--hover);
+}
+
+.pg-sidebar-body-flex {
+  display: flex !important;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  padding-block: 0 !important;
+}
+
+/* Collapsed icon-only sidebar */
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-page__sidebar {
+  width: var(--pg-sidebar-w-collapsed, 4rem) !important;
+}
+
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-nav__link-text,
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-collapse-label,
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-nav__link .pf-v6-c-badge {
+  display: none;
+}
+
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-nav__link {
+  justify-content: center;
+}
+
+.detached-shell,
+.detached-panel-root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--pf-t--global--background--color--primary--default);
+}
+
+.detached-panel-root > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Panel tray must sit above PF page main (portal to body + high z-index) */
+.panel-palette.mode-float,
+.panel-palette.mode-docked,
+.panel-palette-chip {
+  z-index: var(--pf-t--global--z-index--2xl, 600) !important;
+}
+
+/* Palette docked into slot via fixed positioning fallback */
+.panel-palette.mode-docked {
+  position: fixed;
+  left: 0.5rem;
+  bottom: 3.5rem;
+  width: calc(var(--pg-sidebar-w, 15.5rem) - 1rem);
+  background: var(--pf-t--global--background--color--secondary--default) !important;
+  border: 1px solid var(--pf-t--global--border--color--default) !important;
+  padding: 0.5rem !important;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .panel-palette.mode-docked {
+  width: calc(var(--pg-sidebar-w-collapsed, 4rem) - 0.5rem);
+}
+
+.panel-palette-chip {
+  position: fixed;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: var(--pf-t--global--border--radius--medium);
+  background: var(--pf-t--global--background--color--primary--default);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--pf-t--global--box-shadow--md);
+}
+
+.sql-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--pg-mono, monospace);
+  font-size: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.sql-table td {
+  border: 1px solid var(--pf-t--global--border--color--default);
+  padding: 0.35rem 0.5rem;
+}
+
+.preview-frame {
+  display: flex;
+  justify-content: center;
+  background: var(--pf-t--global--background--color--secondary--default);
+}
+
+.preview-device {
+  width: 100%;
+  max-width: 960px;
+  margin: 0.5rem;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--pf-t--global--background--color--primary--default);
+  box-shadow: var(--pf-t--global--box-shadow--sm);
+}
+
+.preview-device.tablet {
+  max-width: 720px;
+}
+.preview-device.mobile {
+  max-width: 380px;
+}
+
+.preview-chrome {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.65rem;
+  background: var(--pf-t--global--background--color--secondary--default);
+  border-block-end: 1px solid var(--pf-t--global--border--color--default);
+  font-size: 0.7rem;
+}
+
+.preview-chrome .dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+}
+.preview-chrome .dot.r {
+  background: #ef4444;
+}
+.preview-chrome .dot.y {
+  background: #eab308;
+}
+.preview-chrome .dot.g {
+  background: #22c55e;
+}
+.preview-chrome .url {
+  margin-inline-start: 0.5rem;
+  color: var(--pf-t--global--text--color--subtle);
+  font-family: var(--pg-mono, monospace);
+}
+
+.preview-body {
+  padding: 1.5rem;
+}
+
+.preview-hero h1 {
+  font-size: 1.25rem;
+  margin: 0 0 0.5rem;
+}
+
+.preview-hero p {
+  color: var(--pf-t--global--text--color--subtle);
+  margin: 0 0 1rem;
+  font-size: 0.875rem;
+}
+
+.preview-metrics {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.preview-metrics .metric {
+  flex: 1;
+  min-width: 5rem;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 8px;
+  padding: 0.75rem;
+  text-align: center;
+}
+
+.preview-metrics .metric .m-val {
+  display: block;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.preview-metrics .metric .m-lab {
+  font-size: 0.7rem;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.preview-metrics .metric.ok .m-val {
+  color: var(--pf-t--global--text--color--status--success--default);
+}
+.preview-metrics .metric.warn .m-val {
+  color: var(--pf-t--global--text--color--status--warning--default);
+}
+
+.pal-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.pal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: var(--pf-t--global--border--radius--small);
+  background: var(--pf-t--global--background--color--primary--default);
+  padding: 0.35rem 0.5rem;
+  font-size: 0.7rem;
+  cursor: pointer;
+  color: var(--pf-t--global--text--color--regular);
+}
+
+.pal-btn:hover {
+  border-color: var(--pf-t--global--border--color--brand--default);
+  background: var(--pf-t--global--background--color--action--plain--hover);
+}
+
+.pal-hint {
+  width: 100%;
+  font-size: 0.65rem;
+  color: var(--pf-t--global--text--color--subtle);
+  margin-block-start: 0.25rem;
+}
+
+.panel-palette .pal-tools button.is-active {
+  background: var(--pf-t--global--background--color--action--plain--hover);
+  color: var(--pf-t--global--text--color--brand--default);
+}

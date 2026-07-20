@@ -18,6 +18,18 @@ Compared to contemporary tools like Continue, Lovable, v0.dev, or bolt.new, Ever
 
 In a typical use case, a support engineer can instantly develop an AI tool to analyze sosreports for system conditions, leveraging pre-configured compliant data access mechanisms (e.g., MCP servers), without triggering lengthy legal reviews.
 
+## UI (PatternFly 6.6 React)
+
+The interactive IDE-style frontend lives in **[`everflow-platform-ui/`](everflow-platform-ui/)**. It ports the [`playground-v2-pf.html`](playground-v2-pf.html) prototype to React + PatternFly 6.6.0 (vibe chat, dockable panels, workflows, deploy, etc. — mock data).
+
+```bash
+cd everflow-platform-ui
+npm install
+npm run dev
+```
+
+See [everflow-platform-ui/README.md](everflow-platform-ui/README.md) and [PLAN.md](PLAN.md) for architecture and roadmap.
+
 ## License
 
 This project is licensed under the terms described in [LICENSE](LICENSE).
