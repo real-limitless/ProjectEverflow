@@ -36,6 +36,7 @@ export function PanelPalette() {
   const mode = usePlaygroundStore((s) => s.paletteMode)
   const pos = usePlaygroundStore((s) => s.palettePos)
   const visible = usePlaygroundStore((s) => s.paletteVisible)
+  const isSidebarOpen = usePlaygroundStore((s) => s.isSidebarOpen)
   const paletteDragging = usePlaygroundStore((s) => s.paletteDragging)
   const setPaletteMode = usePlaygroundStore((s) => s.setPaletteMode)
   const setPalettePos = usePlaygroundStore((s) => s.setPalettePos)
@@ -248,29 +249,123 @@ export function PanelPalette() {
   let node: React.ReactNode
 
   if (mode === 'chip' || !visible) {
-    const chipX = Number.isFinite(pos.x) ? pos.x : 10
-    const chipY = Number.isFinite(pos.y) ? pos.y : Math.max(72, window.innerHeight - 56)
-    node = (
-      <button
-        type="button"
-        className="panel-palette-chip is-visible"
-        id="panelPaletteChip"
-        title="Show panel tray"
-        style={{ left: chipX, top: chipY }}
-        onClick={() => floatPalette()}
-      >
-        Panels
-      </button>
-    )
+    // Sidebar footer already has a Panels button when nav is open — no floater
+    if (isSidebarOpen) {
+      node = null
+    } else {
+      const chipX = Number.isFinite(pos.x) ? pos.x : 10
+      const chipY = Number.isFinite(pos.y)
+        ? pos.y
+        : Math.max(72, window.innerHeight - 56)
+      node = (
+        <button
+          type="button"
+          className="panel-palette-chip is-visible"
+          id="panelPaletteChip"
+          title="Show panel tray"
+          style={{ left: chipX, top: chipY }}
+          onClick={() => floatPalette()}
+        >
+          Panels
+        </button>
+      )
+    }
   } else if (mode === 'docked') {
     node = (
       <div
-        className="panel-palette mode-docked mode-docked-in-slot"
+        className="docked-panel-rail"
         id="panelPalette"
-        aria-label="Panel tray"
+        aria-label="Open a panel"
       >
-        {head}
-        {buttons}
+        <div className="docked-panel-rail__head">
+          <div
+            className="docked-panel-rail__grip pal-drag-handle"
+            title="Drag to undock"
+            onPointerDown={(e) => {
+              if ((e.target as HTMLElement).closest('button')) return
+              dragRef.current = {
+                ox: e.clientX,
+                oy: e.clientY,
+                sx: e.clientX,
+                sy: e.clientY,
+                fromDocked: true,
+                moved: false,
+              }
+              setPaletteDragging(true)
+              e.currentTarget.setPointerCapture(e.pointerId)
+            }}
+            onPointerMove={(e) => {
+              if (!dragRef.current) return
+              const dist =
+                Math.abs(e.clientX - dragRef.current.sx) +
+                Math.abs(e.clientY - dragRef.current.sy)
+              if (dist > 4) dragRef.current.moved = true
+              if (dragRef.current.fromDocked && dist > 8) {
+                setPalettePos({
+                  x: Math.max(0, e.clientX - 40),
+                  y: Math.max(0, e.clientY - 16),
+                })
+                setPaletteMode('float')
+                dragRef.current = {
+                  ox: e.clientX - 40,
+                  oy: e.clientY - 16,
+                  sx: e.clientX,
+                  sy: e.clientY,
+                  fromDocked: true,
+                  moved: true,
+                }
+              }
+              setDropHot(isOverSidebarDrop(e.clientX, e.clientY))
+            }}
+            onPointerUp={(e) => endDrag(e.clientX, e.clientY)}
+            onPointerCancel={(e) => endDrag(e.clientX, e.clientY)}
+          >
+            <span className="docked-panel-rail__title">Open panel</span>
+          </div>
+          <div className="docked-panel-rail__tools">
+            <button
+              type="button"
+              title="Float tray"
+              onClick={(e) => {
+                e.stopPropagation()
+                floatPalette()
+              }}
+            >
+              ⬡
+            </button>
+            <button
+              type="button"
+              title="Hide tray"
+              onClick={(e) => {
+                e.stopPropagation()
+                hidePalette()
+              }}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        <ul className="docked-panel-rail__list" role="list">
+          {PANEL_TYPES.map((type) => {
+            const m = PANEL_META[type]
+            return (
+              <li key={type}>
+                <button
+                  type="button"
+                  className="docked-panel-rail__item"
+                  data-open-panel={type}
+                  onClick={() => openPanelType(type)}
+                  title={m.label}
+                >
+                  <span className="docked-panel-rail__ico" aria-hidden>
+                    {m.icon}
+                  </span>
+                  <span className="docked-panel-rail__lab">{m.label}</span>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
       </div>
     )
   } else {
