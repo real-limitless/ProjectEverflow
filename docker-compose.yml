@@ -11,15 +11,19 @@ services:
     build:
       context: .
       dockerfile: deploy/sandbox-agent.Dockerfile
+    # Required for real microVMs (libkrun + KVM)
     privileged: true
     devices:
       - /dev/kvm
     environment:
       SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
-      SANDBOX_MOCK: ${SANDBOX_MOCK:-true}
-      DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ubuntu:24.04}
+      # Real microVMs only (official msb image). Set true only for CI without KVM.
+      SANDBOX_MOCK: ${SANDBOX_MOCK:-false}
+      DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-python}
       WORKSPACE_ROOT: /workspaces
+      MSB_HOME: /root/.microsandbox
     volumes:
+      # Guest images + runtime state (must persist across restarts)
       - msb_data:/root/.microsandbox
       - project_workspaces:/workspaces
     expose:
@@ -28,11 +32,17 @@ services:
     # ports:
     #   - "8090:8090"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"]
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')",
+        ]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      retries: 8
+      start_period: 30s
 
   backend:
     build:
@@ -46,7 +56,7 @@ services:
       SANDBOX_ENABLED: ${SANDBOX_ENABLED:-true}
       SANDBOX_AGENT_URL: http://sandbox-agent:8090
       SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
-      SANDBOX_DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ubuntu:24.04}
+      SANDBOX_DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-python}
       SANDBOX_DEFAULT_MEMORY_MIB: ${SANDBOX_DEFAULT_MEMORY_MIB:-2048}
       SANDBOX_DEFAULT_CPUS: ${SANDBOX_DEFAULT_CPUS:-2}
     volumes:

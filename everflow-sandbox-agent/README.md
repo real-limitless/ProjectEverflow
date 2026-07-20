@@ -23,12 +23,24 @@ export SANDBOX_MOCK=true
 uvicorn app.main:app --reload --port 8090
 ```
 
-## Production (KVM)
+## Production (real microVMs)
 
-Requires Linux + `/dev/kvm`. Prefer Compose:
+**Do not use a plain `python:slim` image.** Real sandboxes need the official
+microsandbox runtime (`libkrunfw` + `msb`). Our Compose image is based on:
+
+`ghcr.io/superradcompany/microsandbox:latest`
 
 ```bash
-docker compose up sandbox-agent
+# SANDBOX_MOCK must be false (default in compose)
+docker compose up --build sandbox-agent
 ```
 
-The container runs privileged with `/dev/kvm` forwarded.
+Requirements:
+
+- Linux host with `/dev/kvm` (read/write)
+- `privileged: true` and device `/dev/kvm` (already in compose)
+- Persistent volume on `/root/.microsandbox` for guest images
+
+Verified on this stack: `Sandbox.create` + `exec` print from a real microVM.
+
+Mock mode (`SANDBOX_MOCK=true`) exists only for CI without KVM — not for product use.

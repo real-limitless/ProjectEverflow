@@ -67,6 +67,7 @@ async def create_sandbox(
             labels=body.labels,
             harnesses=body.harnesses,
             workspace_host_path=body.workspace_host_path,
+            replace=body.replace,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
@@ -143,10 +144,12 @@ async def remove_sandbox(
     name: str,
     backend: Annotated[SandboxBackend, Depends(get_backend)],
 ) -> None:
+    """Idempotent remove: missing sandbox still returns 204 (recreate-friendly)."""
     try:
         await backend.remove(name)
     except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found") from None
+        # Already gone — success for force recreate paths
+        return
 
 
 @router.post(

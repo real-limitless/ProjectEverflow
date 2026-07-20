@@ -119,5 +119,14 @@ async def test_sandbox_lifecycle(client: AsyncClient) -> None:
     names = {e["name"] for e in listing.json()}
     assert "README.md" in names or "src" in names
 
+    # replace=true recreates same name
+    again = await client.post(
+        "/v1/sandboxes",
+        headers=HEADERS,
+        json={"name": "ef-test-proj", "replace": True, "harnesses": ["agent-claude-code"]},
+    )
+    assert again.status_code == 201, again.text
+    assert again.json()["status"] == "running"
+
     rm = await client.post("/v1/sandboxes/ef-test-proj/remove", headers=HEADERS)
     assert rm.status_code == 204

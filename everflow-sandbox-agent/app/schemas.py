@@ -14,6 +14,8 @@ class SandboxCreateRequest(BaseModel):
     labels: dict[str, str] = Field(default_factory=dict)
     harnesses: list[str] = Field(default_factory=list)
     workspace_host_path: str | None = None
+    # When true, replace any existing sandbox with the same name (keep workspace dir).
+    replace: bool = False
 
 
 class ExecRequest(BaseModel):

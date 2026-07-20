@@ -15,9 +15,10 @@ class Settings(BaseSettings):
 
     app_name: str = "Everflow Sandbox Agent"
     sandbox_agent_token: str = "change-me"
-    # When true (default if microsandbox missing), use in-memory mock backend.
-    sandbox_mock: bool | None = None
-    default_image: str = "ubuntu:24.04"
+    # Explicit true → mock. False/None → real microsandbox (fail if KVM/SDK missing).
+    sandbox_mock: bool | None = False
+    # Prefer microsandbox-friendly defaults (docs use "python" / "debian")
+    default_image: str = "python"
     default_cpus: int = 2
     default_memory_mib: int = 2048
     workspace_root: str = "/workspaces"
@@ -25,14 +26,8 @@ class Settings(BaseSettings):
     port: int = 8090
 
     def resolve_mock(self) -> bool:
-        if self.sandbox_mock is not None:
-            return self.sandbox_mock
-        try:
-            import microsandbox  # noqa: F401
-
-            return False
-        except ImportError:
-            return True
+        """Only mock when explicitly enabled."""
+        return bool(self.sandbox_mock)
 
     @property
     def workspace_path(self) -> Path:

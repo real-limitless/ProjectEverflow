@@ -1,24 +1,45 @@
-FROM python:3.12-slim-bookworm
+# Real microVMs require the official microsandbox runtime (libkrunfw + msb).
+# A plain python:slim + pip install is NOT enough — guest processes exit
+# before startup without libkrunfw (unix_wait_status 256).
+#
+# Base: https://github.com/superradcompany/microsandbox (ghcr.io)
+FROM ghcr.io/superradcompany/microsandbox:latest
 
+USER root
 WORKDIR /app
 
+# Official image is Ubuntu; ENTRYPOINT is `msb`. Override for our agent.
+ENTRYPOINT []
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates \
+    python3 \
+    python3-pip \
+    python3-venv \
+    ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Avoid PEP 668 blocks for system Python in Ubuntu 24.04
+ENV PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PYTHONUNBUFFERED=1
 
 COPY everflow-sandbox-agent/pyproject.toml everflow-sandbox-agent/README.md ./
 COPY everflow-sandbox-agent/app ./app
 
-RUN pip install --no-cache-dir -e .
+RUN pip3 install --no-cache-dir -e . \
+    && pip3 install --no-cache-dir 'microsandbox'
 
-# Optional real SDK (may fail on some arches; mock mode still works)
-RUN pip install --no-cache-dir 'microsandbox' || true
-
-ENV SANDBOX_MOCK=true \
+# Real sandboxes only — do not default to mock in this image
+ENV SANDBOX_MOCK=false \
     WORKSPACE_ROOT=/workspaces \
     HOST=0.0.0.0 \
-    PORT=8090
+    PORT=8090 \
+    MSB_HOME=/root/.microsandbox
+
+RUN mkdir -p /workspaces /root/.microsandbox \
+    && msb doctor || true
 
 EXPOSE 8090
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8090"]
+# Verify KVM at start, then serve the control plane
+CMD ["sh", "-c", "msb doctor; exec python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8090"]

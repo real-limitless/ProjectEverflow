@@ -44,6 +44,7 @@ class SandboxBackend(ABC):
         labels: dict[str, str],
         harnesses: list[str],
         workspace_host_path: str | None,
+        replace: bool = False,
     ) -> SandboxRecord: ...
 
     @abstractmethod
@@ -90,6 +91,15 @@ def kvm_available() -> bool:
     return Path("/dev/kvm").exists()
 
 
+def _is_sandbox_not_found(exc: BaseException) -> bool:
+    """True if microsandbox (or wrapper) reports the named sandbox is missing."""
+    name = type(exc).__name__
+    if name in ("SandboxNotFoundError", "NotFoundError"):
+        return True
+    msg = str(exc).lower()
+    return "not found" in msg or "does not exist" in msg
+
+
 class MockSandboxBackend(SandboxBackend):
     """In-memory sandboxes backed by host workspace directories (no KVM)."""
 
@@ -124,12 +134,16 @@ class MockSandboxBackend(SandboxBackend):
         labels: dict[str, str],
         harnesses: list[str],
         workspace_host_path: str | None,
+        replace: bool = False,
     ) -> SandboxRecord:
         async with self._lock:
             existing = self._sandboxes.get(name)
             if existing and existing.status not in ("destroyed", "error"):
-                # Idempotent: return existing running/stopped sandbox
-                return existing
+                if not replace:
+                    # Idempotent: return existing running/stopped sandbox
+                    return existing
+                # Force recreate: drop registry entry; keep workspace files
+                self._sandboxes.pop(name, None)
 
             ws = self._workspace(name, workspace_host_path)
             readme = ws / "README.md"
@@ -315,6 +329,13 @@ class MicrosandboxBackend(SandboxBackend):
             "mock": False,
         }
 
+    async def _force_cleanup(self, name: str) -> None:
+        """Best-effort stop+remove so create/replace is clean."""
+        try:
+            await self.remove(name)
+        except Exception as exc:
+            logger.debug("cleanup before create name=%s: %s", name, exc)
+
     async def create(
         self,
         name: str,
@@ -325,8 +346,9 @@ class MicrosandboxBackend(SandboxBackend):
         labels: dict[str, str],
         harnesses: list[str],
         workspace_host_path: str | None,
+        replace: bool = False,
     ) -> SandboxRecord:
-        from microsandbox import Sandbox
+        from microsandbox import Sandbox, Volume
 
         if not kvm_available():
             raise RuntimeError("/dev/kvm is not available on this host")
@@ -334,37 +356,85 @@ class MicrosandboxBackend(SandboxBackend):
         ws = Path(workspace_host_path or (self._settings.workspace_path / name))
         ws.mkdir(parents=True, exist_ok=True)
 
-        volumes: dict[str, Any] = {
-            "/workspace": {"path": str(ws), "kind": "bind"},
-        }
+        if replace:
+            await self._force_cleanup(name)
 
+        # Try several mount strategies. Nested Docker+KVM often rejects bind mounts
+        # or crashes the guest; named volumes under ~/.microsandbox are more reliable.
+        vol_name = f"ef-ws-{name}"[:120]
+        errors: list[str] = []
+        sb = None
+        used_workspace = str(ws)
+
+        attempts: list[tuple[str, dict[str, Any]]] = []
+
+        # 1) Named volume (managed by microsandbox)
         try:
-            sb = await Sandbox.create(
-                name,
-                image=image,
-                cpus=cpus,
-                memory=memory_mib,
-                labels=labels,
-                detached=True,
-                replace=True,
-                volumes=volumes,
-                workdir="/workspace",
+            try:
+                await Volume.create(vol_name, kind="dir")
+            except Exception:
+                pass  # already exists
+            attempts.append(
+                (
+                    "named-volume",
+                    {
+                        "volumes": {"/workspace": Volume.named(vol_name)},
+                        "workdir": "/workspace",
+                    },
+                )
             )
-            await sb.detach()
-        except TypeError:
-            # Older/newer SDK volume shape — fall back without volumes
-            logger.warning("Sandbox.create volumes kwarg failed; retrying minimal create")
-            sb = await Sandbox.create(
-                name,
-                image=image,
-                cpus=cpus,
-                memory=memory_mib,
-                labels=labels,
-                detached=True,
-                replace=True,
-                workdir="/workspace",
+        except Exception as exc:
+            errors.append(f"named-volume-prep: {exc}")
+
+        # 2) Host bind mount
+        attempts.append(
+            (
+                "bind",
+                {
+                    "volumes": {"/workspace": Volume.bind(str(ws))},
+                    "workdir": "/workspace",
+                },
             )
-            await sb.detach()
+        )
+
+        # 3) No extra mounts (guest-only FS)
+        attempts.append(("no-volumes", {"workdir": "/root"}))
+
+        for label, extra in attempts:
+            try:
+                logger.info("Sandbox.create attempt=%s name=%s image=%s", label, name, image)
+                sb = await Sandbox.create(
+                    name,
+                    image=image,
+                    cpus=cpus,
+                    memory=memory_mib,
+                    labels=labels,
+                    detached=True,
+                    replace=True,
+                    **extra,
+                )
+                await sb.detach()
+                logger.info("Sandbox.create succeeded attempt=%s name=%s", label, name)
+                if label == "named-volume":
+                    used_workspace = f"named:{vol_name}"
+                elif label == "no-volumes":
+                    used_workspace = "(guest-only)"
+                break
+            except Exception as exc:
+                msg = f"{label}: {exc}"
+                errors.append(msg)
+                logger.warning("Sandbox.create failed attempt=%s name=%s: %s", label, name, exc)
+                await self._force_cleanup(name)
+                sb = None
+
+        if sb is None:
+            detail = " | ".join(errors) if errors else "unknown error"
+            raise RuntimeError(
+                "Failed to boot microVM sandbox. "
+                f"Attempts: {detail}. "
+                "If running in Docker/Podman, ensure privileged + /dev/kvm and nested virt; "
+                "or set SANDBOX_MOCK=true for local mock sandboxes."
+            )
 
         rec = SandboxRecord(
             name=name,
@@ -372,12 +442,18 @@ class MicrosandboxBackend(SandboxBackend):
             image=image,
             labels=dict(labels),
             harnesses=list(harnesses),
-            workspace_path=str(ws),
+            workspace_path=used_workspace,
             created_at=datetime.now(timezone.utc),
         )
         self._meta[name] = rec
+        # Bootstrap is best-effort: never fail create after the VM is up
         if harnesses:
-            await self.bootstrap(name, harnesses)
+            try:
+                await self.bootstrap(name, harnesses)
+                rec.harnesses = list(harnesses)
+            except Exception as exc:
+                logger.exception("bootstrap failed name=%s (sandbox still running): %s", name, exc)
+                rec.error = f"bootstrap failed: {exc}"[:500]
         return rec
 
     async def get(self, name: str) -> SandboxRecord | None:
@@ -386,7 +462,12 @@ class MicrosandboxBackend(SandboxBackend):
         try:
             handle = await Sandbox.get(name)
         except Exception:
-            return self._meta.get(name)
+            # Do not return stale in-memory "running" if the VM is gone
+            meta = self._meta.get(name)
+            if meta is not None:
+                meta.status = "error"
+                meta.error = meta.error or "Sandbox not found on microsandbox runtime"
+            return meta
 
         meta = self._meta.get(name)
         status = getattr(handle, "status", None) or (meta.status if meta else "unknown")
@@ -426,8 +507,13 @@ class MicrosandboxBackend(SandboxBackend):
     async def start(self, name: str) -> SandboxRecord:
         from microsandbox import Sandbox
 
-        sb = await Sandbox.start(name, detached=True)
-        await sb.detach()
+        try:
+            sb = await Sandbox.start(name, detached=True)
+            await sb.detach()
+        except Exception as exc:
+            if _is_sandbox_not_found(exc):
+                raise KeyError(name) from exc
+            raise
         rec = await self.get(name)
         if rec is None:
             raise KeyError(name)
@@ -437,19 +523,31 @@ class MicrosandboxBackend(SandboxBackend):
     async def stop(self, name: str) -> SandboxRecord:
         from microsandbox import Sandbox
 
-        handle = await Sandbox.get(name)
-        if hasattr(handle, "stop"):
-            await handle.stop()
-        elif hasattr(handle, "connect"):
-            sb = await handle.connect()
-            await sb.stop()
+        try:
+            handle = await Sandbox.get(name)
+        except Exception as exc:
+            if _is_sandbox_not_found(exc):
+                raise KeyError(name) from exc
+            raise
+        try:
+            if hasattr(handle, "stop"):
+                await handle.stop()
+            elif hasattr(handle, "connect"):
+                sb = await handle.connect()
+                await sb.stop()
+        except Exception as exc:
+            if _is_sandbox_not_found(exc):
+                raise KeyError(name) from exc
+            raise
         rec = await self.get(name)
         if rec is None:
+            # Already gone after stop — treat as stopped missing
             raise KeyError(name)
         rec.status = "stopped"
         return rec
 
     async def remove(self, name: str) -> None:
+        """Idempotent: missing sandbox is success (supports recreate after agent wipe)."""
         from microsandbox import Sandbox
 
         try:
@@ -458,19 +556,43 @@ class MicrosandboxBackend(SandboxBackend):
             if callable(status):
                 status = status()
             if str(status) == "running":
-                await self.stop(name)
-        except Exception:
-            pass
-        await Sandbox.remove(name)
+                try:
+                    await self.stop(name)
+                except KeyError:
+                    pass
+        except Exception as exc:
+            if _is_sandbox_not_found(exc):
+                self._meta.pop(name, None)
+                return
+            # get failed for other reasons — still try remove
+            logger.warning("Sandbox.get before remove failed for %s: %s", name, exc)
+
+        try:
+            await Sandbox.remove(name)
+        except Exception as exc:
+            if _is_sandbox_not_found(exc):
+                self._meta.pop(name, None)
+                return
+            raise
         self._meta.pop(name, None)
 
     async def _connect(self, name: str) -> Any:
         from microsandbox import Sandbox
 
-        handle = await Sandbox.get(name)
+        try:
+            handle = await Sandbox.get(name)
+        except Exception as exc:
+            if _is_sandbox_not_found(exc):
+                raise KeyError(name) from exc
+            raise
         if hasattr(handle, "connect"):
             return await handle.connect()
-        return await Sandbox.start(name)
+        try:
+            return await Sandbox.start(name)
+        except Exception as exc:
+            if _is_sandbox_not_found(exc):
+                raise KeyError(name) from exc
+            raise
 
     async def exec(
         self,
@@ -482,7 +604,10 @@ class MicrosandboxBackend(SandboxBackend):
         env: dict[str, str] | None = None,
         timeout_seconds: float | None = 120,
     ) -> tuple[int, str, str]:
-        sb = await self._connect(name)
+        try:
+            sb = await self._connect(name)
+        except KeyError:
+            raise
         kwargs: dict[str, Any] = {}
         if cwd:
             kwargs["cwd"] = cwd
@@ -506,9 +631,14 @@ class MicrosandboxBackend(SandboxBackend):
                 code = getattr(out, "returncode", 0)
             return int(code or 0), str(stdout or ""), str(stderr or "")
 
-        if timeout_seconds:
-            return await asyncio.wait_for(_do(), timeout=timeout_seconds)
-        return await _do()
+        try:
+            if timeout_seconds:
+                return await asyncio.wait_for(_do(), timeout=timeout_seconds)
+            return await _do()
+        except Exception as exc:
+            if _is_sandbox_not_found(exc):
+                raise KeyError(name) from exc
+            raise
 
     async def list_fs(self, name: str, path: str) -> list[dict[str, Any]]:
         guest_path = path if path.startswith("/") else f"/workspace/{path.lstrip('/')}"
@@ -606,16 +736,35 @@ def shlex_quote(s: str) -> str:
 
 
 def build_backend(settings: Settings) -> SandboxBackend:
-    if settings.resolve_mock():
-        logger.warning("Using MockSandboxBackend (SANDBOX_MOCK or microsandbox unavailable)")
+    """
+    Prefer real microsandbox. Mock only when SANDBOX_MOCK is explicitly true.
+
+    If SANDBOX_MOCK is false/unset and KVM/SDK is missing, raise so deploy fails
+    loudly instead of silently giving fake sandboxes.
+    """
+    if settings.sandbox_mock is True:
+        logger.warning("SANDBOX_MOCK=true — using MockSandboxBackend (NOT for product)")
         return MockSandboxBackend(settings)
+
     if not kvm_available():
-        logger.warning("/dev/kvm missing — falling back to MockSandboxBackend")
-        return MockSandboxBackend(settings)
+        raise RuntimeError(
+            "/dev/kvm is not available. Real microVMs require KVM. "
+            "Pass --device /dev/kvm and privileged, or set SANDBOX_MOCK=true only for CI."
+        )
     try:
         import microsandbox  # noqa: F401
-    except ImportError:
-        logger.warning("microsandbox not installed — MockSandboxBackend")
-        return MockSandboxBackend(settings)
-    logger.info("Using MicrosandboxBackend")
+    except ImportError as exc:
+        raise RuntimeError(
+            "microsandbox Python package is not installed. "
+            "Use deploy/sandbox-agent.Dockerfile based on ghcr.io/superradcompany/microsandbox."
+        ) from exc
+
+    # Prefer official runtime binary when present
+    import shutil
+
+    msb = shutil.which("msb")
+    logger.info(
+        "Using MicrosandboxBackend (real microVMs) kvm=yes msb=%s",
+        msb or "(sdk-embedded)",
+    )
     return MicrosandboxBackend(settings)
