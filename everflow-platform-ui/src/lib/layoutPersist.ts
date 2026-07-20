@@ -1,18 +1,21 @@
 import type { LayoutNode } from '@/types/dock'
 import type { PanelInstanceState, PanelKey } from '@/types/panels'
-import type { PaletteMode } from '@/types/project'
+import type { PaletteMode, Project } from '@/types/project'
 
 export const LAYOUT_STORE_KEY = 'everflow-ui-layouts-v1'
 
 export interface PersistedPlayground {
   openProjectIds: string[]
-  currentProjectId: string
+  /** null when no project is open */
+  currentProjectId: string | null
   groupIdSeq: number
   instanceSeq: number
   instanceState: Record<string, PanelInstanceState>
   projectLayouts: Record<string, LayoutNode>
   paletteMode?: PaletteMode
   palettePos?: { x: number; y: number }
+  /** User-created demo projects (not in seed catalog) */
+  userProjects?: Record<string, Project>
 }
 
 export function loadPersisted(): PersistedPlayground | null {

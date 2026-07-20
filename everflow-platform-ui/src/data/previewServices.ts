@@ -24,7 +24,14 @@ export const PREVIEW_SERVICES: Record<string, PreviewService[]> = {
   ],
 }
 
-export function getPreviewServices(projectId: string): PreviewService[] {
+export function getPreviewServices(
+  projectId: string | null | undefined,
+): PreviewService[] {
+  if (!projectId) {
+    return [
+      { id: 'web', label: 'Frontend', url: 'http://localhost:5173', kind: 'frontend' },
+    ]
+  }
   return (
     PREVIEW_SERVICES[projectId] || [
       { id: 'web', label: 'Frontend', url: 'http://localhost:5173', kind: 'frontend' },

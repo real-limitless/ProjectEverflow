@@ -25,8 +25,13 @@ export interface StudioExtras {
   deployTimeline: { time: string; msg: string }[]
 }
 
-export function getStudioExtras(projectId: string): StudioExtras {
-  const project = PROJECTS[projectId] ?? Object.values(PROJECTS)[0]
+export function getStudioExtras(projectId: string | null | undefined): StudioExtras {
+  const project =
+    (projectId ? PROJECTS[projectId] : undefined) ??
+    Object.values(PROJECTS)[0] ?? {
+      id: 'empty',
+      name: 'No project',
+    }
   const id = project.id
   const name = project.name
 

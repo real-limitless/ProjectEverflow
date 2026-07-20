@@ -1,0 +1,206 @@
+import type { ChatBlock, ChatMessage } from '@/types/panels'
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/** Lightweight Markdown → HTML for demo chat bubbles. */
+export function markdownToHtml(md: string): string {
+  let src = md.replace(/\r\n/g, '\n')
+
+  // Fenced code blocks
+  src = src.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang: string, code: string) => {
+    const cls = lang ? ` class="lang-${escapeHtml(lang)}"` : ''
+    return `<pre class="md-code"><code${cls}>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`
+  })
+
+  // Tables (simple pipe rows)
+  src = src.replace(/(?:^\|.+\|\n)+/gm, (block) => {
+    const rows = block.trim().split('\n').filter(Boolean)
+    if (rows.length < 2) return block
+    const parseRow = (row: string) =>
+      row
+        .replace(/^\||\|$/g, '')
+        .split('|')
+        .map((c) => c.trim())
+    const isSep = (row: string) => /^\|?\s*:?-{3,}/.test(row)
+    const header = parseRow(rows[0])
+    const bodyRows = rows.slice(1).filter((r) => !isSep(r)).map(parseRow)
+    const th = header.map((h) => `<th>${inlineMd(h)}</th>`).join('')
+    const tr = bodyRows
+      .map((cells) => `<tr>${cells.map((c) => `<td>${inlineMd(c)}</td>`).join('')}</tr>`)
+      .join('')
+    return `<table class="md-table"><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table>`
+  })
+
+  const lines = src.split('\n')
+  const out: string[] = []
+  let listBuf: string[] = []
+  let listType: 'ul' | 'ol' | null = null
+
+  const flushList = () => {
+    if (!listType || !listBuf.length) return
+    out.push(`<${listType}>${listBuf.join('')}</${listType}>`)
+    listBuf = []
+    listType = null
+  }
+
+  for (const line of lines) {
+    if (line.startsWith('<pre') || line.startsWith('<table')) {
+      flushList()
+      out.push(line)
+      continue
+    }
+    const h = /^(#{1,3})\s+(.+)$/.exec(line)
+    if (h) {
+      flushList()
+      const level = h[1].length
+      out.push(`<h${level} class="md-h">${inlineMd(h[2])}</h${level}>`)
+      continue
+    }
+    const ul = /^[-*]\s+(.+)$/.exec(line)
+    if (ul) {
+      if (listType !== 'ul') {
+        flushList()
+        listType = 'ul'
+      }
+      listBuf.push(`<li>${inlineMd(ul[1])}</li>`)
+      continue
+    }
+    const ol = /^(\d+)\.\s+(.+)$/.exec(line)
+    if (ol) {
+      if (listType !== 'ol') {
+        flushList()
+        listType = 'ol'
+      }
+      listBuf.push(`<li>${inlineMd(ol[2])}</li>`)
+      continue
+    }
+    if (!line.trim()) {
+      flushList()
+      continue
+    }
+    flushList()
+    out.push(`<p>${inlineMd(line)}</p>`)
+  }
+  flushList()
+  return out.join('\n')
+}
+
+function inlineMd(s: string): string {
+  let t = escapeHtml(s)
+  t = t.replace(/`([^`]+)`/g, '<code class="md-inline">$1</code>')
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  t = t.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+  t = t.replace(
+    /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+    '<a href="$2" target="_blank" rel="noreferrer">$1</a>',
+  )
+  return t
+}
+
+export function messageToMarkdown(msg: ChatMessage): string {
+  const parts: string[] = []
+  if (msg.thinking) parts.push(`_${msg.thinking}_`)
+  if (msg.blocks?.length) {
+    for (const b of msg.blocks) parts.push(blockToMarkdown(b))
+  } else if (msg.text) {
+    parts.push(msg.text)
+  }
+  if (msg.tool) {
+    parts.push(`\`\`\`\n// ${msg.tool.title}\n${msg.tool.body}\n\`\`\``)
+  }
+  return parts.filter(Boolean).join('\n\n')
+}
+
+export function messageToRaw(msg: ChatMessage): string {
+  const parts: string[] = []
+  if (msg.thinking) parts.push(msg.thinking)
+  if (msg.blocks?.length) {
+    for (const b of msg.blocks) parts.push(blockToRaw(b))
+  } else if (msg.text) {
+    parts.push(msg.text)
+  }
+  if (msg.tool) {
+    parts.push(`${msg.tool.title}\n${msg.tool.body}`)
+  }
+  return parts.filter(Boolean).join('\n\n')
+}
+
+function blockToMarkdown(b: ChatBlock): string {
+  switch (b.type) {
+    case 'markdown':
+    case 'text':
+      return b.text || ''
+    case 'question':
+      return `**Question:** ${b.text || ''}\n${(b.options || []).map((o) => `- ${o}`).join('\n')}`
+    case 'image':
+      return `![${b.alt || 'image'}](${b.imageUrl || ''})`
+    case 'attachment':
+      return `📎 ${b.attachment?.name || 'file'} (${b.attachment?.sizeLabel || ''})`
+    case 'terminal':
+      return `\`\`\`bash\n$ ${b.terminal?.command || ''}\n${b.terminal?.output || ''}\n\`\`\``
+    case 'web_search': {
+      const head = `**Web search:** ${b.webSearch?.query || ''}`
+      const rows = (b.webSearch?.results || [])
+        .map((r) => `- [${r.title}](${r.url}) — ${r.snippet}`)
+        .join('\n')
+      return `${head}\n${rows}`
+    }
+    case 'tool':
+      return `\`\`\`\n// ${b.tool?.title || 'tool'}\n${b.tool?.body || ''}\n\`\`\``
+    default:
+      return b.text || ''
+  }
+}
+
+function blockToRaw(b: ChatBlock): string {
+  switch (b.type) {
+    case 'markdown':
+    case 'text':
+    case 'question':
+      return [b.text, ...(b.options || [])].filter(Boolean).join('\n')
+    case 'image':
+      return b.imageUrl || b.alt || ''
+    case 'attachment':
+      return `${b.attachment?.name || ''} ${b.attachment?.sizeLabel || ''}`.trim()
+    case 'terminal':
+      return `$ ${b.terminal?.command || ''}\n${b.terminal?.output || ''}`
+    case 'web_search':
+      return [
+        b.webSearch?.query || '',
+        ...(b.webSearch?.results || []).map((r) => `${r.title}\n${r.url}\n${r.snippet}`),
+      ].join('\n')
+    case 'tool':
+      return `${b.tool?.title || ''}\n${b.tool?.body || ''}`
+    default:
+      return b.text || ''
+  }
+}
+
+export function estimateTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4))
+}
+
+export function formatTokenCount(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`
+  return String(n)
+}
+
+export function newMessageId(prefix = 'm'): string {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
+}
+
+export function deriveTitleFromMessages(messages: ChatMessage[]): string {
+  const firstUser = messages.find((m) => m.role === 'user')
+  const raw =
+    firstUser?.text ||
+    firstUser?.blocks?.find((b) => b.text)?.text ||
+    'New chat'
+  const cleaned = raw.replace(/\s+/g, ' ').trim()
+  return cleaned.length > 48 ? `${cleaned.slice(0, 45)}…` : cleaned || 'New chat'
+}

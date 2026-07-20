@@ -1,3 +1,4 @@
+import type { ChatMessage } from '@/types/panels'
 import type { Project } from '@/types/project'
 
 export const PROJECTS: Record<string, Project> = {
@@ -9,16 +10,18 @@ export const PROJECTS: Record<string, Project> = {
       { id: 'api', label: 'aura-host/api', active: false },
     ],
     convs: [
-      { id: 'c1', title: 'Fix MetricCard status ring', meta: 'Active · 2m ago' },
+      { id: 'c1', title: 'Fix MetricCard status ring', meta: 'Active · 2m ago', pinned: true },
       { id: 'c2', title: 'Wire nginx health checks', meta: 'Yesterday' },
       { id: 'c3', title: 'Deploy postgres-db scaling', meta: '3 days ago' },
     ],
     messages: [
       {
+        id: 'm1',
         role: 'user',
         text: "The MetricCard status ring doesn't map Warning correctly when memory hits 67%. Can you fix it?",
       },
       {
+        id: 'm2',
         role: 'assistant',
         thinking: 'Finished thinking — MetricCard maps percentage → Healthy/Warning/Critical.',
         text: 'Updated thresholds: ≥65% → warning, ≥90% → critical. Diff is in Repository → Changes.',
@@ -68,10 +71,12 @@ export const PROJECTS: Record<string, Project> = {
     ],
     messages: [
       {
+        id: 'call_m1',
         role: 'user',
         text: 'Make the landing hero match the team photo on red background.',
       },
       {
+        id: 'call_m2',
         role: 'assistant',
         thinking: 'Drafting hero layout from design reference…',
         text: 'Hero updated with team photo, Callour mark, and Plus Jakarta Sans. Check Preview.',
@@ -111,10 +116,12 @@ export const PROJECTS: Record<string, Project> = {
     ],
     messages: [
       {
+        id: 'r_m1',
         role: 'user',
         text: 'Add VS Code-style docking for Playground v2.',
       },
       {
+        id: 'r_m2',
         role: 'assistant',
         text: 'Layout tree supports horizontal/vertical splits, stackable tabs, detach-to-window, and project tabs.',
         tool: {
@@ -144,4 +151,85 @@ export const PROJECTS: Record<string, Project> = {
   },
 }
 
-export const PROJECT_IDS = Object.keys(PROJECTS)
+export function listProjectIds(): string[] {
+  return Object.keys(PROJECTS)
+}
+
+/** @deprecated use listProjectIds() — kept as live getter for existing imports */
+export const PROJECT_IDS = listProjectIds()
+
+export function getProject(id: string | null | undefined): Project | undefined {
+  if (!id) return undefined
+  return PROJECTS[id]
+}
+
+export function addProjectToCatalog(project: Project): void {
+  PROJECTS[project.id] = project
+}
+
+/** Restore user-created projects from persistence (does not overwrite seeds). */
+export function mergeUserProjects(
+  userProjects: Record<string, Project> | undefined | null,
+): void {
+  if (!userProjects) return
+  for (const [id, p] of Object.entries(userProjects)) {
+    if (!p?.id || !p?.name) continue
+    if (!PROJECTS[id]) PROJECTS[id] = p
+  }
+}
+
+export function listUserCreatedProjects(
+  seedIds: Set<string> = new Set(['aura', 'callour', 'router']),
+): Record<string, Project> {
+  const out: Record<string, Project> = {}
+  for (const [id, p] of Object.entries(PROJECTS)) {
+    if (!seedIds.has(id)) out[id] = p
+  }
+  return out
+}
+
+export function slugifyProjectName(name: string): string {
+  const base = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32)
+  return base || 'project'
+}
+
+export function createBlankProject(name: string, id?: string): Project {
+  const trimmed = name.trim() || 'Untitled project'
+  const slug = slugifyProjectName(trimmed)
+  const projectId =
+    id ||
+    `${slug}-${Math.random().toString(36).slice(2, 6)}`
+  return {
+    id: projectId,
+    name: trimmed,
+    repos: [{ id: 'main', label: `${slug}/app`, active: true }],
+    convs: [
+      {
+        id: 'c1',
+        title: 'Getting started',
+        meta: 'Just now',
+      },
+    ],
+    messages: [] as ChatMessage[],
+    files: [
+      { path: 'README.md', name: 'README.md', folder: '' },
+      { path: 'src/App.tsx', name: 'App.tsx', folder: 'src' },
+    ],
+    code: {
+      'README.md': `# ${trimmed}\n\nNew Everflow project.`,
+      'App.tsx': `<span class="tok-kw">export default function</span> <span class="tok-fn">App</span>() {\n  <span class="tok-kw">return</span> &lt;<span class="tok-tag">div</span>&gt;Hello ${trimmed}&lt;/<span class="tok-tag">div</span>&gt;;\n}`,
+    },
+    knowledgeFiles: [],
+    canvases: [],
+    termLines: [
+      { cls: 'muted', text: `sandbox@${slug}:~$` },
+      { cls: 'cmd', text: ' echo "Project ready"' },
+      { cls: '', text: 'Project ready' },
+    ],
+  }
+}

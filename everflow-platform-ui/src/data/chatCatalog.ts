@@ -1,3 +1,5 @@
+import type { AgentRole, ChatAgentRef, ChatMode } from '@/types/panels'
+
 export interface CatalogItem {
   id: string
   label: string
@@ -33,7 +35,32 @@ export const CHAT_SKILLS: CatalogItem[] = [
   { id: 'explain', label: '/explain', description: 'Explain code clearly' },
 ]
 
+export const CHAT_MODES: { id: ChatMode; label: string; description: string }[] = [
+  { id: 'ask', label: 'Ask', description: 'Answer only — no file edits' },
+  { id: 'edit', label: 'Edit only', description: 'Propose and apply code edits' },
+  { id: 'auto', label: 'Automatic', description: 'Full agent workflow with tools' },
+]
+
+export const CHAT_AGENTS: ChatAgentRef[] = [
+  { id: 'planner', name: 'Planner', role: 'planner' },
+  { id: 'architect', name: 'Architect', role: 'architect' },
+  { id: 'frontend', name: 'Frontend', role: 'frontend' },
+  { id: 'backend', name: 'Backend', role: 'backend' },
+  { id: 'general', name: 'General', role: 'general' },
+]
+
 export const DEFAULT_CHAT_MODEL = 'grok-2'
 export const DEFAULT_CHAT_TOOLS = ['sandbox_fs', 'git']
 export const DEFAULT_CHAT_MCPS = ['github-mcp']
 export const DEFAULT_CHAT_SKILLS = ['fix']
+export const DEFAULT_CHAT_AGENTS = ['planner', 'frontend', 'backend']
+export const DEFAULT_CHAT_MODE: ChatMode = 'ask'
+export const DEFAULT_CONTEXT_WINDOW = 128_000
+
+export function agentById(id: string): ChatAgentRef {
+  return CHAT_AGENTS.find((a) => a.id === id) || { id, name: id, role: 'general' as AgentRole }
+}
+
+export function modeLabel(mode: ChatMode | undefined): string {
+  return CHAT_MODES.find((m) => m.id === mode)?.label || 'Ask'
+}
