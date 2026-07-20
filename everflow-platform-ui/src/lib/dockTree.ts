@@ -142,20 +142,72 @@ export function addPanelToGroup(
   panelId: PanelKey,
   makeActive = true,
   nextGroupId: () => string,
+  insertIndex?: number,
 ): LayoutNode {
   let root = removePanelFromLayout(layout, panelId, nextGroupId)
   const found = findGroup(root, groupId)
   if (!found) {
     const first = firstGroup(root)
     if (first) {
-      if (!first.tabs.includes(panelId)) first.tabs.push(panelId)
+      if (!first.tabs.includes(panelId)) {
+        if (insertIndex == null || insertIndex < 0 || insertIndex >= first.tabs.length) {
+          first.tabs.push(panelId)
+        } else {
+          first.tabs.splice(insertIndex, 0, panelId)
+        }
+      }
       if (makeActive) first.active = panelId
     }
     return root
   }
-  if (!found.node.tabs.includes(panelId)) found.node.tabs.push(panelId)
+  if (!found.node.tabs.includes(panelId)) {
+    if (
+      insertIndex == null ||
+      insertIndex < 0 ||
+      insertIndex >= found.node.tabs.length
+    ) {
+      found.node.tabs.push(panelId)
+    } else {
+      found.node.tabs.splice(insertIndex, 0, panelId)
+    }
+  }
   if (makeActive) found.node.active = panelId
   return root
+}
+
+/** Move panel into group at index (reorder if already in same group). */
+export function movePanelToGroupAt(
+  layout: LayoutNode,
+  groupId: string,
+  panelId: PanelKey,
+  insertIndex: number,
+  nextGroupId: () => string,
+): LayoutNode {
+  const root = cloneLayout(layout)
+  const loc = findPanelLocation(root, panelId)
+  const target = findGroup(root, groupId)
+
+  if (!target) {
+    return addPanelToGroup(layout, groupId, panelId, true, nextGroupId, insertIndex)
+  }
+
+  // Same group reorder
+  if (loc && loc.group.id === groupId) {
+    const tabs = [...loc.group.tabs]
+    const from = tabs.indexOf(panelId)
+    if (from < 0) return root
+    tabs.splice(from, 1)
+    let to = insertIndex
+    if (from < to) to -= 1
+    to = Math.max(0, Math.min(to, tabs.length))
+    tabs.splice(to, 0, panelId)
+    loc.group.tabs = tabs
+    loc.group.active = panelId
+    return root
+  }
+
+  // Different group (or not in layout): use add with index
+  return addPanelToGroup(layout, groupId, panelId, true, nextGroupId, insertIndex)
 }
 
 export function splitGroup(

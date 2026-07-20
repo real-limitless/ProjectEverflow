@@ -8,6 +8,7 @@ import {
   cloneLayout,
   countTypeInLayout,
   firstGroup,
+  movePanelToGroupAt,
   removePanelFromLayout,
   setActiveTab,
   setSizesAtPath,
@@ -90,6 +91,11 @@ interface PlaygroundState {
   duplicatePanel: (groupId: string, panelId: PanelKey) => void
   openPanelType: (type: PanelType) => void
   dropPanel: (panelId: PanelKey, groupId: string, edge: DropEdge) => void
+  movePanelToGroup: (
+    panelId: PanelKey,
+    groupId: string,
+    insertIndex?: number,
+  ) => void
   resizeSplit: (pathToSplit: number[], sizes: number[]) => void
   setActiveRepo: (repoId: string) => void
   appendChatMessage: (panelKey: PanelKey, text: string) => void
@@ -526,6 +532,18 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         () => get().nextGroupId(),
       )
     }
+    set({ layout, dragPanelId: null })
+    get().persist()
+  },
+
+  movePanelToGroup: (panelId, groupId, insertIndex) => {
+    const layout = movePanelToGroupAt(
+      get().layout,
+      groupId,
+      panelId,
+      insertIndex ?? Number.MAX_SAFE_INTEGER,
+      () => get().nextGroupId(),
+    )
     set({ layout, dragPanelId: null })
     get().persist()
   },
