@@ -1,0 +1,81 @@
+# Project Everflow — three services:
+#   frontend       UI (public)
+#   backend        everflow-platform-api (sole public API)
+#   sandbox-agent  privileged KVM / microsandbox control plane (internal)
+#
+# Host requirements: Linux with /dev/kvm for real microVMs.
+# Without KVM, set SANDBOX_MOCK=true (default in this file for safety).
+
+services:
+  sandbox-agent:
+    build:
+      context: .
+      dockerfile: deploy/sandbox-agent.Dockerfile
+    privileged: true
+    devices:
+      - /dev/kvm
+    environment:
+      SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
+      SANDBOX_MOCK: ${SANDBOX_MOCK:-true}
+      DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ubuntu:24.04}
+      WORKSPACE_ROOT: /workspaces
+    volumes:
+      - msb_data:/root/.microsandbox
+      - project_workspaces:/workspaces
+    expose:
+      - "8090"
+    # Debug only — do not publish in production:
+    # ports:
+    #   - "8090:8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/backend.Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:////data/everflow.db}
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-a-long-random-string}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      SANDBOX_ENABLED: ${SANDBOX_ENABLED:-true}
+      SANDBOX_AGENT_URL: http://sandbox-agent:8090
+      SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
+      SANDBOX_DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ubuntu:24.04}
+      SANDBOX_DEFAULT_MEMORY_MIB: ${SANDBOX_DEFAULT_MEMORY_MIB:-2048}
+      SANDBOX_DEFAULT_CPUS: ${SANDBOX_DEFAULT_CPUS:-2}
+    volumes:
+      - everflow_db:/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      sandbox-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/frontend.Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  everflow_db:
+  msb_data:
+  project_workspaces:
