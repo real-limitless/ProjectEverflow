@@ -1,0 +1,123 @@
+# Project Everflow — local development with hot reload.
+#
+#   docker compose -f docker-compose.dev.yml up --build
+#
+#   UI (Vite HMR):  http://localhost:5173
+#   API + docs:     http://localhost:8000/docs
+#   Sandbox agent:  http://localhost:8090/health  (published for debug only)
+#
+# Edit source on the host; containers pick up changes via bind mounts.
+# Host requirements: Linux + /dev/kvm for real microVMs (no mock by default).
+
+services:
+  sandbox-agent:
+    build:
+      context: .
+      dockerfile: deploy/sandbox-agent.Dockerfile
+    privileged: true
+    devices:
+      - /dev/kvm
+    environment:
+      SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
+      SANDBOX_MOCK: ${SANDBOX_MOCK:-false}
+      DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-python}
+      WORKSPACE_ROOT: /workspaces
+      MSB_HOME: /root/.microsandbox
+    volumes:
+      - msb_data:/root/.microsandbox
+      - project_workspaces:/workspaces
+      # Hot reload: agent source from the host (:Z for SELinux/Podman)
+      - ./everflow-sandbox-agent/app:/app/app:Z
+    ports:
+      - "8090:8090"
+    command:
+      [
+        "python3",
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8090",
+        "--reload",
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 40s
+
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/backend.Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:////data/everflow.db}
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-a-long-random-string}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      SANDBOX_ENABLED: ${SANDBOX_ENABLED:-true}
+      SANDBOX_AGENT_URL: http://sandbox-agent:8090
+      SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
+      SANDBOX_DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-python}
+      SANDBOX_DEFAULT_MEMORY_MIB: ${SANDBOX_DEFAULT_MEMORY_MIB:-2048}
+      SANDBOX_DEFAULT_CPUS: ${SANDBOX_DEFAULT_CPUS:-2}
+      UVICORN_RELOAD: "true"
+    volumes:
+      - everflow_db:/data
+      # Hot reload: API source + migrations from the host (:Z for SELinux/Podman)
+      - ./everflow-platform-api/app:/app/app:Z
+      - ./everflow-platform-api/alembic:/app/alembic:Z
+      - ./everflow-platform-api/alembic.ini:/app/alembic.ini:Z
+    ports:
+      - "8000:8000"
+    depends_on:
+      sandbox-agent:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/frontend.dev.Dockerfile
+    environment:
+      # Vite reads this at dev-server start (and on config reload)
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+      # Set true if file watches miss events (Docker Desktop / remote FS)
+      CHOKIDAR_USEPOLLING: ${CHOKIDAR_USEPOLLING:-false}
+      VITE_USE_POLLING: ${VITE_USE_POLLING:-false}
+    volumes:
+      # :Z for SELinux/Podman host bind mounts
+      - ./everflow-platform-ui:/ui:Z
+      # Keep container node_modules; do not overwrite with host
+      - frontend_node_modules:/ui/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  everflow_db:
+  msb_data:
+  project_workspaces:
+  frontend_node_modules:
