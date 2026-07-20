@@ -136,6 +136,20 @@ export function removePanelFromLayout(
   return root
 }
 
+function insertIntoTabs(
+  tabs: PanelKey[],
+  panelId: PanelKey,
+  insertIndex?: number,
+): void {
+  if (tabs.includes(panelId)) return
+  if (insertIndex == null || !Number.isFinite(insertIndex)) {
+    tabs.push(panelId)
+    return
+  }
+  const i = Math.max(0, Math.min(Math.floor(insertIndex), tabs.length))
+  tabs.splice(i, 0, panelId)
+}
+
 export function addPanelToGroup(
   layout: LayoutNode,
   groupId: string,
@@ -144,38 +158,37 @@ export function addPanelToGroup(
   nextGroupId: () => string,
   insertIndex?: number,
 ): LayoutNode {
+  // Already in this group → reorder
+  const probeLoc = findPanelLocation(layout, panelId)
+  if (probeLoc && probeLoc.group.id === groupId) {
+    return movePanelToGroupAt(
+      layout,
+      groupId,
+      panelId,
+      insertIndex ?? probeLoc.group.tabs.length,
+      nextGroupId,
+    )
+  }
+
   let root = removePanelFromLayout(layout, panelId, nextGroupId)
   const found = findGroup(root, groupId)
   if (!found) {
     const first = firstGroup(root)
     if (first) {
-      if (!first.tabs.includes(panelId)) {
-        if (insertIndex == null || insertIndex < 0 || insertIndex >= first.tabs.length) {
-          first.tabs.push(panelId)
-        } else {
-          first.tabs.splice(insertIndex, 0, panelId)
-        }
-      }
+      insertIntoTabs(first.tabs, panelId, insertIndex)
       if (makeActive) first.active = panelId
     }
     return root
   }
-  if (!found.node.tabs.includes(panelId)) {
-    if (
-      insertIndex == null ||
-      insertIndex < 0 ||
-      insertIndex >= found.node.tabs.length
-    ) {
-      found.node.tabs.push(panelId)
-    } else {
-      found.node.tabs.splice(insertIndex, 0, panelId)
-    }
-  }
+  insertIntoTabs(found.node.tabs, panelId, insertIndex)
   if (makeActive) found.node.active = panelId
   return root
 }
 
-/** Move panel into group at index (reorder if already in same group). */
+/**
+ * Move panel into group at insertIndex (0 = before first tab).
+ * Same group = reorder; other group = remove + insert; prunes empty source groups.
+ */
 export function movePanelToGroupAt(
   layout: LayoutNode,
   groupId: string,
@@ -183,22 +196,24 @@ export function movePanelToGroupAt(
   insertIndex: number,
   nextGroupId: () => string,
 ): LayoutNode {
-  const root = cloneLayout(layout)
+  let root = cloneLayout(layout)
   const loc = findPanelLocation(root, panelId)
   const target = findGroup(root, groupId)
 
   if (!target) {
-    return addPanelToGroup(layout, groupId, panelId, true, nextGroupId, insertIndex)
+    const first = firstGroup(root)
+    if (!first) return root
+    return movePanelToGroupAt(root, first.id, panelId, insertIndex, nextGroupId)
   }
 
-  // Same group reorder
+  // —— Same group reorder ——
   if (loc && loc.group.id === groupId) {
-    const tabs = [...loc.group.tabs]
+    const tabs = loc.group.tabs.slice()
     const from = tabs.indexOf(panelId)
     if (from < 0) return root
     tabs.splice(from, 1)
     let to = insertIndex
-    if (from < to) to -= 1
+    if (from < insertIndex) to = insertIndex - 1
     to = Math.max(0, Math.min(to, tabs.length))
     tabs.splice(to, 0, panelId)
     loc.group.tabs = tabs
@@ -206,8 +221,32 @@ export function movePanelToGroupAt(
     return root
   }
 
-  // Different group (or not in layout): use add with index
-  return addPanelToGroup(layout, groupId, panelId, true, nextGroupId, insertIndex)
+  // —— Cross-group move on same tree clone ——
+  if (loc) {
+    const { group, parent, index } = loc
+    group.tabs.splice(loc.tabIndex, 1)
+    if (group.active === panelId) {
+      group.active =
+        group.tabs[Math.max(0, loc.tabIndex - 1)] || group.tabs[0] || null
+    }
+    if (group.tabs.length === 0) {
+      root = pruneEmptyGroup(root, parent, index, nextGroupId)
+    }
+  }
+
+  // Re-find dest after prune (never mix GroupLocation with GroupNode)
+  const dest = findGroup(root, groupId)?.node ?? firstGroup(root)
+  if (!dest) {
+    return {
+      type: 'group',
+      id: groupId,
+      tabs: [panelId],
+      active: panelId,
+    }
+  }
+  insertIntoTabs(dest.tabs, panelId, insertIndex)
+  dest.active = panelId
+  return root
 }
 
 export function splitGroup(

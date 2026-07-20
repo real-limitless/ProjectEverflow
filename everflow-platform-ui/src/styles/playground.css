@@ -249,11 +249,49 @@
     .dock-split.horizontal { flex-direction: row; }
     .dock-split.vertical { flex-direction: column; }
     .dock-child { min-width: 0; min-height: 0; display: flex; position: relative; }
-    .dock-sash { flex-shrink: 0; background: transparent; z-index: 5; position: relative; }
-    .dock-split.horizontal > .dock-sash { width: 5px; cursor: col-resize; }
-    .dock-split.vertical > .dock-sash { height: 5px; cursor: row-resize; }
-    .dock-sash:hover, .dock-sash.dragging {
+    .dock-sash {
+      flex-shrink: 0;
+      background: transparent;
+      z-index: 8;
+      position: relative;
+      touch-action: none;
+    }
+    /* Wider hit target while keeping a thin visual line */
+    .dock-split.horizontal > .dock-sash {
+      width: 6px;
+      margin-inline: -1px;
+      cursor: col-resize;
+    }
+    .dock-split.vertical > .dock-sash {
+      height: 6px;
+      margin-block: -1px;
+      cursor: row-resize;
+    }
+    .dock-sash::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: transparent;
+      transition: background 0.12s ease;
+    }
+    .dock-split.horizontal > .dock-sash::after {
+      inset-block: 0;
+      inset-inline: 2px;
+    }
+    .dock-split.vertical > .dock-sash::after {
+      inset-inline: 0;
+      inset-block: 2px;
+    }
+    .dock-sash:hover::after,
+    .dock-sash.dragging::after {
       background: var(--pf-t--global--color--brand--default);
+    }
+    body.is-sash-dragging {
+      cursor: inherit;
+      user-select: none;
+    }
+    body.is-sash-dragging iframe {
+      pointer-events: none;
     }
 
     .dock-group {
@@ -322,7 +360,7 @@
       color: var(--pf-t--global--text--color--regular);
     }
     .drop-overlay {
-      /* Start below tab bar so HTML5 drag from tabs is not cancelled */
+      /* Below tab bar; pointer-events controlled by body drag classes in app.css */
       display: none;
       position: absolute;
       top: 2rem;
@@ -337,7 +375,7 @@
       position: absolute; display: grid; place-items: center;
       font-size: 0.625rem; font-weight: 600; text-transform: uppercase;
       color: transparent; background: transparent;
-      pointer-events: auto;
+      pointer-events: none;
     }
     .drop-zone.center { left: 22%; right: 22%; top: 22%; bottom: 22%; border-radius: var(--pf-t--global--border--radius--medium); }
     .drop-zone.left { left: 0; top: 0; bottom: 0; width: 22%; }
