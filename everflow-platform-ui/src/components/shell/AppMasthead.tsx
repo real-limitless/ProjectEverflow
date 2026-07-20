@@ -61,10 +61,14 @@ export function AppMasthead() {
           <MastheadToggle>
             <PageToggleButton
               variant="plain"
-              aria-label="Global navigation"
+              aria-label={isSidebarOpen ? 'Close navigation' : 'Open navigation'}
               id="navToggle"
               isSidebarOpen={isSidebarOpen}
-              onSidebarToggle={() => setSidebarOpen(!isSidebarOpen)}
+              onSidebarToggle={() => {
+                // Always read latest store value (avoid dual-mode / stale state)
+                const open = usePlaygroundStore.getState().isSidebarOpen
+                setSidebarOpen(!open)
+              }}
             >
               <BarsIcon />
             </PageToggleButton>

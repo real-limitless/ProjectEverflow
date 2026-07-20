@@ -13,7 +13,6 @@ interface AppShellProps {
 
 export function AppShell({ detached = false }: AppShellProps) {
   const location = useLocation()
-  const sidebarCollapsed = usePlaygroundStore((s) => s.sidebarCollapsed)
   const isSidebarOpen = usePlaygroundStore((s) => s.isSidebarOpen)
 
   const isPlayground =
@@ -34,7 +33,6 @@ export function AppShell({ detached = false }: AppShellProps) {
         masthead={<AppMasthead />}
         sidebar={<AppSidebar />}
         mainContainerId="main-content"
-        data-collapsed={sidebarCollapsed && isSidebarOpen ? 'true' : 'false'}
         data-sidebar-open={isSidebarOpen ? 'true' : 'false'}
       >
         <Outlet />

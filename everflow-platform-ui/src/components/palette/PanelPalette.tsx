@@ -86,8 +86,12 @@ export function PanelPalette() {
   }
 
   const hidePalette = () => {
-    setPaletteMode('chip')
+    // Park chip where users can always find it (bottom-left near sidebar)
+    const safeX = 10
+    const safeY = Math.max(72, window.innerHeight - 56)
+    setPalettePos({ x: safeX, y: safeY })
     setPaletteVisible(false)
+    setPaletteMode('chip')
   }
 
   const endDrag = (clientX: number, clientY: number) => {
@@ -244,13 +248,15 @@ export function PanelPalette() {
   let node: React.ReactNode
 
   if (mode === 'chip' || !visible) {
+    const chipX = Number.isFinite(pos.x) ? pos.x : 10
+    const chipY = Number.isFinite(pos.y) ? pos.y : Math.max(72, window.innerHeight - 56)
     node = (
       <button
         type="button"
-        className="panel-palette-chip"
+        className="panel-palette-chip is-visible"
         id="panelPaletteChip"
         title="Show panel tray"
-        style={{ left: pos.x, top: pos.y }}
+        style={{ left: chipX, top: chipY }}
         onClick={() => floatPalette()}
       >
         Panels

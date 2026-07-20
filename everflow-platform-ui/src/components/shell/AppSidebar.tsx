@@ -7,20 +7,20 @@ import {
   PageSidebar,
   PageSidebarBody,
 } from '@patternfly/react-core'
-import AngleLeftIcon from '@patternfly/react-icons/dist/esm/icons/angle-left-icon'
-import AngleRightIcon from '@patternfly/react-icons/dist/esm/icons/angle-right-icon'
 import { NavLink, useLocation } from 'react-router-dom'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { NAV_ITEMS } from './navItems'
 
 export function AppSidebar() {
   const location = useLocation()
-  const sidebarCollapsed = usePlaygroundStore((s) => s.sidebarCollapsed)
-  const setSidebarCollapsed = usePlaygroundStore((s) => s.setSidebarCollapsed)
   const isSidebarOpen = usePlaygroundStore((s) => s.isSidebarOpen)
   const paletteMode = usePlaygroundStore((s) => s.paletteMode)
+  const paletteVisible = usePlaygroundStore((s) => s.paletteVisible)
   const paletteDragging = usePlaygroundStore((s) => s.paletteDragging)
+  const setPaletteMode = usePlaygroundStore((s) => s.setPaletteMode)
+  const setPaletteVisible = usePlaygroundStore((s) => s.setPaletteVisible)
   const slotEmpty = paletteMode !== 'docked' && !paletteDragging
+  const trayHidden = paletteMode === 'chip' || !paletteVisible
 
   return (
     <PageSidebar id="sidebar" isSidebarOpen={isSidebarOpen}>
@@ -79,18 +79,23 @@ export function AppSidebar() {
             </div>
           ) : null}
         </div>
-        <div className="pg-sidebar-footer">
-          <Button
-            className="pg-collapse-btn"
-            variant="plain"
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          >
-            {sidebarCollapsed ? <AngleRightIcon /> : <AngleLeftIcon />}
-            <span className="pg-collapse-label">Collapse</span>
-          </Button>
-        </div>
+        {trayHidden ? (
+          <div className="pg-sidebar-footer">
+            <Button
+              className="pg-show-panels-btn"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setPaletteVisible(true)
+                setPaletteMode('float')
+              }}
+              title="Show panel tray"
+              aria-label="Show panel tray"
+            >
+              Panels
+            </Button>
+          </div>
+        ) : null}
       </PageSidebarBody>
     </PageSidebar>
   )
