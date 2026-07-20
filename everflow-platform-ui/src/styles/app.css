@@ -513,11 +513,31 @@ body,
   flex: 0 0 var(--pf-v6-c-page__sidebar--Width) !important;
 }
 
-/* Icon-only narrow mode — shrinks grid track so main expands */
+/*
+ * Icon-only rail: 4.5rem gives room for 2.5rem tiles without PF padding clipping.
+ * All horizontal padding/overflow on ancestors must be zeroed or icons get cut off.
+ */
+.pf-v6-c-page.pg-shell {
+  --pg-sidebar-w-collapsed: 4.5rem;
+  --pg-sidebar-icon-tile: 2.5rem;
+}
+
 .pf-v6-c-page.pg-shell[data-collapsed='true'] {
   --pf-v6-c-page__sidebar--Width: var(--pg-sidebar-w-collapsed);
   --pf-v6-c-page__sidebar--Width--base: var(--pg-sidebar-w-collapsed);
   --pf-v6-c-page__sidebar--xl--Width: var(--pg-sidebar-w-collapsed);
+  --pf-v6-c-page__sidebar--PaddingInlineStart: 0;
+  --pf-v6-c-page__sidebar--PaddingInlineEnd: 0;
+  --pf-v6-c-page__sidebar--PaddingBlockEnd: 0;
+  --pf-v6-c-page__sidebar--MarginInlineEnd: 0;
+  --pf-v6-c-nav--PaddingInlineStart: 0;
+  --pf-v6-c-nav--PaddingInlineEnd: 0;
+  --pf-v6-c-nav--PaddingBlockStart: 0;
+  --pf-v6-c-nav--PaddingBlockEnd: 0;
+  --pf-v6-c-nav__link--PaddingInlineStart: 0;
+  --pf-v6-c-nav__link--PaddingInlineEnd: 0;
+  --pf-v6-c-nav__link--PaddingBlockStart: 0;
+  --pf-v6-c-nav__link--PaddingBlockEnd: 0;
 }
 
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-page__sidebar {
@@ -525,6 +545,19 @@ body,
   min-width: var(--pg-sidebar-w-collapsed) !important;
   max-width: var(--pg-sidebar-w-collapsed) !important;
   flex: 0 0 var(--pg-sidebar-w-collapsed) !important;
+  overflow: visible !important;
+  padding: 0 !important;
+  margin-inline-end: 0 !important;
+}
+
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-page__sidebar-body,
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-sidebar-body-flex {
+  overflow: hidden !important;
+  overflow-x: visible !important;
+  padding: 0 !important;
+  width: 100% !important;
+  align-items: center;
+  box-sizing: border-box;
 }
 
 /* —— Collapsed icon rail: centered square targets —— */
@@ -534,6 +567,11 @@ body,
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav-badge,
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-nav__link .pf-v6-c-badge {
   display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
 }
 
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .nav-palette-slot {
@@ -544,64 +582,105 @@ body,
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-block-start: 0.5rem;
+  justify-content: flex-start;
+  width: 100%;
+  padding: 0.5rem 0 0;
+  margin: 0;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav,
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-nav.pg-nav {
+  width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: visible !important;
+  align-content: start !important;
 }
 
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav .pf-v6-c-nav__list,
-.pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav .pf-v6-c-nav__item {
-  display: flex;
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav .pf-v6-c-nav__item,
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav-item {
+  display: flex !important;
   flex-direction: column;
-  align-items: center;
-  width: 100%;
-  padding: 0;
-  margin: 0;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: visible !important;
+  box-sizing: border-box;
 }
 
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav-item {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  margin-block-end: 0.25rem;
+  margin-block-end: 0.35rem !important;
 }
 
-/* Reset PF link layout — square, centered icon only */
+/* Square tile centered in rail — no extra padding that shifts content left */
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav-link,
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-nav__link,
 .pf-v6-c-page.pg-shell[data-collapsed='true'] a.pg-nav-link {
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  width: 2.75rem !important;
-  height: 2.75rem !important;
-  min-width: 2.75rem !important;
-  min-height: 2.75rem !important;
-  max-width: 2.75rem !important;
-  margin-inline: auto !important;
+  box-sizing: border-box !important;
+  width: var(--pg-sidebar-icon-tile) !important;
+  height: var(--pg-sidebar-icon-tile) !important;
+  min-width: var(--pg-sidebar-icon-tile) !important;
+  min-height: var(--pg-sidebar-icon-tile) !important;
+  max-width: var(--pg-sidebar-icon-tile) !important;
+  max-height: var(--pg-sidebar-icon-tile) !important;
+  margin: 0 auto !important;
   padding: 0 !important;
   gap: 0 !important;
+  border: none !important;
+  border-inline: none !important;
   border-radius: var(--pf-t--global--border--radius--medium, 6px) !important;
   box-shadow: none !important;
+  overflow: visible !important;
+  inset-inline-start: auto !important;
+  left: auto !important;
+  transform: none !important;
 }
 
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav-icon {
-  display: inline-flex !important;
-  align-items: center;
-  justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  flex: 0 0 auto;
-  line-height: 0;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 1.25rem !important;
+  height: 1.25rem !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  flex: 0 0 auto !important;
+  line-height: 0 !important;
+  overflow: visible !important;
 }
 
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav-icon svg,
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav-icon .pf-v6-svg {
+  display: block !important;
   width: 1.25rem !important;
   height: 1.25rem !important;
-  max-width: 1.25rem;
-  max-height: 1.25rem;
+  max-width: 1.25rem !important;
+  max-height: 1.25rem !important;
+  margin: 0 !important;
+  flex-shrink: 0;
 }
 
-/* Active / current: filled square, not left border strip */
+/* Kill PF current-indicator bar that pulls visual weight left */
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-nav__link::before,
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-nav__link::after,
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav-link::before,
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav-link::after {
+  display: none !important;
+  content: none !important;
+  width: 0 !important;
+  border: none !important;
+}
+
+/* Active / current: filled square */
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-nav__item.pf-m-current .pg-nav-link,
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-nav__link.pf-m-current,
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav-link[aria-current='page'],
@@ -609,27 +688,93 @@ body,
 .pf-v6-c-page.pg-shell[data-collapsed='true'] a.pg-nav-link.active {
   background: var(--pf-t--global--background--color--primary--default) !important;
   color: var(--pf-t--global--text--color--brand--default) !important;
-  box-shadow: inset 0 0 0 1px var(--pf-t--global--border--color--default);
+  box-shadow: inset 0 0 0 1px var(--pf-t--global--border--color--default) !important;
 }
 
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-nav-link:hover {
   background: var(--pf-t--global--background--color--action--plain--hover) !important;
 }
 
-/* Footer collapse control centered when icon-only */
-.pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-sidebar-footer {
+/* Footer: fixed height so Collapse ↔ expand never jumps */
+.pg-sidebar-footer {
   display: flex;
+  align-items: center;
+  justify-content: stretch;
+  flex-shrink: 0;
+  height: 3.25rem;
+  min-height: 3.25rem;
+  max-height: 3.25rem;
+  padding: 0.375rem 0.5rem !important;
+  margin: 0;
+  border-block-start: 1px solid var(--pf-t--global--border--color--default);
+  box-sizing: border-box;
+}
+
+.pg-collapse-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.5rem;
+  width: 100% !important;
+  height: 2.5rem !important;
+  min-height: 2.5rem !important;
+  max-height: 2.5rem !important;
+  justify-content: flex-start !important;
+  padding: 0 0.65rem !important;
+  margin: 0 !important;
+  box-sizing: border-box;
+  border-radius: var(--pf-t--global--border--radius--medium, 6px);
+}
+
+.pg-collapse-btn .pg-collapse-label {
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-sidebar-footer {
   justify-content: center;
-  padding: 0.35rem;
+  padding: 0.375rem 0 !important;
 }
 
 .pf-v6-c-page.pg-shell[data-collapsed='true'] .pg-collapse-btn {
-  width: 2.75rem !important;
-  height: 2.75rem !important;
-  min-width: 2.75rem !important;
+  width: var(--pg-sidebar-icon-tile) !important;
+  min-width: var(--pg-sidebar-icon-tile) !important;
+  max-width: var(--pg-sidebar-icon-tile) !important;
+  height: var(--pg-sidebar-icon-tile) !important;
+  min-height: var(--pg-sidebar-icon-tile) !important;
+  max-height: var(--pg-sidebar-icon-tile) !important;
   justify-content: center !important;
   padding: 0 !important;
-  margin: 0 auto;
+  margin: 0 auto !important;
+}
+
+/* Align hamburger with collapsed icon rail */
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-masthead__main {
+  display: flex;
+  align-items: center;
+}
+
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-masthead__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--pg-sidebar-w-collapsed, 4.5rem) !important;
+  min-width: var(--pg-sidebar-w-collapsed, 4.5rem) !important;
+  max-width: var(--pg-sidebar-w-collapsed, 4.5rem) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+}
+
+.pf-v6-c-page.pg-shell[data-collapsed='true'] .pf-v6-c-masthead__toggle .pf-v6-c-button,
+.pf-v6-c-page.pg-shell[data-collapsed='true'] #navToggle {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: var(--pg-sidebar-icon-tile, 2.5rem) !important;
+  height: var(--pg-sidebar-icon-tile, 2.5rem) !important;
+  min-width: var(--pg-sidebar-icon-tile, 2.5rem) !important;
+  margin: 0 auto !important;
+  padding: 0 !important;
   border-radius: var(--pf-t--global--border--radius--medium, 6px);
 }
 
@@ -658,14 +803,6 @@ body,
   height: 1.25rem;
 }
 
-.pg-collapse-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-  justify-content: flex-start;
-}
-
 .detached-shell,
 .detached-panel-root {
   height: 100vh;
@@ -687,14 +824,28 @@ body,
   z-index: var(--pf-t--global--z-index--2xl, 600) !important;
 }
 
-/* Dock tab drag: show drop zones without React re-render on dragStart */
+/* Dock tab drag: show drop zones without covering the tab bar (would cancel HTML5 DnD) */
 body.is-panel-dragging .dock-group .drop-overlay {
   display: block !important;
+  pointer-events: none !important; /* zones re-enable pointer-events */
+  top: 2rem !important;
+  z-index: 40 !important;
+}
+
+body.is-panel-dragging .dock-group .drop-zone {
   pointer-events: auto !important;
 }
 
 body.is-panel-dragging .panel-tab.dragging {
   opacity: 0.45;
+}
+
+body.is-panel-dragging {
+  cursor: grabbing;
+}
+
+body.is-panel-dragging .panel-tab {
+  cursor: grabbing;
 }
 
 /* Palette docked into slot via fixed positioning fallback */

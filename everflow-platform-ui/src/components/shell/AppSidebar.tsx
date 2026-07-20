@@ -84,21 +84,11 @@ export function AppSidebar() {
             className="pg-collapse-btn"
             variant="plain"
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            title={
-              sidebarCollapsed
-                ? 'Expand sidebar labels'
-                : 'Collapse to icons only'
-            }
-            aria-label={
-              sidebarCollapsed
-                ? 'Expand sidebar labels'
-                : 'Collapse to icons only'
-            }
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {sidebarCollapsed ? <AngleRightIcon /> : <AngleLeftIcon />}
-            <span className="pg-collapse-label">
-              {sidebarCollapsed ? 'Expand' : 'Icons only'}
-            </span>
+            <span className="pg-collapse-label">Collapse</span>
           </Button>
         </div>
       </PageSidebarBody>
