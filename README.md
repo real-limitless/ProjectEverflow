@@ -18,9 +18,23 @@ Compared to contemporary tools like Continue, Lovable, v0.dev, or bolt.new, Ever
 
 In a typical use case, a support engineer can instantly develop an AI tool to analyze sosreports for system conditions, leveraging pre-configured compliant data access mechanisms (e.g., MCP servers), without triggering lengthy legal reviews.
 
+## Platform API (Python / FastAPI)
+
+Backend lives in **[`everflow-platform-api/`](everflow-platform-api/)**. Dual database (SQLite default, PostgreSQL via `DATABASE_URL`), JWT + optional GitHub/Google OAuth, orgs/projects CRUD. Listens on port **8000**.
+
+```bash
+cd everflow-platform-api
+uv venv && source .venv/bin/activate
+uv pip install -e ".[dev]"
+alembic upgrade head
+uvicorn app.main:app --reload --port 8000
+```
+
+Docs: [http://localhost:8000/docs](http://localhost:8000/docs). See [everflow-platform-api/README.md](everflow-platform-api/README.md).
+
 ## UI (PatternFly 6.6 React)
 
-The interactive IDE-style frontend lives in **[`everflow-platform-ui/`](everflow-platform-ui/)**. It ports the [`playground-v2-pf.html`](playground-v2-pf.html) prototype to React + PatternFly 6.6.0 (vibe chat, dockable panels, workflows, deploy, etc. — mock data).
+The interactive IDE-style frontend lives in **[`everflow-platform-ui/`](everflow-platform-ui/)**. It ports the [`playground-v2-pf.html`](playground-v2-pf.html) prototype to React + PatternFly 6.6.0 (vibe chat, dockable panels, workflows, deploy, etc. — mock data; wire to the API next).
 
 ```bash
 cd everflow-platform-ui
