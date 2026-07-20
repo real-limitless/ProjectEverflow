@@ -14,10 +14,26 @@ import {
   splitGroup,
 } from '@/lib/dockTree'
 import { loadPersisted, savePersisted } from '@/lib/layoutPersist'
+import {
+  applyThemeClass,
+  deleteNamedLayout as deleteNamedLayoutStorage,
+  listNamedLayouts as readNamedLayouts,
+  loadTheme,
+  saveNamedLayout as persistNamedLayout,
+  saveTheme,
+  type NamedLayoutSnapshot,
+  type ThemeMode,
+} from '@/lib/namedLayouts'
 import { typeOf } from '@/lib/panelIds'
 import type { DropEdge, LayoutNode } from '@/types/dock'
 import type { PanelInstanceState, PanelKey, PanelType } from '@/types/panels'
 import type { PaletteMode } from '@/types/project'
+import {
+  DEFAULT_CHAT_MCPS,
+  DEFAULT_CHAT_MODEL,
+  DEFAULT_CHAT_SKILLS,
+  DEFAULT_CHAT_TOOLS,
+} from '@/data/chatCatalog'
 
 interface PlaygroundState {
   openProjectIds: string[]
@@ -36,6 +52,8 @@ interface PlaygroundState {
   connectRepoModal: boolean
   dragPanelId: string | null
   detachedPanels: Set<string>
+  theme: ThemeMode
+  paletteDragging: boolean
 
   // derived helpers exposed as methods
   nextGroupId: () => string
@@ -54,6 +72,13 @@ interface PlaygroundState {
   setOpenProjectModal: (v: boolean) => void
   setConnectRepoModal: (v: boolean) => void
   setDragPanelId: (id: string | null) => void
+  setPaletteDragging: (v: boolean) => void
+  setTheme: (theme: ThemeMode) => void
+  toggleTheme: () => void
+  saveNamedLayout: (name: string) => void
+  loadNamedLayout: (id: string) => boolean
+  listNamedLayouts: () => NamedLayoutSnapshot[]
+  deleteNamedLayout: (id: string) => void
 
   switchProject: (id: string) => void
   openProject: (id: string) => void
@@ -219,6 +244,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   connectRepoModal: false,
   dragPanelId: null,
   detachedPanels: new Set(),
+  theme: typeof document !== 'undefined' ? loadTheme() : 'light',
+  paletteDragging: false,
 
   nextGroupId: () => {
     const id = `g${get().groupIdSeq}`
@@ -314,6 +341,55 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   setOpenProjectModal: (v) => set({ openProjectModal: v }),
   setConnectRepoModal: (v) => set({ connectRepoModal: v }),
   setDragPanelId: (id) => set({ dragPanelId: id }),
+  setPaletteDragging: (v) => set({ paletteDragging: v }),
+
+  setTheme: (theme) => {
+    applyThemeClass(theme)
+    saveTheme(theme)
+    set({ theme })
+  },
+  toggleTheme: () => {
+    const next: ThemeMode = get().theme === 'dark' ? 'light' : 'dark'
+    get().setTheme(next)
+  },
+
+  saveNamedLayout: (name) => {
+    const s = get()
+    const trimmed = name.trim()
+    if (!trimmed) return
+    persistNamedLayout({
+      id: `nl-${Date.now()}`,
+      name: trimmed,
+      savedAt: new Date().toISOString(),
+      projectId: s.currentProjectId,
+      layout: cloneLayout(s.layout),
+      instanceState: JSON.parse(JSON.stringify(s.instanceState)) as Record<
+        string,
+        PanelInstanceState
+      >,
+      groupIdSeq: s.groupIdSeq,
+      instanceSeq: s.instanceSeq,
+    })
+  },
+
+  loadNamedLayout: (id) => {
+    const snap = readNamedLayouts().find((s) => s.id === id)
+    if (!snap) return false
+    set({
+      layout: cloneLayout(snap.layout),
+      instanceState: JSON.parse(JSON.stringify(snap.instanceState)) as Record<
+        string,
+        PanelInstanceState
+      >,
+      groupIdSeq: snap.groupIdSeq,
+      instanceSeq: snap.instanceSeq,
+    })
+    get().persist()
+    return true
+  },
+
+  listNamedLayouts: () => readNamedLayouts(),
+  deleteNamedLayout: (id) => deleteNamedLayoutStorage(id),
 
   switchProject: (id) => {
     if (!PROJECTS[id]) return
@@ -385,6 +461,10 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   closePanel: (panelId) => {
     const layout = removePanelFromLayout(get().layout, panelId, () => get().nextGroupId())
     set({ layout })
+    // Keep panel tray discoverable after close
+    if (get().paletteMode === 'chip' || !get().paletteVisible) {
+      set({ paletteVisible: true, paletteMode: 'float' })
+    }
     get().persist()
   },
 
@@ -462,14 +542,23 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   },
 
   appendChatMessage: (panelKey, text) => {
-    const st = get().ensureInstanceState(panelKey)
+    const st = get().ensureInstanceState(panelKey, {
+      model: DEFAULT_CHAT_MODEL,
+      enabledTools: DEFAULT_CHAT_TOOLS,
+      enabledMcps: DEFAULT_CHAT_MCPS,
+      enabledSkills: DEFAULT_CHAT_SKILLS,
+    })
+    const model = st.model || DEFAULT_CHAT_MODEL
+    const tools = st.enabledTools || []
+    const mcps = st.enabledMcps || []
+    const skills = st.enabledSkills || []
     const messages = [
       ...(st.messages || []),
       { role: 'user' as const, text },
       {
         role: 'assistant' as const,
-        text: 'Demo reply — wire to AI workspace later. I noted your request and would apply changes in the sandbox.',
-        thinking: 'Demo mode: no backend LLM connected.',
+        text: `Demo reply via **${model}** · tools: ${tools.length ? tools.join(', ') : 'none'} · MCPs: ${mcps.length ? mcps.join(', ') : 'none'} · skills: ${skills.length ? skills.join(', ') : 'none'}. Wire to everflow-ai-workspace later.`,
+        thinking: 'Demo mode: no backend LLM connected — selections are UI-only.',
       },
     ]
     get().ensureInstanceState(panelKey, { messages })

@@ -4,7 +4,7 @@
     /* Layout-only custom styles — colors from PatternFly tokens (default LIGHT theme) */
     :root {
       --pg-mono: var(--pf-t--global--font--family--mono, ui-monospace, monospace);
-      --pg-sidebar-w: 15.5rem;
+      --pg-sidebar-w: 16.5rem;
       --pg-sidebar-w-collapsed: 4rem;
       --mono: var(--pg-mono);
       --text: var(--pf-t--global--text--color--regular);

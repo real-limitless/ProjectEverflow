@@ -32,6 +32,16 @@ export interface PanelInstanceState {
   convId?: string
   messages?: ChatMessage[]
   file?: string
+  /** Chat: hide conversation list for focus mode */
+  railCollapsed?: boolean
+  model?: string
+  enabledTools?: string[]
+  enabledMcps?: string[]
+  enabledSkills?: string[]
+  chatMode?: 'ask' | 'auto'
+  /** Preview multi-service */
+  previewServiceId?: string
+  previewUrl?: string
 }
 
 export interface PanelMeta {
