@@ -1,0 +1,25 @@
+# Secrets / local env
+.env
+.env.local
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Tooling / generated
+graphify-out/
+.cache/
