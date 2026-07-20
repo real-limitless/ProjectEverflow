@@ -17,6 +17,40 @@ import { getPreviewServices } from '@/data/previewServices'
 import { getProject } from '@/data/projects'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
+type DeviceMode = 'full' | 'desktop' | 'tablet' | 'mobile'
+
+/** Extract path (+ search/hash) from a full URL for display. */
+function urlToPath(fullUrl: string): string {
+  try {
+    const u = new URL(fullUrl)
+    return `${u.pathname || '/'}${u.search}${u.hash}` || '/'
+  } catch {
+    // Already a path, or malformed — treat as path-like
+    if (fullUrl.startsWith('/')) return fullUrl || '/'
+    return '/'
+  }
+}
+
+/** Origin of a service URL (protocol + host + port). */
+function urlOrigin(fullUrl: string): string {
+  try {
+    return new URL(fullUrl).origin
+  } catch {
+    return 'http://localhost:5173'
+  }
+}
+
+/** Join service origin with a user-entered path. */
+function joinOriginAndPath(origin: string, path: string): string {
+  const cleaned = path.trim() || '/'
+  const withSlash = cleaned.startsWith('/') ? cleaned : `/${cleaned}`
+  try {
+    return new URL(withSlash, origin.endsWith('/') ? origin : `${origin}/`).href
+  } catch {
+    return `${origin}${withSlash}`
+  }
+}
+
 export function PreviewPanel() {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
   const p = getProject(currentProjectId)
@@ -24,30 +58,49 @@ export function PreviewPanel() {
     () => getPreviewServices(currentProjectId),
     [currentProjectId],
   )
-  const [device, setDevice] = useState<'desktop' | 'tablet' | 'mobile'>('desktop')
+  const [device, setDevice] = useState<DeviceMode>('full')
   const [serviceId, setServiceId] = useState(services[0]?.id || 'web')
   const [url, setUrl] = useState(services[0]?.url || 'http://localhost:5173')
+  const [pathInput, setPathInput] = useState(() =>
+    urlToPath(services[0]?.url || 'http://localhost:5173'),
+  )
   const [selectOpen, setSelectOpen] = useState(false)
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
     const list = getPreviewServices(currentProjectId)
     const first = list[0]
+    const nextUrl = first?.url || 'http://localhost:5173'
     setServiceId(first?.id || 'web')
-    setUrl(first?.url || 'http://localhost:5173')
+    setUrl(nextUrl)
+    setPathInput(urlToPath(nextUrl))
   }, [currentProjectId])
 
   const service = services.find((s) => s.id === serviceId) || services[0]
+  const origin = urlOrigin(service?.url || url)
 
   const selectService = (id: string) => {
     const s = services.find((x) => x.id === id)
     if (!s) return
     setServiceId(id)
     setUrl(s.url)
+    setPathInput(urlToPath(s.url))
     setSelectOpen(false)
   }
 
-  const refresh = () => setTick((t) => t + 1)
+  const applyPath = (path: string) => {
+    const next = joinOriginAndPath(origin, path)
+    setUrl(next)
+    setPathInput(urlToPath(next))
+    setTick((t) => t + 1)
+  }
+
+  const refresh = () => {
+    // Re-apply path from the field so edits take effect on refresh
+    applyPath(pathInput)
+  }
+
+  const displayPath = urlToPath(url)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -71,22 +124,37 @@ export function PreviewPanel() {
           >
             <SelectList>
               {services.map((s) => (
-                <SelectOption key={s.id} value={s.id} description={s.url}>
+                <SelectOption key={s.id} value={s.id} description={urlToPath(s.url)}>
                   {s.label}
                 </SelectOption>
               ))}
             </SelectList>
           </Select>
+          <Tabs
+            activeKey={device}
+            onSelect={(_e, k) => setDevice(k as DeviceMode)}
+            variant="secondary"
+            className="panel-pf-tabs preview-device-tabs"
+          >
+            <Tab eventKey="full" title={<TabTitleText>Full</TabTitleText>} />
+            <Tab eventKey="desktop" title={<TabTitleText>Desktop</TabTitleText>} />
+            <Tab eventKey="tablet" title={<TabTitleText>Tablet</TabTitleText>} />
+            <Tab eventKey="mobile" title={<TabTitleText>Mobile</TabTitleText>} />
+          </Tabs>
           <InputGroup className="preview-address-group">
             <InputGroupItem isFill>
               <TextInput
-                value={url}
-                onChange={(_e, v) => setUrl(v)}
+                value={pathInput}
+                onChange={(_e, v) => setPathInput(v)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') refresh()
+                  if (e.key === 'Enter') applyPath(pathInput)
                 }}
-                aria-label="Preview address"
-                placeholder="http://localhost:port"
+                onBlur={() => {
+                  // Normalize display after leaving the field
+                  setPathInput(urlToPath(joinOriginAndPath(origin, pathInput)))
+                }}
+                aria-label="Preview path"
+                placeholder="/"
               />
             </InputGroupItem>
             <InputGroupItem>
@@ -99,31 +167,18 @@ export function PreviewPanel() {
             </InputGroupItem>
           </InputGroup>
         </div>
-        <Tabs
-          activeKey={device}
-          onSelect={(_e, k) => setDevice(k as typeof device)}
-          variant="secondary"
-          className="panel-pf-tabs"
-        >
-          <Tab eventKey="desktop" title={<TabTitleText>Desktop</TabTitleText>} />
-          <Tab eventKey="tablet" title={<TabTitleText>Tablet</TabTitleText>} />
-          <Tab eventKey="mobile" title={<TabTitleText>Mobile</TabTitleText>} />
-        </Tabs>
       </div>
-      <div className="panel-scroll preview-frame" key={`${serviceId}-${tick}-${url}`}>
+      <div
+        className={`panel-scroll preview-frame${device === 'full' ? ' preview-frame-full' : ''}`}
+        key={`${serviceId}-${tick}-${url}`}
+      >
         <div className={`preview-device ${device}`}>
-          <div className="preview-chrome">
-            <span className="dot r" />
-            <span className="dot y" />
-            <span className="dot g" />
-            <span className="url">{url}</span>
-          </div>
           <div className="preview-body">
             <PreviewDemoBody
               kind={service?.kind || 'frontend'}
               label={service?.label || 'Service'}
               projectName={p?.name || 'App'}
-              url={url}
+              path={displayPath}
             />
           </div>
         </div>
@@ -136,12 +191,12 @@ function PreviewDemoBody({
   kind,
   label,
   projectName,
-  url,
+  path,
 }: {
   kind: string
   label: string
   projectName: string
-  url: string
+  path: string
 }) {
   if (kind === 'backend') {
     return (
@@ -150,9 +205,9 @@ function PreviewDemoBody({
         <p>
           API surface for <strong>{projectName}</strong> · demo OpenAPI placeholder
         </p>
-        <pre className="preview-code-block">{`GET ${url}/health → 200 OK
-GET ${url}/v1/metrics → { cpu: 42, mem: 67 }
-POST ${url}/v1/deploy → 202 Accepted`}</pre>
+        <pre className="preview-code-block">{`GET ${path === '/' ? '' : path}/health → 200 OK
+GET ${path === '/' ? '' : path}/v1/metrics → { cpu: 42, mem: 67 }
+POST ${path === '/' ? '' : path}/v1/deploy → 202 Accepted`}</pre>
       </div>
     )
   }
@@ -182,7 +237,7 @@ POST ${url}/v1/deploy → 202 Accepted`}</pre>
     <div className="preview-hero">
       <h1>{projectName}</h1>
       <p>
-        {label} preview · <code>{url}</code>
+        {label} preview · <code>{path}</code>
       </p>
       <div className="preview-metrics">
         <div className="metric ok">
