@@ -161,15 +161,39 @@ function BlockView({
   }
 }
 
+function StreamStatus({ label }: { label: string }) {
+  return (
+    <div className="chat-stream-status" role="status" aria-live="polite">
+      <span className="chat-stream-spinner" aria-hidden />
+      <span>{label}</span>
+    </div>
+  )
+}
+
 export function ChatMessageContent({
   message,
   onQuestionOption,
   onPermission,
 }: ChatMessageContentProps) {
+  const incomplete =
+    message.role === 'assistant' &&
+    (message.generationStatus === 'incomplete' || message.id.startsWith('pending-'))
+  const hasBody =
+    !!(message.text || '').trim() ||
+    (message.blocks || []).some(
+      (b) =>
+        (b.type === 'text' || b.type === 'markdown') && !!(b.text || '').trim(),
+    ) ||
+    !!(message.tool || message.blocks?.some((b) => b.type === 'tool' || b.type === 'terminal'))
+
   if (message.blocks?.length) {
     return (
-      <div className="msg-blocks">
-        {message.thinking ? <div className="thinking">{message.thinking}</div> : null}
+      <div className={`msg-blocks${incomplete ? ' msg-blocks--streaming' : ''}`}>
+        {message.thinking ? (
+          <div className="thinking" title="Model reasoning">
+            {message.thinking}
+          </div>
+        ) : null}
         {message.blocks.map((b, i) => (
           <BlockView
             key={i}
@@ -178,13 +202,20 @@ export function ChatMessageContent({
             onPermission={onPermission}
           />
         ))}
+        {incomplete ? (
+          <StreamStatus label={hasBody ? 'Streaming…' : 'Generating…'} />
+        ) : null}
       </div>
     )
   }
 
   return (
     <>
-      {message.thinking ? <div className="thinking">{message.thinking}</div> : null}
+      {message.thinking ? (
+        <div className="thinking" title="Model reasoning">
+          {message.thinking}
+        </div>
+      ) : null}
       {message.tool ? (
         <div className="tool-card">
           <div className="tool-card-head">
@@ -194,14 +225,16 @@ export function ChatMessageContent({
           <pre>{message.tool.body}</pre>
         </div>
       ) : null}
+      {incomplete && !message.text ? <StreamStatus label="Generating…" /> : null}
       {message.text ? (
         <div
-          className="msg-md"
+          className={`msg-md${incomplete ? ' msg-md--streaming' : ''}`}
           dangerouslySetInnerHTML={{
             __html: markdownToHtml(message.text),
           }}
         />
       ) : null}
+      {incomplete && message.text ? <StreamStatus label="Streaming…" /> : null}
     </>
   )
 }

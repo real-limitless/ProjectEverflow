@@ -10,10 +10,13 @@ function partText(p: OcPart): string {
 function mapPartToBlocks(p: OcPart): ChatBlock[] {
   const t = (p.type || '').toLowerCase()
 
+  // OpenCode stream bookends — not user-visible content
+  if (t === 'step-start' || t === 'step-finish') return []
+
   if (t === 'text' || t === 'markdown') {
     const text = partText(p)
     if (!text) return []
-    return [{ type: t === 'markdown' ? 'markdown' : 'markdown', text }]
+    return [{ type: 'markdown', text }]
   }
 
   if (t === 'reasoning' || t === 'thinking') {
@@ -171,7 +174,130 @@ export function normalizeMessageList(data: unknown): OcMessageBundle[] {
   return out
 }
 
-export function mapOcMessage(bundle: OcMessageBundle): ChatMessage {
+/** UI placeholders — must NOT count as a real model reply (would stop polling early). */
+const REPLY_PLACEHOLDER_RE =
+  /^_?(Thinking|Generating response|No response content|Working)[.…_]*_?$/i
+
+function isReplyPlaceholder(text: string | undefined): boolean {
+  const t = (text || '').trim()
+  if (!t) return true
+  return REPLY_PLACEHOLDER_RE.test(t)
+}
+
+/** True if message has real user-visible reply body (not only reasoning / placeholders). */
+export function messageHasReplyText(m: ChatMessage): boolean {
+  const main = (m.text || '').trim()
+  if (main && !isReplyPlaceholder(main)) return true
+  return (m.blocks || []).some((b) => {
+    if (b.type !== 'text' && b.type !== 'markdown') return false
+    const bt = (b.text || '').trim()
+    return !!bt && !isReplyPlaceholder(bt)
+  })
+}
+
+/** Whether poll can stop: generation finished, or real answer text is present. */
+export function assistantTurnReady(m: ChatMessage | undefined): boolean {
+  if (!m || m.role !== 'assistant') return false
+  if (m.id.startsWith('pending-')) return false
+  if (m.generationStatus === 'error') return true
+  // Still streaming / empty shell — keep polling (even if UI shows Thinking…)
+  if (m.generationStatus === 'incomplete') return false
+  // OpenCode marked the turn complete (time.completed / finish)
+  if (m.generationStatus === 'complete') return true
+  // Fallback when status missing: only stop if we have real answer text
+  return messageHasReplyText(m)
+}
+
+function generationStatusFromInfo(
+  info: OcMessageBundle['info'] | undefined,
+  hasReply: boolean,
+  hasThinking: boolean,
+  partsLen: number,
+): ChatMessage['generationStatus'] {
+  if (!info) return hasReply ? 'complete' : 'incomplete'
+  const err = info.error
+  if (err && typeof err === 'object' && (err as { message?: string }).message) {
+    return 'error'
+  }
+  if (typeof err === 'string' && err) return 'error'
+  const time = info.time as { created?: number; completed?: number } | undefined
+  const finish = (info as { finish?: string }).finish
+  if (time?.completed != null || finish) {
+    return hasReply || err ? (err ? 'error' : 'complete') : 'complete'
+  }
+  if (hasReply && partsLen > 0) {
+    // Has text but not marked complete yet — still streaming possible
+    return 'incomplete'
+  }
+  if (hasThinking || partsLen === 0) return 'incomplete'
+  return 'incomplete'
+}
+
+function normalizeEpochMs(t: number | undefined): number | undefined {
+  if (t == null || !Number.isFinite(t)) return undefined
+  // OpenCode sometimes uses µs-scale ids; times are usually ms already
+  return t < 1e12 ? t * 1000 : t
+}
+
+function metricsFromOpenCodeInfo(
+  info: OcMessageBundle['info'] | undefined,
+  clientTtftMs?: number,
+): ChatMessage['metrics'] | undefined {
+  if (!info) return undefined
+  const tokens = info.tokens as
+    | {
+        total?: number
+        input?: number
+        output?: number
+        reasoning?: number
+        cache?: { read?: number; write?: number }
+      }
+    | undefined
+  const time = info.time as { created?: number; completed?: number } | undefined
+  const created = normalizeEpochMs(time?.created)
+  const completed = normalizeEpochMs(time?.completed)
+  const output = tokens?.output
+  let tokensPerSec: number | undefined
+  let durationMs: number | undefined
+  if (created != null && completed != null && completed > created) {
+    durationMs = completed - created
+    if (output != null && output > 0) {
+      tokensPerSec = Math.max(1, Math.round((output / durationMs) * 1000))
+    }
+  }
+  let contextUsedTokens: number | undefined
+  if (tokens?.total != null && tokens.total > 0) {
+    contextUsedTokens = tokens.total
+  } else if (tokens) {
+    const cacheRead = tokens.cache?.read ?? 0
+    const sum =
+      (tokens.input ?? 0) +
+      (tokens.output ?? 0) +
+      (tokens.reasoning ?? 0) +
+      cacheRead
+    if (sum > 0) contextUsedTokens = sum
+  }
+  if (
+    clientTtftMs == null &&
+    tokensPerSec == null &&
+    output == null &&
+    contextUsedTokens == null
+  ) {
+    return undefined
+  }
+  return {
+    ttftMs: clientTtftMs,
+    tokensPerSec,
+    completionTokens: output,
+    contextUsedTokens,
+    durationMs,
+  }
+}
+
+export function mapOcMessage(
+  bundle: OcMessageBundle,
+  opts?: { clientTtftMs?: number },
+): ChatMessage {
   const roleRaw = (bundle.info?.role || 'assistant').toLowerCase()
   const role: ChatMessage['role'] =
     roleRaw === 'user' ? 'user' : roleRaw === 'system' ? 'system' : 'assistant'
@@ -192,7 +318,6 @@ export function mapOcMessage(bundle: OcMessageBundle): ChatMessage {
       .filter((b) => b.type === 'text' || b.type === 'markdown')
       .map((b) => b.text || '')
       .join('\n') ||
-    // Some payloads only have thinking or tools — still show something for user role
     (role === 'user' && !blocks.length
       ? (bundle.parts || []).map((p) => partText(p)).filter(Boolean).join('\n')
       : '')
@@ -207,42 +332,99 @@ export function mapOcMessage(bundle: OcMessageBundle): ChatMessage {
   }
 
   const id = bundle.info?.id || `oc-${Math.random().toString(36).slice(2)}`
-  // User messages with only text and no blocks still need text
   const text =
     textFallback ||
     (role === 'user'
       ? (bundle.parts || []).map((p) => partText(p)).find((t) => t) || undefined
       : undefined)
 
+  const hasReply =
+    (!!text && !isReplyPlaceholder(text)) ||
+    blocks.some(
+      (b) =>
+        (b.type === 'text' || b.type === 'markdown') &&
+        !!(b.text || '').trim() &&
+        !isReplyPlaceholder(b.text),
+    )
+
+  let errorText: string | undefined
+  const err = bundle.info?.error
+  if (typeof err === 'string') errorText = err
+  else if (err && typeof err === 'object' && 'message' in err) {
+    errorText = String((err as { message?: string }).message || '')
+  }
+
+  const generationStatus =
+    role === 'assistant'
+      ? generationStatusFromInfo(
+          bundle.info,
+          hasReply,
+          !!thinking,
+          (bundle.parts || []).length,
+        )
+      : 'complete'
+
+  // No fake markdown placeholders — incomplete turns use empty body + stream status in UI
+  let finalBlocks = blocks.length > 0 ? blocks : undefined
+  let finalText = text
+  if (role === 'assistant' && errorText && !hasReply) {
+    finalBlocks = [{ type: 'markdown', text: `**Error:** ${errorText}` }]
+    finalText = errorText
+  } else if (!finalBlocks && text && !isReplyPlaceholder(text)) {
+    finalBlocks = [{ type: role === 'user' ? 'text' : 'markdown', text }]
+  } else if (role === 'assistant' && !hasReply && generationStatus === 'complete' && !thinking) {
+    finalBlocks = [{ type: 'markdown', text: '*(No response content)*' }]
+  }
+
+  const baseMetrics = metricsFromOpenCodeInfo(bundle.info, opts?.clientTtftMs)
+
   return {
     id,
     role,
     agent,
     thinking: thinking || undefined,
-    blocks:
-      blocks.length > 0
-        ? blocks
-        : text
-          ? [{ type: role === 'user' ? 'text' : 'markdown', text }]
-          : undefined,
-    text,
+    blocks: finalBlocks,
+    text: finalText && !isReplyPlaceholder(finalText) ? finalText : undefined,
+    metrics: baseMetrics,
     createdAt: bundle.info?.time?.created
       ? new Date(
-          typeof bundle.info.time.created === 'number' && bundle.info.time.created < 1e12
-            ? bundle.info.time.created * 1000
-            : bundle.info.time.created,
+          normalizeEpochMs(bundle.info.time.created) ?? bundle.info.time.created,
         ).toISOString()
       : undefined,
+    generationStatus,
+    errorText,
   }
 }
 
-export function mapOcMessages(list: OcMessageBundle[]): ChatMessage[] {
-  return list.map(mapOcMessage).filter((m) => m.id)
+export function mapOcMessages(
+  list: OcMessageBundle[],
+  opts?: { clientTtftMs?: number },
+): ChatMessage[] {
+  return list.map((b) => mapOcMessage(b, opts)).filter((m) => m.id)
+}
+
+/**
+ * Live tok/s while streaming: prefer OpenCode output tokens, else estimate from text.
+ */
+export function estimateLiveTokensPerSec(
+  message: ChatMessage | undefined,
+  elapsedMs: number,
+): number | undefined {
+  if (!message || elapsedMs < 50) return undefined
+  const out = message.metrics?.completionTokens
+  if (out != null && out > 0) {
+    return Math.max(1, Math.round((out / elapsedMs) * 1000))
+  }
+  const text = message.text || message.blocks?.map((b) => b.text || '').join('') || ''
+  if (!text.trim()) return undefined
+  // ~4 chars/token rough estimate for streaming display
+  const est = Math.max(1, Math.round(text.length / 4))
+  return Math.max(1, Math.round((est / elapsedMs) * 1000))
 }
 
 /**
  * Merge server history with local optimistic messages.
- * Keeps local user messages that are not yet reflected on the server.
+ * Keeps pending assistant until server has a **contentful** complete reply.
  */
 export function mergeServerMessages(
   server: ChatMessage[],
@@ -257,22 +439,32 @@ export function mergeServerMessages(
       .map((m) => (m.text || '').trim())
       .filter(Boolean),
   )
+
+  const lastAsst = [...server].reverse().find((m) => m.role === 'assistant')
+  const serverHasReadyAsst = assistantTurnReady(lastAsst)
+
   const extras = local.filter((m) => {
-    if (!m.id.startsWith('local-') && !m.id.startsWith('pending-')) return false
-    if (m.role === 'user') {
+    if (m.id.startsWith('local-') && m.role === 'user') {
       const t = (m.text || '').trim()
       return t ? !serverTexts.has(t) : true
     }
-    // Keep local pending assistant placeholder only if server has no newer assistant
-    return m.id.startsWith('pending-')
+    if (m.id.startsWith('pending-')) {
+      // Keep local thinking placeholder until server assistant is ready
+      return !serverHasReadyAsst
+    }
+    return false
   })
-  // If server already has assistant after last user, drop pending placeholders
-  const lastServer = server[server.length - 1]
-  const pending = extras.filter((m) => {
-    if (!m.id.startsWith('pending-')) return true
-    return !(lastServer && lastServer.role === 'assistant')
-  })
-  return [...server, ...pending]
+
+  // Prefer server messages; if last assistant is incomplete, still show it
+  // (with generating hint) and optionally keep pending only if server asst missing
+  if (!lastAsst && extras.some((m) => m.id.startsWith('pending-'))) {
+    return [...server, ...extras]
+  }
+  if (lastAsst && !serverHasReadyAsst) {
+    // Drop duplicate pending; server incomplete message already shows Thinking/Generating
+    return server
+  }
+  return [...server, ...extras.filter((m) => !m.id.startsWith('pending-') || !serverHasReadyAsst)]
 }
 
 export function sessionToConversation(

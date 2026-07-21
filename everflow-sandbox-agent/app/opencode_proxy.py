@@ -151,12 +151,13 @@ async def proxy_to_opencode_guest(
     path: str,
     port: int = 4096,
     cwd: str = "/workspace",
+    stream_exec_fn: Any | None = None,
 ) -> Response:
     """
     Proxy HTTP to OpenCode listening on 127.0.0.1 inside the guest microVM.
 
-    Uses python3 urllib via sandbox exec (guest has no host-reachable port).
-    SSE is not supported over this path — returns a short-lived connected event.
+    REST: python3 urllib via sandbox exec (buffered).
+    SSE (/event): stream_exec curl -N so message.part deltas reach the browser.
     """
     rel = path.lstrip("/")
     url = f"http://127.0.0.1:{port}/{rel}" if rel else f"http://127.0.0.1:{port}/"
@@ -166,17 +167,74 @@ async def proxy_to_opencode_guest(
     method = request.method.upper()
     body = await request.body()
 
-    # SSE: emit server.connected then close so clients fall back to polling
+    # Real guest SSE stream — required for token streaming in the UI
     if _wants_stream(request, path) or rel.rstrip("/").endswith("event"):
+        if stream_exec_fn is None:
+            return Response(
+                content='{"detail":"Guest SSE stream_exec not available"}',
+                status_code=501,
+                media_type="application/json",
+            )
 
         async def sse() -> AsyncIterator[bytes]:
-            yield b'data: {"type":"server.connected","properties":{"mode":"guest-poll"}}\n\n'
+            # Announce bridge so UI knows stream is live
+            yield b'data: {"type":"server.connected","properties":{"mode":"guest-sse"}}\n\n'
+            try:
+                # Prefer curl for low-latency SSE; fall back to python urllib reader
+                args_curl = [
+                    "-sN",
+                    "--no-buffer",
+                    "-H",
+                    "Accept: text/event-stream",
+                    url,
+                ]
+                try:
+                    async for chunk in stream_exec_fn(
+                        sandbox_name,
+                        "curl",
+                        args_curl,
+                        cwd=cwd,
+                        env=None,
+                    ):
+                        if chunk:
+                            yield chunk
+                    return
+                except Exception as curl_exc:  # noqa: BLE001
+                    logger.warning("guest SSE curl stream failed: %s — trying python", curl_exc)
+
+                # Python fallback: line-buffer SSE from OpenCode
+                py = (
+                    "import sys,urllib.request\n"
+                    f"req=urllib.request.Request({url!r},headers={{'Accept':'text/event-stream'}})\n"
+                    "with urllib.request.urlopen(req,timeout=None) as r:\n"
+                    "  while True:\n"
+                    "    line=r.readline()\n"
+                    "    if not line: break\n"
+                    "    sys.stdout.buffer.write(line); sys.stdout.buffer.flush()\n"
+                )
+                async for chunk in stream_exec_fn(
+                    sandbox_name,
+                    "python3",
+                    ["-u", "-c", py],
+                    cwd=cwd,
+                    env=None,
+                ):
+                    if chunk:
+                        yield chunk
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("guest SSE stream failed name=%s", sandbox_name)
+                err = json.dumps({"type": "server.error", "properties": {"message": str(exc)}})
+                yield f"data: {err}\n\n".encode()
 
         return StreamingResponse(
             sse(),
             status_code=200,
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache"},
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
         )
 
     body_b64 = base64.b64encode(body).decode("ascii") if body else ""

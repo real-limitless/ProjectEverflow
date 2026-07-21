@@ -65,12 +65,18 @@ export function ChatHeader({
         </span>
         <span className="metric" title="Tokens per second (last response)">
           <span className="metric-label">tok/s</span>
-          <span className="metric-value">{metrics?.tokensPerSec ?? '—'}</span>
+          <span className="metric-value">
+            {metrics?.tokensPerSec != null && metrics.tokensPerSec > 0
+              ? metrics.tokensPerSec
+              : '—'}
+          </span>
         </span>
         <span className="metric" title="Time to first token">
           <span className="metric-label">TTFT</span>
           <span className="metric-value">
-            {metrics?.ttftMs != null ? `${metrics.ttftMs}ms` : '—'}
+            {metrics?.ttftMs != null && metrics.ttftMs > 0
+              ? `${metrics.ttftMs}ms`
+              : '—'}
           </span>
         </span>
         <span className="metric metric-mode-mobile" title="Mode">

@@ -31,10 +31,17 @@ import {
   subscribeEvents,
   updateSession,
 } from '@/lib/opencode/client'
-import { applyPartDelta, mapOcEvent, upsertMessage } from '@/lib/opencode/mapEvents'
 import {
+  applyPartDelta,
+  mapOcEvent,
+  upsertMessage,
+} from '@/lib/opencode/mapEvents'
+import {
+  assistantTurnReady,
+  estimateLiveTokensPerSec,
   mapOcMessages,
   mergeServerMessages,
+  messageHasReplyText,
   parseModelId,
   sessionToConversation,
 } from '@/lib/opencode/mapParts'
@@ -86,11 +93,31 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const [mcpsLive, setMcpsLive] = useState<CatalogItem[] | null>(null)
   const [agentsLive, setAgentsLive] = useState<CatalogItem[] | null>(null)
   const [sending, setSending] = useState(false)
+  const [bootStage, setBootStage] = useState<string>('')
   const sseRef = useRef<AbortController | null>(null)
   const liveRef = useRef(false)
-  const bootKeyRef = useRef<string | null>(null)
+  /** Monotonic bootstrap generation — remount/retry increments; stale async exits. */
+  const bootGenRef = useRef(0)
   const sendingRef = useRef(false)
   const pollAbortRef = useRef(0)
+
+  function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const t = window.setTimeout(() => {
+        reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`))
+      }, ms)
+      p.then(
+        (v) => {
+          window.clearTimeout(t)
+          resolve(v)
+        },
+        (e) => {
+          window.clearTimeout(t)
+          reject(e)
+        },
+      )
+    })
+  }
 
   const p = currentProjectId ? getProject(currentProjectId) : undefined
   const useLive = Boolean(
@@ -141,13 +168,37 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     async (
       projectId: string,
       sessionId: string,
-      opts?: { allowEmpty?: boolean; force?: boolean },
+      opts?: {
+        allowEmpty?: boolean
+        force?: boolean
+        clientTtftMs?: number
+        streamStartedAt?: number
+      },
     ) => {
       const allowEmpty = opts?.allowEmpty ?? false
       const force = opts?.force ?? false
       try {
         const bundles = await listMessages(projectId, sessionId)
-        const serverMsgs = mapOcMessages(bundles)
+        let serverMsgs = mapOcMessages(bundles, {
+          clientTtftMs: opts?.clientTtftMs,
+        })
+        // Live tok/s while streaming when OpenCode hasn't finished yet
+        if (opts?.streamStartedAt) {
+          const elapsed = Date.now() - opts.streamStartedAt
+          serverMsgs = serverMsgs.map((m) => {
+            if (m.role !== 'assistant' || m.generationStatus === 'complete') return m
+            const live = estimateLiveTokensPerSec(m, elapsed)
+            if (live == null) return m
+            return {
+              ...m,
+              metrics: {
+                ...m.metrics,
+                tokensPerSec: m.metrics?.tokensPerSec ?? live,
+                ttftMs: m.metrics?.ttftMs ?? opts.clientTtftMs,
+              },
+            }
+          })
+        }
         const local =
           usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
         const activeId =
@@ -159,28 +210,30 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         }
 
         // Never wipe non-empty local history with an empty server snapshot
-        // (common while guest proxy is slow or mid-generation).
-        // Session switch to a truly empty chat must pass allowEmpty: true.
         if (!allowEmpty && serverMsgs.length === 0 && local.length > 0) {
           return local
         }
 
         const msgs = mergeServerMessages(serverMsgs, local)
+        const lastAsst = [...msgs]
+          .reverse()
+          .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
         const list = usePlaygroundStore.getState().ensureProjectChats(projectId)
         const conv = list.find((c) => c.id === sessionId)
         if (conv) {
           usePlaygroundStore
             .getState()
-            .updateConversationMessages(projectId, sessionId, msgs)
+            .updateConversationMessages(projectId, sessionId, msgs, lastAsst)
         }
         ensureInstanceState(panelKey, {
           convId: sessionId,
           messages: msgs,
-          title: conv?.title || usePlaygroundStore.getState().instanceState[panelKey]?.title,
+          title:
+            conv?.title ||
+            usePlaygroundStore.getState().instanceState[panelKey]?.title,
         })
         return msgs
       } catch (e) {
-        // Fetch failed — keep local messages, surface error
         setLiveError((e as Error).message)
         return usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
       }
@@ -285,106 +338,151 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     }
   }, [])
 
-  // Bootstrap OpenCode once per project when live (not on every sandboxStatus poll)
+  // Bootstrap OpenCode when live. Generation token survives Strict Mode remounts:
+  // cleanup cancels the prior gen; a new effect always starts a fresh bootstrap.
   useEffect(() => {
     if (!useLive || !currentProjectId) {
       setLiveStatus(isDemoMode() || !p?.fromApi ? 'demo' : 'idle')
-      bootKeyRef.current = null
+      setBootStage('')
       return
     }
-    const bootKey = `${currentProjectId}:live`
-    if (bootKeyRef.current === bootKey) {
-      return
-    }
-    bootKeyRef.current = bootKey
 
     let cancelled = false
+    const gen = ++bootGenRef.current
     setLiveStatus('connecting')
     setLiveError(null)
+    setBootStage('Starting OpenCode in sandbox…')
+
+    const stillActive = () => !cancelled && gen === bootGenRef.current
 
     ;(async () => {
       try {
-        await ensureOpenCode(currentProjectId)
-        if (cancelled) return
-        const cat = await loadCatalogs(currentProjectId)
-        if (cancelled) return
+        setBootStage('Starting OpenCode in sandbox…')
+        await withTimeout(ensureOpenCode(currentProjectId), 25_000, 'OpenCode ensure')
+        if (!stillActive()) return
+
+        setBootStage('Loading providers…')
+        let cat = { connected: [] as string[], modelItems: [] as CatalogItem[] }
+        try {
+          cat = await withTimeout(loadCatalogs(currentProjectId), 20_000, 'Provider catalog')
+        } catch (catErr) {
+          // Non-fatal: chat can still open; user may connect provider later
+          console.warn('OpenCode catalog load failed', catErr)
+        }
+        if (!stillActive()) return
+
+        setBootStage('Loading sessions…')
         const prefer =
           usePlaygroundStore.getState().instanceState[panelKey]?.convId
-        await refreshSessions(currentProjectId, prefer)
-        if (cancelled) return
-
-        // SSE (guest mode may only emit server.connected — we still poll on send)
-        sseRef.current?.abort()
-        sseRef.current = subscribeEvents(
-          currentProjectId,
-          (ev) => {
-            if (!liveRef.current) return
-            const patch = mapOcEvent(ev)
-            const projectId = currentProjectId
-            const convId = usePlaygroundStore.getState().instanceState[panelKey]?.convId
-            if (!convId) return
-
-            if (patch.kind === 'message') {
-              const msgs =
-                usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
-              const next = upsertMessage(msgs, patch.message)
-              usePlaygroundStore
-                .getState()
-                .updateConversationMessages(projectId, convId, next, patch.message)
-              ensureInstanceState(panelKey, { messages: next })
-            } else if (patch.kind === 'part_delta') {
-              const msgs =
-                usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
-              const next = applyPartDelta(
-                msgs,
-                patch.messageId,
-                patch.partType,
-                patch.text,
-              )
-              usePlaygroundStore
-                .getState()
-                .updateConversationMessages(projectId, convId, next)
-              ensureInstanceState(panelKey, { messages: next })
-            } else if (patch.kind === 'permission') {
-              const msgs =
-                usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
-              const permMsg: ChatMessage = {
-                id: `perm-${patch.permissionId}`,
-                role: 'assistant',
-                blocks: [
-                  {
-                    type: 'permission',
-                    permission: {
-                      id: patch.permissionId,
-                      title: patch.title,
-                      detail: patch.detail,
-                      status: 'pending',
-                    },
-                  },
-                ],
-              }
-              const next = upsertMessage(msgs, permMsg)
-              usePlaygroundStore
-                .getState()
-                .updateConversationMessages(projectId, convId, next)
-              ensureInstanceState(panelKey, { messages: next })
-            } else if (patch.kind === 'reload_messages') {
-              void hydrateSession(projectId, convId)
+        try {
+          await withTimeout(refreshSessions(currentProjectId, prefer), 25_000, 'Session list')
+        } catch (sessErr) {
+          // Soft-fail: create a local empty slot so user can still try send
+          console.warn('OpenCode session refresh failed', sessErr)
+          setLiveError((sessErr as Error).message)
+          try {
+            const created = await withTimeout(
+              createSession(currentProjectId, 'New chat'),
+              15_000,
+              'Create session',
+            )
+            if (stillActive()) {
+              ensureInstanceState(panelKey, {
+                convId: created.id,
+                title: created.title || 'New chat',
+                messages: [],
+              })
             }
-          },
-          (err) => {
-            console.warn('OpenCode SSE error', err)
-          },
-        )
+          } catch {
+            /* ignore — send path can create later */
+          }
+        }
+        if (!stillActive()) return
 
+        // Primary token stream: OpenCode /event bridged through agent (guest SSE)
+        const attachSse = () => {
+          sseRef.current?.abort()
+          sseRef.current = subscribeEvents(
+            currentProjectId,
+            (ev) => {
+              if (!liveRef.current) return
+              const patch = mapOcEvent(ev)
+              const projectId = currentProjectId
+              const convId =
+                usePlaygroundStore.getState().instanceState[panelKey]?.convId
+              if (!convId) return
+
+              const apply = (next: ChatMessage[], last?: ChatMessage) => {
+                usePlaygroundStore
+                  .getState()
+                  .updateConversationMessages(projectId, convId, next, last)
+                ensureInstanceState(panelKey, { messages: next })
+              }
+
+              if (patch.kind === 'message') {
+                const msgs =
+                  usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
+                  []
+                const next = upsertMessage(msgs, patch.message)
+                apply(next, patch.message)
+              } else if (patch.kind === 'part_delta' || patch.kind === 'part_set') {
+                const msgs =
+                  usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
+                  []
+                const next = applyPartDelta(
+                  msgs,
+                  patch.messageId,
+                  patch.partType,
+                  patch.text,
+                  patch.kind === 'part_set' ? 'set' : 'append',
+                )
+                const last = next.find((m) => m.id === patch.messageId)
+                apply(next, last)
+              } else if (patch.kind === 'permission') {
+                const msgs =
+                  usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
+                  []
+                const permMsg: ChatMessage = {
+                  id: `perm-${patch.permissionId}`,
+                  role: 'assistant',
+                  blocks: [
+                    {
+                      type: 'permission',
+                      permission: {
+                        id: patch.permissionId,
+                        title: patch.title,
+                        detail: patch.detail,
+                        status: 'pending',
+                      },
+                    },
+                  ],
+                }
+                apply(upsertMessage(msgs, permMsg))
+              } else if (patch.kind === 'reload_messages') {
+                void hydrateSession(projectId, convId, { force: true })
+              }
+            },
+            (err) => {
+              console.warn('OpenCode SSE error', err)
+              // Soft reconnect after brief delay
+              window.setTimeout(() => {
+                if (liveRef.current && currentProjectId) attachSse()
+              }, 1500)
+            },
+          )
+        }
+        attachSse()
+
+        if (!stillActive()) return
+        setBootStage('')
         if (cat.connected.length === 0) {
           setLiveStatus('needs_provider')
         } else {
           setLiveStatus('ready')
         }
       } catch (e) {
-        if (cancelled) return
-        bootKeyRef.current = null
+        if (!stillActive()) return
+        setBootStage('')
         setLiveError((e as Error).message)
         setLiveStatus('error')
       }
@@ -392,10 +490,14 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
 
     return () => {
       cancelled = true
+      // Invalidate this generation so a remount always reboots
+      if (bootGenRef.current === gen) {
+        bootGenRef.current += 1
+      }
       sseRef.current?.abort()
       sseRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per project live session
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- live project connection only
   }, [useLive, currentProjectId])
 
   const sendLive = async (text: string) => {
@@ -406,9 +508,11 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     sendingRef.current = true
     setLiveError(null)
     const pollGen = ++pollAbortRef.current
+    const streamStartedAt = Date.now()
+    let clientTtftMs: number | undefined
 
     try {
-      // Optimistic user + pending assistant placeholder
+      // Optimistic user + pending assistant (spinner only — no fake markdown)
       const userMsg: ChatMessage = {
         id: `local-u-${Date.now()}`,
         role: 'user',
@@ -419,8 +523,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       const pendingAsst: ChatMessage = {
         id: `pending-a-${Date.now()}`,
         role: 'assistant',
-        thinking: 'Working…',
-        blocks: [{ type: 'markdown', text: '_Thinking…_' }],
+        generationStatus: 'incomplete',
       }
       const prev =
         usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
@@ -428,7 +531,6 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       ensureInstanceState(panelKey, { messages: optimistic })
       updateConversationMessages(projectId, convId, optimistic)
 
-      // Only pass model/agent when they come from live OpenCode catalogs
       const liveAgentIds = new Set((agentsLive || []).map((a) => a.id))
       const liveModelIds = new Set((models || []).map((m) => m.id))
       const modelRef =
@@ -456,7 +558,6 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         try {
           await promptSync(projectId, convId, body)
         } catch (syncErr) {
-          // Remove pending placeholder; keep user message
           const cur =
             usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
           const kept = cur.filter((m) => !m.id.startsWith('pending-'))
@@ -466,23 +567,69 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         }
       }
 
-      // Poll until server has at least our user turn (and ideally assistant)
-      const baseline = prev.length
-      const deadline = Date.now() + 45_000
-      let delay = 700
+      // SSE is primary (guest stream_exec → /event). Poll is a slow backup only.
+      const deadline = Date.now() + 180_000
+      const pollMs = 2000
+      let gotReady = false
       while (Date.now() < deadline && pollAbortRef.current === pollGen) {
-        await new Promise((r) => setTimeout(r, delay))
+        await new Promise((r) => setTimeout(r, pollMs))
         if (pollAbortRef.current !== pollGen) break
-        const msgs = await hydrateSession(projectId, convId)
-        const hasUser = msgs.some(
-          (m) => m.role === 'user' && (m.text || '').trim() === text.trim(),
-        )
-        const hasAsst =
-          msgs.some((m) => m.role === 'assistant' && !m.id.startsWith('pending-')) &&
-          msgs.length > baseline
-        if (hasUser && hasAsst) break
-        if (hasUser && msgs.length > baseline + 1) break
-        delay = Math.min(delay * 1.35, 4000)
+        // Prefer in-memory stream state (updated by SSE handlers)
+        let msgs =
+          usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
+        let lastAsst = [...msgs]
+          .reverse()
+          .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
+        if (
+          clientTtftMs == null &&
+          lastAsst &&
+          (messageHasReplyText(lastAsst) || !!(lastAsst.thinking || '').trim())
+        ) {
+          clientTtftMs = Date.now() - streamStartedAt
+        }
+        if (assistantTurnReady(lastAsst)) {
+          gotReady = true
+          break
+        }
+        // Backup hydrate if SSE silent / incomplete
+        msgs = await hydrateSession(projectId, convId, {
+          force: true,
+          clientTtftMs,
+          streamStartedAt,
+        })
+        lastAsst = [...msgs]
+          .reverse()
+          .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
+        if (
+          clientTtftMs == null &&
+          lastAsst &&
+          (messageHasReplyText(lastAsst) || !!(lastAsst.thinking || '').trim())
+        ) {
+          clientTtftMs = Date.now() - streamStartedAt
+        }
+        if (assistantTurnReady(lastAsst)) {
+          gotReady = true
+          break
+        }
+      }
+
+      if (pollAbortRef.current === pollGen) {
+        const finalMsgs = await hydrateSession(projectId, convId, {
+          force: true,
+          clientTtftMs,
+          streamStartedAt,
+        })
+        const lastAsst = [...finalMsgs]
+          .reverse()
+          .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
+        if (assistantTurnReady(lastAsst) || messageHasReplyText(lastAsst!)) {
+          gotReady = true
+          setLiveError(null)
+        } else if (!gotReady) {
+          setLiveError(
+            'No complete response from OpenCode yet. The answer may still appear if you refresh.',
+          )
+        }
       }
     } catch (e) {
       setLiveError((e as Error).message)
@@ -494,13 +641,15 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       if (pollAbortRef.current === pollGen) {
         setSending(false)
         sendingRef.current = false
-        // Drop any leftover pending placeholder
         const cur =
           usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
-        if (cur.some((m) => m.id.startsWith('pending-'))) {
+        const lastAsst = [...cur]
+          .reverse()
+          .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
+        if (cur.some((m) => m.id.startsWith('pending-')) && assistantTurnReady(lastAsst)) {
           const cleaned = cur.filter((m) => !m.id.startsWith('pending-'))
           ensureInstanceState(panelKey, { messages: cleaned })
-          updateConversationMessages(projectId, convId, cleaned)
+          updateConversationMessages(projectId, convId, cleaned, lastAsst)
         }
       }
     }
@@ -666,7 +815,9 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
 
         {useLive && liveStatus === 'connecting' ? (
           <div className="chat-empty" style={{ minHeight: 80 }}>
-            <p className="chat-empty-desc">Connecting to OpenCode in sandbox…</p>
+            <p className="chat-empty-desc">
+              {bootStage || 'Connecting to OpenCode in sandbox…'}
+            </p>
           </div>
         ) : null}
 
@@ -678,15 +829,36 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
               type="button"
               className="chat-empty-chip"
               onClick={() => {
+                // Force effect re-run by bumping generation and toggling status
+                bootGenRef.current += 1
+                setLiveError(null)
+                setBootStage('Retrying…')
                 setLiveStatus('connecting')
-                void ensureOpenCode(currentProjectId!, true)
-                  .then(() => refreshSessions(currentProjectId!))
-                  .then(() => loadCatalogs(currentProjectId!))
-                  .then(() => setLiveStatus('ready'))
-                  .catch((e) => {
+                const projectId = currentProjectId!
+                const gen = bootGenRef.current
+                ;(async () => {
+                  try {
+                    await withTimeout(ensureOpenCode(projectId, true), 25_000, 'OpenCode ensure')
+                    if (gen !== bootGenRef.current) return
+                    const cat = await withTimeout(
+                      loadCatalogs(projectId),
+                      20_000,
+                      'Provider catalog',
+                    ).catch(() => ({ connected: [] as string[], modelItems: [] as CatalogItem[] }))
+                    if (gen !== bootGenRef.current) return
+                    await withTimeout(refreshSessions(projectId), 25_000, 'Session list').catch(
+                      () => undefined,
+                    )
+                    if (gen !== bootGenRef.current) return
+                    setBootStage('')
+                    setLiveStatus(cat.connected.length === 0 ? 'needs_provider' : 'ready')
+                  } catch (e) {
+                    if (gen !== bootGenRef.current) return
+                    setBootStage('')
                     setLiveError((e as Error).message)
                     setLiveStatus('error')
-                  })
+                  }
+                })()
               }}
             >
               Retry

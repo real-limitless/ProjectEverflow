@@ -1860,13 +1860,19 @@ button.panel-palette-chip.is-visible {
   padding: 0.35rem 0.5rem;
 }
 
-.preview-frame {
+/* Also beats .panel-scroll padding / overflow when both classes are present */
+.preview-frame,
+.panel-scroll.preview-frame {
   display: flex;
   justify-content: center;
-  align-items: flex-start;
+  align-items: stretch;
   background: var(--pf-t--global--background--color--secondary--default);
   min-height: 0;
   flex: 1;
+  height: 100%;
+  padding: 0.5rem 0.75rem;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 /* Full-tab open webpage viewer — no device chrome, edge to edge */
@@ -1878,21 +1884,26 @@ button.panel-palette-chip.is-visible {
 }
 
 .preview-device {
+  position: relative;
+  /* Width set inline for device modes; max-width keeps it inside the panel */
   width: 100%;
-  max-width: 960px;
-  margin: 0.5rem;
+  max-width: 100%;
+  height: 100%;
+  flex: 0 1 auto;
   border: 1px solid var(--pf-t--global--border--color--default);
   border-radius: 8px;
   overflow: hidden;
   background: var(--pf-t--global--background--color--primary--default);
   box-shadow: var(--pf-t--global--box-shadow--sm);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-height: 0;
-  transition: max-width 0.2s ease;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .preview-device.full {
+  width: 100% !important;
   max-width: none;
   margin: 0;
   border: none;
@@ -1902,16 +1913,68 @@ button.panel-palette-chip.is-visible {
   flex: 1;
 }
 
-.preview-device.desktop {
-  max-width: 960px;
+/* Left-edge drag handle for responsive width (hidden in Full) */
+.preview-resize-handle {
+  flex: 0 0 8px;
+  width: 8px;
+  cursor: ew-resize;
+  touch-action: none;
+  align-self: stretch;
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
 }
 
-.preview-device.tablet {
-  max-width: 720px;
+.preview-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 2.5rem;
+  border-radius: 2px;
+  background: var(--pf-t--global--border--color--default);
+  opacity: 0.55;
+  transition: opacity 0.15s ease, height 0.15s ease, background-color 0.15s ease;
 }
 
-.preview-device.mobile {
-  max-width: 380px;
+.preview-resize-handle:hover::after,
+.preview-resize-handle:focus-visible::after,
+.preview-frame.is-resizing .preview-resize-handle::after {
+  opacity: 1;
+  height: 3.25rem;
+  background: var(--pf-t--global--border--color--hover, var(--pf-t--global--color--brand--default));
+}
+
+.preview-frame.is-resizing {
+  cursor: ew-resize;
+  user-select: none;
+}
+
+.preview-frame.is-resizing .preview-iframe {
+  pointer-events: none;
+}
+
+.preview-device-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.preview-size-label {
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--pf-t--global--text--color--subtle);
+  white-space: nowrap;
+  padding: 0 0.35rem;
+  align-self: center;
 }
 
 /* Minimal path strip for framed device modes only (no Mac traffic-light chrome) */
@@ -1938,10 +2001,33 @@ button.panel-palette-chip.is-visible {
   padding: 1.5rem;
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.preview-body.preview-body-live {
+  padding: 0;
 }
 
 .preview-device.full .preview-body {
   padding: 1.5rem;
+}
+
+.preview-device.full .preview-body.preview-body-live {
+  padding: 0;
+  height: 100%;
+}
+
+.preview-iframe {
+  border: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+  background: var(--pf-t--global--background--color--primary--default);
+  display: block;
 }
 
 .preview-hero h1 {

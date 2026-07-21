@@ -209,15 +209,28 @@ export function updateConvMetrics(
   conv: ChatConversation,
   lastAssistant?: ChatMessage,
 ): ChatConversation {
-  const contextUsedTokens = recomputeContext(conv.messages)
   const m = lastAssistant?.metrics
+  // Prefer provider-reported context (OpenCode tokens.total); fall back to estimate
+  const estimated = recomputeContext(conv.messages)
+  // Also scan all messages for the latest provider context total
+  let fromProvider: number | undefined = m?.contextUsedTokens
+  if (fromProvider == null) {
+    for (let i = conv.messages.length - 1; i >= 0; i--) {
+      const c = conv.messages[i]?.metrics?.contextUsedTokens
+      if (c != null && c > 0) {
+        fromProvider = c
+        break
+      }
+    }
+  }
+  const contextUsedTokens = fromProvider ?? estimated
   return {
     ...conv,
     metrics: {
       contextUsedTokens,
-      contextWindowTokens: DEFAULT_CONTEXT_WINDOW,
-      tokensPerSec: m?.tokensPerSec ?? conv.metrics.tokensPerSec,
-      ttftMs: m?.ttftMs ?? conv.metrics.ttftMs,
+      contextWindowTokens: conv.metrics.contextWindowTokens || DEFAULT_CONTEXT_WINDOW,
+      tokensPerSec: m?.tokensPerSec ?? conv.metrics.tokensPerSec ?? 0,
+      ttftMs: m?.ttftMs ?? conv.metrics.ttftMs ?? 0,
     },
     meta: 'Just now',
   }

@@ -79,6 +79,10 @@ export interface ChatMessageMetrics {
   ttftMs?: number
   tokensPerSec?: number
   completionTokens?: number
+  /** Context tokens used after this turn (from provider when available) */
+  contextUsedTokens?: number
+  /** Wall time for this completion (ms), if known */
+  durationMs?: number
 }
 
 export interface ChatMessage {
@@ -93,6 +97,13 @@ export interface ChatMessage {
   tool?: { title: string; body: string }
   metrics?: ChatMessageMetrics
   createdAt?: string
+  /**
+   * OpenCode generation status for assistant turns.
+   * incomplete = still streaming / empty parts; complete = finished or error.
+   */
+  generationStatus?: 'incomplete' | 'complete' | 'error'
+  /** Provider/model error message when generation fails */
+  errorText?: string
 }
 
 export interface ConversationMetrics {

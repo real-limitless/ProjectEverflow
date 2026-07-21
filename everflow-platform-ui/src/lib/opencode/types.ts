@@ -36,7 +36,16 @@ export type OcMessageInfo = {
   agent?: string
   model?: { providerID?: string; modelID?: string }
   time?: { created?: number; completed?: number }
-  error?: { name?: string; message?: string }
+  /** Present when generation finished (e.g. "stop") */
+  finish?: string
+  tokens?: {
+    total?: number
+    input?: number
+    output?: number
+    reasoning?: number
+    cache?: { read?: number; write?: number }
+  }
+  error?: { name?: string; message?: string } | string
   [key: string]: unknown
 }
 

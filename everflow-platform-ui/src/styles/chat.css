@@ -786,6 +786,51 @@
   padding: 0.35rem 0.5rem;
   border-radius: 6px;
   background: var(--pf-t--global--background--color--primary--default);
+  max-height: 8rem;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.chat-layout .chat-stream-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-block-start: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.chat-layout .chat-stream-spinner {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 2px solid var(--pf-t--global--border--color--default);
+  border-block-start-color: var(--pf-t--global--border--color--brand--default);
+  border-radius: 50%;
+  animation: chat-stream-spin 0.7s linear infinite;
+}
+
+@keyframes chat-stream-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.chat-layout .msg-md--streaming::after,
+.chat-layout .msg-blocks--streaming .msg-md:last-of-type::after {
+  content: "";
+  display: inline-block;
+  width: 0.45em;
+  height: 1em;
+  margin-inline-start: 1px;
+  background: var(--pf-t--global--text--color--regular);
+  animation: chat-caret-blink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes chat-caret-blink {
+  50% {
+    opacity: 0;
+  }
 }
 
 .chat-layout .tool-card {
