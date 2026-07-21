@@ -67,7 +67,8 @@ class Settings(BaseSettings):
     sandbox_enabled: bool = True
     sandbox_agent_url: str = "http://localhost:8090"
     sandbox_agent_token: str = "change-me"
-    sandbox_default_image: str = "python"
+    # Prebaked guest image (./deploy/build-sandbox-guest.sh); override via SANDBOX_DEFAULT_IMAGE
+    sandbox_default_image: str = "ghcr.io/real-limitless/everflow-sandbox-guest:dev"
     sandbox_default_memory_mib: int = 2048
     sandbox_default_cpus: int = 2
     sandbox_default_harnesses: StrList = Field(

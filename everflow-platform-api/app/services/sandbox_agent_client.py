@@ -130,6 +130,55 @@ class SandboxAgentClient:
             expected=(204,),
         )
 
+    async def opencode_ensure(
+        self,
+        name: str,
+        *,
+        force_restart: bool = False,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/v1/sandboxes/{name}/opencode/ensure",
+            json={"force_restart": force_restart},
+        )
+
+    async def opencode_proxy_stream(
+        self,
+        name: str,
+        *,
+        method: str,
+        path: str,
+        query: str | None = None,
+        headers: dict[str, str] | None = None,
+        content: bytes | None = None,
+    ) -> tuple[httpx.Response, httpx.AsyncClient]:
+        """Open streaming response from agent OpenCode proxy.
+
+        Caller must aclose both the response and the client.
+        """
+        rel = path.lstrip("/")
+        url = self._url(
+            f"/v1/sandboxes/{name}/opencode/{rel}" if rel else f"/v1/sandboxes/{name}/opencode"
+        )
+        if query:
+            url = f"{url}?{query}"
+        hdrs = self._headers()
+        if headers:
+            for k, v in headers.items():
+                lk = k.lower()
+                if lk in ("host", "content-length", "authorization"):
+                    continue
+                hdrs[k] = v
+        timeout = httpx.Timeout(connect=10.0, read=None, write=60.0, pool=10.0)
+        client = httpx.AsyncClient(timeout=timeout)
+        try:
+            req = client.build_request(method.upper(), url, headers=hdrs, content=content)
+            res = await client.send(req, stream=True)
+            return res, client
+        except httpx.RequestError as exc:
+            await client.aclose()
+            raise SandboxAgentError(f"sandbox-agent unreachable: {exc}") from exc
+
     async def _request(
         self,
         method: str,

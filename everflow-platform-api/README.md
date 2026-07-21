@@ -92,7 +92,10 @@ Production ── alembic upgrade head ──►  same revision chain
 ## Sandboxes
 
 When `SANDBOX_ENABLED=true`, creating a project asks the internal **sandbox-agent**
-(microsandbox control plane) to start a detached microVM. Clients never call the
+(microsandbox control plane) to start a detached microVM. Create is **fast**: the
+agent returns once the guest is up. Prefer `SANDBOX_DEFAULT_IMAGE=everflow-sandbox-guest:dev`
+(build with `./deploy/build-sandbox-guest.sh`) so Claude Code / OpenCode are already
+in the image; otherwise harness install runs in the background. Clients never call the
 agent; they use Everflow routes:
 
 | Method | Path |

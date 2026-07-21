@@ -16,6 +16,7 @@ dependencies = [
     "fastapi-users[sqlalchemy,oauth]>=14.0.0",
     "httpx>=0.28.0",
     "python-multipart>=0.0.17",
+    "websockets>=14.0",
 ]
 
 [project.optional-dependencies]

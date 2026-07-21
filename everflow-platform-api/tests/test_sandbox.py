@@ -16,11 +16,13 @@ class FakeAgentClient:
     def __init__(self) -> None:
         self.sandboxes: dict[str, dict[str, Any]] = {}
         self.removed: list[str] = []
+        self.create_calls: list[dict[str, Any]] = []
 
     async def health(self) -> dict[str, Any]:
         return {"status": "ok", "kvm": False, "sdk": "mock", "mock": True}
 
     async def create_sandbox(self, **kwargs: Any) -> dict[str, Any]:
+        self.create_calls.append(kwargs)
         name = kwargs["name"]
         rec = {
             "name": name,
@@ -66,6 +68,18 @@ class FakeAgentClient:
 
     async def write_fs(self, name: str, path: str, content: str) -> None:
         return None
+
+    async def opencode_ensure(self, name: str, **kwargs: Any) -> dict[str, Any]:
+        if name not in self.sandboxes:
+            raise SandboxAgentError("not found", status_code=404)
+        return {
+            "sandbox_name": name,
+            "healthy": True,
+            "port": 14100,
+            "base_url": "http://127.0.0.1:14100",
+            "version": "fake-0.0.1",
+            "mode": "host",
+        }
 
 
 async def _create_org(client: AsyncClient, headers: dict[str, str], slug: str = "sbx-org") -> str:
@@ -141,6 +155,9 @@ async def test_provision_and_exec_with_fake_agent(
         refreshed = await sandbox_service._load_project(session, project_id)
         assert refreshed.sandbox_status == "running"
         assert refreshed.sandbox_name in fake.sandboxes
+        # Platform still requests default harnesses; agent installs them off the critical path
+        assert fake.create_calls, "create_sandbox should have been called"
+        assert "agent-claude-code" in fake.create_calls[0].get("harnesses", [])
 
     monkeypatch.setattr("app.api.v1.sandbox.SandboxAgentClient", lambda settings=None: fake)
     monkeypatch.setattr("app.services.sandbox.SandboxAgentClient", lambda settings=None: fake)
@@ -171,6 +188,15 @@ async def test_provision_and_exec_with_fake_agent(
     start = await client.post(f"/api/v1/projects/{project_id}/sandbox/start", headers=auth_headers)
     assert start.status_code == 200
     assert start.json()["status"] == "running"
+
+    monkeypatch.setattr("app.api.v1.opencode.SandboxAgentClient", lambda settings=None: fake)
+    oc = await client.post(
+        f"/api/v1/projects/{project_id}/opencode/ensure",
+        headers=auth_headers,
+        json={},
+    )
+    assert oc.status_code == 200, oc.text
+    assert oc.json()["healthy"] is True
 
 
 @pytest.mark.asyncio
