@@ -2134,18 +2134,50 @@ button.panel-palette-chip.is-visible {
   border-bottom: 1px solid var(--pf-t--global--border--color--default);
 }
 
-.code-edit-area {
-  width: 100%;
+.code-edit-wrap {
+  display: flex;
+  align-items: stretch;
   height: 100%;
   min-height: 12rem;
+  overflow: hidden;
+  font-family: var(--pf-t--global--font--family--mono, ui-monospace, monospace);
+  line-height: 1.45;
+}
+
+.code-edit-gutter {
+  flex-shrink: 0;
+  overflow: hidden;
+  text-align: right;
+  user-select: none;
+  padding: 0.5rem 0.65rem;
+  color: var(--pf-t--global--text--color--subtle);
+  border-inline-end: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--primary--default);
+}
+
+.code-edit-ln {
+  min-width: 1.5ch;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+}
+
+.code-edit-area {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  height: 100%;
+  min-height: 0;
   border: 0;
   resize: none;
   padding: 0.5rem 0.75rem;
-  font-family: var(--pf-t--global--font--family--mono, ui-monospace, monospace);
+  font-family: inherit;
   background: transparent;
   color: var(--pf-t--global--text--color--regular);
   line-height: 1.45;
   outline: none;
+  overflow: auto;
+  white-space: pre;
+  tab-size: 2;
 }
 
 .code-fs-error {

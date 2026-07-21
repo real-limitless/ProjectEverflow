@@ -5,7 +5,8 @@
 
 /* —— Shell —— */
 .panel-host > .chat-layout,
-.panel-body > .panel-host {
+.panel-body > .panel-host,
+.panel-body-pane > .panel-host {
   flex: 1 1 auto;
   min-height: 0;
 }

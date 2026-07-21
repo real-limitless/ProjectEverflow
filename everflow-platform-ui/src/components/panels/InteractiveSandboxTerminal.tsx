@@ -368,14 +368,18 @@ export function InteractiveSandboxTerminal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, cmd, cwd])
 
-  // When the tab becomes active (enabled), re-fit — was often 0×0 while hidden
+  // When the shell tab becomes active (enabled) or the dock pane is shown again
+  // (keep-alive: host was 0×0 under display:none), re-fit and push winsize.
   useEffect(() => {
     if (!enabled) return
+    const host = hostRef.current
+    if (!host) return
+
     const run = () => {
-      const host = hostRef.current
       const term = termRef.current
       const fit = fitRef.current
       if (!host || !term || !fit) return
+      if (host.clientWidth < 10 || host.clientHeight < 10) return
       try {
         measureAndResize(term, host, fit)
         const ws = wsRef.current
@@ -394,13 +398,21 @@ export function InteractiveSandboxTerminal({
         /* ignore */
       }
     }
+
     const t1 = window.setTimeout(run, 30)
     const t2 = window.setTimeout(run, 120)
     const t3 = window.setTimeout(run, 300)
+
+    // Dock keep-alive: pane may reappear without `enabled` flipping; observe host
+    // until it has a real box again after being hidden.
+    const ro = new ResizeObserver(() => run())
+    ro.observe(host)
+
     return () => {
       window.clearTimeout(t1)
       window.clearTimeout(t2)
       window.clearTimeout(t3)
+      ro.disconnect()
     }
   }, [enabled])
 

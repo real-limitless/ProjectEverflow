@@ -359,6 +359,28 @@
       background: var(--pf-t--global--background--color--primary--default);
       color: var(--pf-t--global--text--color--regular);
     }
+    /* Keep-alive panes: inactive tabs stay mounted (hidden) so e.g. Terminal PTYs survive. */
+    .panel-body-pane {
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 0;
+      height: 100%;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-body-pane.is-active {
+      display: flex !important;
+    }
+    .panel-body-pane[hidden] {
+      display: none !important;
+    }
+    .panel-body-pane > .panel-host {
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 0;
+      height: 100%;
+    }
     .drop-overlay {
       /* Below tab bar; pointer-events controlled by body drag classes in app.css */
       display: none;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Spinner } from '@patternfly/react-core'
 import AngleDownIcon from '@patternfly/react-icons/dist/esm/icons/angle-down-icon'
 import AngleRightIcon from '@patternfly/react-icons/dist/esm/icons/angle-right-icon'
@@ -210,6 +210,7 @@ export function CodePanel({ panelKey }: CodePanelProps) {
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editMode, setEditMode] = useState(fromApi)
+  const editGutterRef = useRef<HTMLDivElement>(null)
 
   const refreshTree = useCallback(async () => {
     if (!fromApi || !currentProjectId || !sandboxRunning) return
@@ -490,9 +491,12 @@ export function CodePanel({ panelKey }: CodePanelProps) {
                 <button
                   type="button"
                   className={`editor-ctrl-btn${editMode ? ' active' : ''}`}
+                  title={editMode ? 'Switch to read-only view' : 'Switch to edit'}
+                  aria-label={editMode ? 'Switch to view' : 'Switch to edit'}
+                  aria-pressed={editMode}
                   onClick={() => setEditMode((v) => !v)}
                 >
-                  {editMode ? 'Edit' : 'View'}
+                  {editMode ? 'View' : 'Edit'}
                 </button>
                 <Button
                   variant="primary"
@@ -544,23 +548,43 @@ export function CodePanel({ panelKey }: CodePanelProps) {
           {!activePath ? (
             <div className="code-empty-msg">Select a file from the tree to open it.</div>
           ) : fromApi && editMode ? (
-            <textarea
-              className="code-edit-area"
-              value={draft}
-              onChange={(e) => {
-                setDraft(e.target.value)
-                setDirty(true)
-              }}
-              onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-                  e.preventDefault()
-                  void save()
-                }
-              }}
-              spellCheck={false}
-              style={{ fontSize: `${fontSize}px` }}
-              aria-label={`Edit ${activeName}`}
-            />
+            <div className="code-edit-wrap" style={{ fontSize: `${fontSize}px` }}>
+              <div
+                ref={editGutterRef}
+                className="code-edit-gutter"
+                aria-hidden
+              >
+                {Array.from(
+                  { length: Math.max(1, draft.split('\n').length) },
+                  (_, i) => (
+                    <div key={i + 1} className="code-edit-ln">
+                      {i + 1}
+                    </div>
+                  ),
+                )}
+              </div>
+              <textarea
+                className="code-edit-area"
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value)
+                  setDirty(true)
+                }}
+                onScroll={(e) => {
+                  const gutter = editGutterRef.current
+                  if (gutter) gutter.scrollTop = e.currentTarget.scrollTop
+                }}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+                    e.preventDefault()
+                    void save()
+                  }
+                }}
+                spellCheck={false}
+                style={{ fontSize: `${fontSize}px` }}
+                aria-label={`Edit ${activeName}`}
+              />
+            </div>
           ) : lines.length === 0 ? (
             <div className="code-empty-msg">
               {changesByPath.get(activePath)?.status === 'D'

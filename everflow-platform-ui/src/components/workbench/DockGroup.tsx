@@ -1,5 +1,7 @@
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@patternfly/react-core'
 import type { GroupNode } from '@/types/dock'
+import type { PanelKey } from '@/types/panels'
 import {
   startDockTabDrag,
   type DockTabDropTarget,
@@ -13,6 +15,11 @@ interface DockGroupProps {
   node: GroupNode
 }
 
+/**
+ * Lazy-mount + keep-alive: once a tab is activated it stays mounted (hidden)
+ * until closed or removed from the group. Prevents Terminal PTY WebSockets from
+ * being torn down when the user switches dock tabs.
+ */
 export function DockGroup({ node }: DockGroupProps) {
   const activateTab = usePlaygroundStore((s) => s.activateTab)
   const closePanel = usePlaygroundStore((s) => s.closePanel)
@@ -24,6 +31,62 @@ export function DockGroup({ node }: DockGroupProps) {
   const dropPanel = usePlaygroundStore((s) => s.dropPanel)
 
   const empty = node.tabs.length === 0
+
+  const [visited, setVisited] = useState<Set<PanelKey>>(() => {
+    const initial = new Set<PanelKey>()
+    if (node.active && node.tabs.includes(node.active)) initial.add(node.active)
+    return initial
+  })
+
+  // Mark active tab as visited (first open mounts; later switches keep-alive).
+  useEffect(() => {
+    if (!node.active || !node.tabs.includes(node.active)) return
+    const active = node.active
+    setVisited((prev) => {
+      if (prev.has(active)) return prev
+      const next = new Set(prev)
+      next.add(active)
+      return next
+    })
+  }, [node.active, node.tabs])
+
+  // Drop keep-alive for tabs no longer in this group (closed / moved away).
+  useEffect(() => {
+    const tabSet = new Set(node.tabs)
+    setVisited((prev) => {
+      let changed = false
+      const next = new Set<PanelKey>()
+      for (const pid of prev) {
+        if (tabSet.has(pid)) next.add(pid)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [node.tabs])
+
+  // After a keep-alive pane becomes visible, force layout consumers (xterm FitAddon,
+  // editors) to remeasure — size was 0×0 while display:none.
+  useEffect(() => {
+    if (!node.active) return
+    const id = window.requestAnimationFrame(() => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [node.active])
+
+  // Mount order: preserve visit order for stability; only tabs still in group.
+  const mountedTabs = useMemo(() => {
+    const tabSet = new Set(node.tabs)
+    const ordered: PanelKey[] = []
+    for (const pid of visited) {
+      if (tabSet.has(pid)) ordered.push(pid)
+    }
+    // Active may not be in visited yet for one render frame — ensure it mounts.
+    if (node.active && tabSet.has(node.active) && !ordered.includes(node.active)) {
+      ordered.push(node.active)
+    }
+    return ordered
+  }, [visited, node.tabs, node.active])
 
   const applyDrop = (target: DockTabDropTarget | null, panelId: string) => {
     if (!target) return
@@ -130,9 +193,7 @@ export function DockGroup({ node }: DockGroupProps) {
         </div>
       </div>
       <div className="panel-body">
-        {node.active && node.tabs.includes(node.active) ? (
-          <PanelHost panelKey={node.active} />
-        ) : empty ? (
+        {empty ? (
           <div className="empty-group">
             Drop a panel here
             <br />
@@ -140,8 +201,22 @@ export function DockGroup({ node }: DockGroupProps) {
               or use the Panels tray
             </span>
           </div>
-        ) : (
+        ) : mountedTabs.length === 0 ? (
           <div className="empty-group">Select a tab</div>
+        ) : (
+          mountedTabs.map((pid) => {
+            const isActive = pid === node.active
+            return (
+              <div
+                key={pid}
+                className={`panel-body-pane${isActive ? ' is-active' : ''}`}
+                hidden={!isActive}
+                data-panel-pane={pid}
+              >
+                <PanelHost panelKey={pid} />
+              </div>
+            )
+          })
         )}
       </div>
       <DropOverlay groupId={node.id} />
