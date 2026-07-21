@@ -1,11 +1,24 @@
-import type { ChatMessage } from '@/types/panels'
-import { mapOcMessage } from './mapParts'
-import type { OcEvent, OcMessageBundle, OcPart } from './types'
+import type { ChatBlock, ChatMessage } from '@/types/panels'
+import {
+  applyOcPartToMessage,
+  mapOcMessage,
+  mapQuestionRequest,
+} from './mapParts'
+import type { OcEvent, OcMessageBundle, OcPart, OcQuestionRequest } from './types'
 
 export type StreamPatch =
   | { kind: 'message'; message: ChatMessage }
   | { kind: 'part_delta'; messageId: string; partType: string; text: string }
   | { kind: 'part_set'; messageId: string; partType: string; text: string }
+  | { kind: 'part_full'; messageId: string; part: OcPart }
+  | {
+      kind: 'question'
+      sessionId: string
+      requestId: string
+      questions: OcQuestionRequest['questions']
+      messageId?: string
+    }
+  | { kind: 'question_resolved'; sessionId: string; requestId: string; status: 'answered' | 'rejected' }
   | { kind: 'permission'; sessionId: string; permissionId: string; title: string; detail?: string }
   | { kind: 'session_status'; sessionId: string; status: string }
   | { kind: 'reload_messages' }
@@ -21,6 +34,48 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
 
   if (type === 'server.connected' || type === 'server.error') return { kind: 'noop' }
 
+  // Interactive questions (not message parts)
+  if (
+    type === 'question.asked' ||
+    type === 'question.v2.asked' ||
+    type.includes('question.asked') ||
+    type.includes('question.v2.asked')
+  ) {
+    const requestId = String(props.id || props.requestID || props.requestId || '')
+    const sessionId = String(props.sessionID || props.sessionId || '')
+    const questions = Array.isArray(props.questions)
+      ? (props.questions as OcQuestionRequest['questions'])
+      : []
+    const tool = props.tool as { messageID?: string; callID?: string } | undefined
+    if (requestId && questions.length) {
+      return {
+        kind: 'question',
+        sessionId,
+        requestId,
+        questions,
+        messageId: tool?.messageID ? String(tool.messageID) : undefined,
+      }
+    }
+    return { kind: 'reload_messages' }
+  }
+
+  if (
+    type === 'question.replied' ||
+    type === 'question.rejected' ||
+    type === 'question.v2.replied' ||
+    type === 'question.v2.rejected' ||
+    type.includes('question.replied') ||
+    type.includes('question.rejected')
+  ) {
+    const requestId = String(props.requestID || props.requestId || props.id || '')
+    const sessionId = String(props.sessionID || props.sessionId || '')
+    const status =
+      type.includes('reject') ? ('rejected' as const) : ('answered' as const)
+    if (requestId) {
+      return { kind: 'question_resolved', sessionId, requestId, status }
+    }
+  }
+
   // Full message payloads
   if (
     type.includes('message.updated') ||
@@ -29,7 +84,18 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
   ) {
     const info = (props.info || props.message || props) as OcMessageBundle['info']
     const parts = (props.parts || []) as OcPart[]
+    const hasParts = Array.isArray(props.parts)
     if (info && typeof info === 'object' && 'id' in info) {
+      // message.updated often carries only info (no parts) — do not wipe content
+      if (!hasParts) {
+        return {
+          kind: 'message',
+          message: mapOcMessage({
+            info: info as OcMessageBundle['info'],
+            parts: [],
+          }),
+        }
+      }
       return {
         kind: 'message',
         message: mapOcMessage({ info: info as OcMessageBundle['info'], parts }),
@@ -43,7 +109,7 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
     return { kind: 'reload_messages' }
   }
 
-  // Streaming part deltas / updates (token streaming)
+  // Streaming part deltas / updates (token streaming + full tool parts)
   if (
     type.includes('message.part') ||
     type.includes('part.updated') ||
@@ -63,6 +129,37 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
     // Prefer incremental delta; fall back to full text (updated events)
     const delta = props.delta ?? partRaw.delta
     const fullText = partRaw.text ?? props.text
+
+    // Full structured part (tool, file, …) — upsert whole part, not text only
+    const structuredTypes = new Set([
+      'tool',
+      'tool-invocation',
+      'tool_use',
+      'tool-call',
+      'file',
+      'patch',
+      'bash',
+      'shell',
+      'terminal',
+      'web_search',
+      'websearch',
+      'webfetch',
+      'question',
+      'permission',
+    ])
+    if (
+      messageId &&
+      partRaw &&
+      typeof partRaw === 'object' &&
+      structuredTypes.has(partType.toLowerCase())
+    ) {
+      return {
+        kind: 'part_full',
+        messageId,
+        part: partRaw as OcPart,
+      }
+    }
+
     if (messageId && delta != null && String(delta).length > 0) {
       return {
         kind: 'part_delta',
@@ -88,12 +185,24 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
         text: String(fullText),
       }
     }
+    // Unknown part shape with message id — full hydrate
+    if (messageId && partRaw && typeof partRaw === 'object' && partRaw.type) {
+      return {
+        kind: 'part_full',
+        messageId,
+        part: partRaw as OcPart,
+      }
+    }
     return { kind: 'reload_messages' }
   }
 
-  if (type.includes('permission') && !type.includes('replied')) {
+  if (
+    (type.includes('permission') && !type.includes('replied')) ||
+    type === 'permission.asked' ||
+    type === 'permission.v2.asked'
+  ) {
     const permissionId = String(
-      props.permissionID || props.id || props.permissionId || '',
+      props.permissionID || props.id || props.permissionId || props.requestID || '',
     )
     const sessionId = String(props.sessionID || props.sessionId || '')
     const title = String(props.permission || props.title || 'Permission required')
@@ -101,7 +210,9 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
       ? String(props.pattern)
       : props.patterns
         ? JSON.stringify(props.patterns)
-        : undefined
+        : props.metadata
+          ? JSON.stringify(props.metadata)
+          : undefined
     if (permissionId) {
       return { kind: 'permission', sessionId, permissionId, title, detail }
     }
@@ -199,6 +310,32 @@ export function applyPartDelta(
   return out.filter((m, i) => i === idx || !m.id.startsWith('pending-'))
 }
 
+/** Apply a full OpenCode part (esp. tools) onto the message list. */
+export function applyPartFull(
+  messages: ChatMessage[],
+  messageId: string,
+  part: OcPart,
+): ChatMessage[] {
+  const idx = messages.findIndex((m) => m.id === messageId)
+  if (idx < 0) {
+    const shell: ChatMessage = {
+      id: messageId,
+      role: 'assistant',
+      generationStatus: 'incomplete',
+    }
+    const next = applyOcPartToMessage(shell, part)
+    const withoutPending = messages.filter((m) => !m.id.startsWith('pending-'))
+    return [...withoutPending, next]
+  }
+  const out = [...messages]
+  out[idx] = applyOcPartToMessage(messages[idx], part)
+  return out.filter((m, i) => i === idx || !m.id.startsWith('pending-'))
+}
+
+/**
+ * Upsert an assistant message. When the incoming payload is info-only (empty
+ * body) and we already have content/tools, preserve the existing body.
+ */
 export function upsertMessage(messages: ChatMessage[], msg: ChatMessage): ChatMessage[] {
   const withoutPending =
     msg.role === 'assistant'
@@ -206,7 +343,246 @@ export function upsertMessage(messages: ChatMessage[], msg: ChatMessage): ChatMe
       : messages
   const idx = withoutPending.findIndex((m) => m.id === msg.id)
   if (idx < 0) return [...withoutPending, msg]
+
+  const prev = withoutPending[idx]
+  const incomingEmpty =
+    !(msg.blocks && msg.blocks.length) &&
+    !(msg.text || '').trim() &&
+    !(msg.thinking || '').trim()
+  const prevHasBody =
+    !!(prev.blocks && prev.blocks.length) ||
+    !!(prev.text || '').trim() ||
+    !!(prev.thinking || '').trim()
+
+  let merged: ChatMessage
+  if (incomingEmpty && prevHasBody) {
+    // message.updated with info only — keep streamed parts
+    merged = {
+      ...prev,
+      agent: msg.agent || prev.agent,
+      metrics: msg.metrics || prev.metrics,
+      createdAt: msg.createdAt || prev.createdAt,
+      generationStatus: msg.generationStatus || prev.generationStatus,
+      errorText: msg.errorText || prev.errorText,
+      thinking: prev.thinking,
+      blocks: prev.blocks,
+      text: prev.text,
+    }
+  } else if (
+    msg.blocks &&
+    msg.blocks.length &&
+    prev.blocks &&
+    prev.blocks.length &&
+    msg.blocks.length < prev.blocks.length &&
+    !messageLooksComplete(msg)
+  ) {
+    // Prefer richer block list while still streaming
+    merged = {
+      ...msg,
+      blocks: prev.blocks,
+      text: msg.text || prev.text,
+      thinking: msg.thinking || prev.thinking,
+    }
+  } else {
+    merged = {
+      ...prev,
+      ...msg,
+      // Never drop thinking if new payload omits it mid-stream
+      thinking: msg.thinking || prev.thinking,
+      blocks: msg.blocks?.length ? msg.blocks : prev.blocks,
+      text: msg.text || prev.text,
+    }
+  }
+
   const out = [...withoutPending]
-  out[idx] = msg
+  out[idx] = merged
   return out
+}
+
+function messageLooksComplete(m: ChatMessage): boolean {
+  return m.generationStatus === 'complete' || m.generationStatus === 'error'
+}
+
+/**
+ * Drop orphan question cards that lack a request id (legacy tool-part mapping)
+ * and collapse duplicate cards for the same request id — keep one.
+ */
+export function dedupeQuestionBlocks(blocks: ChatBlock[] | undefined): ChatBlock[] | undefined {
+  if (!blocks?.length) return blocks
+  const out: ChatBlock[] = []
+  const seenRequestIds = new Set<string>()
+  for (const b of blocks) {
+    if (b.type !== 'question') {
+      out.push(b)
+      continue
+    }
+    const rid = b.questionRequest?.id
+    // Orphans without request id cannot be answered via OpenCode API — drop them
+    // once a real question card exists, or always prefer request-id cards.
+    if (!rid) continue
+    if (seenRequestIds.has(rid)) continue
+    seenRequestIds.add(rid)
+    out.push(b)
+  }
+  // If we dropped everything and had only orphans, keep a single orphan as last resort
+  if (!out.some((b) => b.type === 'question')) {
+    const firstOrphan = blocks.find((b) => b.type === 'question' && !b.questionRequest?.id)
+    if (firstOrphan && !blocks.some((b) => b.type === 'question' && b.questionRequest?.id)) {
+      // Only keep orphan when there is truly no request-id card in this list
+      out.push(firstOrphan)
+    }
+  }
+  return out
+}
+
+function stripOrphanQuestions(messages: ChatMessage[]): ChatMessage[] {
+  return messages
+    .map((m) => {
+      if (!m.blocks?.some((b) => b.type === 'question')) return m
+      const blocks = dedupeQuestionBlocks(m.blocks)
+      return { ...m, blocks }
+    })
+    .filter((m) => {
+      // Drop empty standalone question shells (question-{id} with no blocks left)
+      if (m.id.startsWith('question-') && !(m.blocks && m.blocks.length)) return false
+      return true
+    })
+}
+
+/** Insert or update a question card for the active session. */
+export function upsertQuestionMessage(
+  messages: ChatMessage[],
+  patch: {
+    requestId: string
+    questions: OcQuestionRequest['questions']
+    messageId?: string
+  },
+): ChatMessage[] {
+  const block = mapQuestionRequest({
+    id: patch.requestId,
+    questions: patch.questions,
+  })
+  const qid = `question-${patch.requestId}`
+
+  // Start from a clean slate: one request id → one card; drop tool-part orphans
+  let base = stripOrphanQuestions(messages)
+
+  // If a standalone question-{id} message exists AND we will attach to the
+  // assistant message, remove the standalone to avoid two cards in the thread.
+  if (patch.messageId) {
+    base = base.filter((m) => m.id !== qid)
+  }
+
+  // Attach to the referenced assistant message when possible
+  if (patch.messageId) {
+    const idx = base.findIndex((m) => m.id === patch.messageId)
+    if (idx >= 0) {
+      const prev = base[idx]
+      // Replace any existing question blocks with the single authoritative card
+      const withoutQs = (prev.blocks || []).filter((b) => b.type !== 'question')
+      const blocks = dedupeQuestionBlocks([...withoutQs, block]) || [block]
+      const out = [...base]
+      out[idx] = {
+        ...prev,
+        blocks,
+        generationStatus: 'incomplete',
+      }
+      return out.filter((m) => !m.id.startsWith('pending-'))
+    }
+  }
+
+  // Standalone question message (or update existing)
+  const idx = base.findIndex(
+    (m) =>
+      m.id === qid ||
+      (m.blocks || []).some(
+        (b) => b.type === 'question' && b.questionRequest?.id === patch.requestId,
+      ),
+  )
+  if (idx >= 0) {
+    const prev = base[idx]
+    const withoutQs = (prev.blocks || []).filter(
+      (b) =>
+        !(
+          b.type === 'question' &&
+          (b.questionRequest?.id === patch.requestId || !b.questionRequest?.id)
+        ),
+    )
+    const blocks = dedupeQuestionBlocks([...withoutQs, block]) || [block]
+    const out = [...base]
+    out[idx] = { ...prev, blocks, generationStatus: 'incomplete' }
+    // Also strip this request from any other messages
+    return out
+      .map((m, i) => {
+        if (i === idx) return m
+        if (!m.blocks?.some((b) => b.type === 'question')) return m
+        return {
+          ...m,
+          blocks: m.blocks.filter(
+            (b) =>
+              !(
+                b.type === 'question' &&
+                (b.questionRequest?.id === patch.requestId || !b.questionRequest?.id)
+              ),
+          ),
+        }
+      })
+      .filter((m) => !m.id.startsWith('pending-'))
+      .filter((m) => !(m.id.startsWith('question-') && !(m.blocks && m.blocks.length)))
+  }
+
+  const msg: ChatMessage = {
+    id: qid,
+    role: 'assistant',
+    generationStatus: 'incomplete',
+    blocks: [block],
+    createdAt: new Date().toISOString(),
+  }
+  return [
+    ...base
+      .filter((m) => !m.id.startsWith('pending-'))
+      // Remove orphans / other copies of this request before appending
+      .map((m) => {
+        if (!m.blocks?.some((b) => b.type === 'question')) return m
+        return {
+          ...m,
+          blocks: m.blocks.filter(
+            (b) =>
+              !(
+                b.type === 'question' &&
+                (b.questionRequest?.id === patch.requestId || !b.questionRequest?.id)
+              ),
+          ),
+        }
+      })
+      .filter((m) => !(m.id.startsWith('question-') && !(m.blocks && m.blocks.length))),
+    msg,
+  ]
+}
+
+export function resolveQuestionMessage(
+  messages: ChatMessage[],
+  requestId: string,
+  status: 'answered' | 'rejected',
+): ChatMessage[] {
+  return messages.map((m) => {
+    if (!m.blocks?.some((b) => b.type === 'question')) return m
+    let changed = false
+    const blocks = m.blocks.map((b) => {
+      if (b.type !== 'question' || b.questionRequest?.id !== requestId) return b
+      changed = true
+      return {
+        ...b,
+        questionRequest: b.questionRequest
+          ? { ...b.questionRequest, status }
+          : undefined,
+      }
+    })
+    if (!changed) return m
+    return {
+      ...m,
+      blocks,
+      generationStatus: status === 'answered' ? m.generationStatus : 'complete',
+    }
+  })
 }

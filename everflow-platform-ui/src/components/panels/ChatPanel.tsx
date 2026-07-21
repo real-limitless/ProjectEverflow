@@ -23,18 +23,24 @@ import {
   listMessages,
   listMcp,
   listProviders,
+  listQuestions,
   listSessions,
   promptAsync,
   promptSync,
+  rejectQuestion,
   respondPermission,
+  respondQuestion,
   revertMessage,
   subscribeEvents,
   updateSession,
 } from '@/lib/opencode/client'
 import {
   applyPartDelta,
+  applyPartFull,
   mapOcEvent,
+  resolveQuestionMessage,
   upsertMessage,
+  upsertQuestionMessage,
 } from '@/lib/opencode/mapEvents'
 import {
   assistantTurnReady,
@@ -100,6 +106,8 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const bootGenRef = useRef(0)
   const sendingRef = useRef(false)
   const pollAbortRef = useRef(0)
+  /** Question request ids already answered in this session — never re-inject as pending. */
+  const answeredQuestionIdsRef = useRef<Set<string>>(new Set())
 
   function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
@@ -199,6 +207,25 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
             }
           })
         }
+
+        // Merge pending OpenCode questions (SSE may have been missed).
+        // Never re-inject ids the user already answered in this tab.
+        try {
+          const pendingQs = await listQuestions(projectId)
+          for (const q of pendingQs) {
+            if (q.sessionID && q.sessionID !== sessionId) continue
+            if (!q.id || !Array.isArray(q.questions) || !q.questions.length) continue
+            if (answeredQuestionIdsRef.current.has(q.id)) continue
+            serverMsgs = upsertQuestionMessage(serverMsgs, {
+              requestId: q.id,
+              questions: q.questions,
+              messageId: q.tool?.messageID,
+            })
+          }
+        } catch {
+          /* optional */
+        }
+
         const local =
           usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
         const activeId =
@@ -214,7 +241,48 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           return local
         }
 
-        const msgs = mergeServerMessages(serverMsgs, local)
+        // Preserve local pending question cards if server list lags;
+        // also re-apply local "answered" status so hydrate does not reopen chips.
+        let msgs = mergeServerMessages(serverMsgs, local)
+        for (const m of local) {
+          for (const b of m.blocks || []) {
+            if (b.type !== 'question' || !b.questionRequest?.id) continue
+            const qid = b.questionRequest.id
+            if (
+              b.questionRequest.status === 'answered' ||
+              b.questionRequest.status === 'rejected' ||
+              answeredQuestionIdsRef.current.has(qid)
+            ) {
+              answeredQuestionIdsRef.current.add(qid)
+              msgs = resolveQuestionMessage(
+                msgs,
+                qid,
+                b.questionRequest.status === 'rejected' ? 'rejected' : 'answered',
+              )
+              continue
+            }
+            if (b.questionRequest.status === 'pending') {
+              const already = msgs.some((sm) =>
+                (sm.blocks || []).some(
+                  (sb) =>
+                    sb.type === 'question' && sb.questionRequest?.id === qid,
+                ),
+              )
+              if (!already && !answeredQuestionIdsRef.current.has(qid)) {
+                msgs = upsertQuestionMessage(msgs, {
+                  requestId: qid,
+                  questions: b.questionRequest.items.map((it) => ({
+                    question: it.question,
+                    header: it.header,
+                    options: it.options,
+                    multiple: it.multiple,
+                    custom: it.custom,
+                  })),
+                })
+              }
+            }
+          }
+        }
         const lastAsst = [...msgs]
           .reverse()
           .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
@@ -438,7 +506,58 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
                 )
                 const last = next.find((m) => m.id === patch.messageId)
                 apply(next, last)
+              } else if (patch.kind === 'part_full') {
+                const msgs =
+                  usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
+                  []
+                const next = applyPartFull(msgs, patch.messageId, patch.part)
+                const last = next.find((m) => m.id === patch.messageId)
+                apply(next, last)
+              } else if (patch.kind === 'question') {
+                // Only show for the active session (or unknown session id)
+                if (
+                  patch.sessionId &&
+                  patch.sessionId !== convId &&
+                  patch.sessionId.length > 0
+                ) {
+                  return
+                }
+                // Ignore late SSE for a question we already answered
+                if (answeredQuestionIdsRef.current.has(patch.requestId)) {
+                  return
+                }
+                const msgs =
+                  usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
+                  []
+                const next = upsertQuestionMessage(msgs, {
+                  requestId: patch.requestId,
+                  questions: patch.questions,
+                  messageId: patch.messageId,
+                })
+                apply(next)
+              } else if (patch.kind === 'question_resolved') {
+                if (
+                  patch.sessionId &&
+                  patch.sessionId !== convId &&
+                  patch.sessionId.length > 0
+                ) {
+                  return
+                }
+                answeredQuestionIdsRef.current.add(patch.requestId)
+                const msgs =
+                  usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
+                  []
+                apply(resolveQuestionMessage(msgs, patch.requestId, patch.status))
+                // Agent continues after answer — refresh history
+                void hydrateSession(projectId, convId, { force: true })
               } else if (patch.kind === 'permission') {
+                if (
+                  patch.sessionId &&
+                  patch.sessionId !== convId &&
+                  patch.sessionId.length > 0
+                ) {
+                  return
+                }
                 const msgs =
                   usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
                   []
@@ -705,6 +824,116 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     }
   }
 
+  const onQuestionReply = async (requestId: string, answers: string[][]) => {
+    if (!requestId) {
+      setLiveError('Missing question request id — try refreshing the chat.')
+      return
+    }
+    if (!useLive || !currentProjectId || !st.convId) {
+      // Demo / offline: fall back to sending the first label as a user message
+      const label = answers.flat().filter(Boolean)[0]
+      if (label) send(label)
+      return
+    }
+    const projectId = currentProjectId
+    const convId = st.convId
+
+    // Optimistic: lock the card immediately so the UI never looks stuck
+    answeredQuestionIdsRef.current.add(requestId)
+    const optimistic = resolveQuestionMessage(
+      usePlaygroundStore.getState().instanceState[panelKey]?.messages || [],
+      requestId,
+      'answered',
+    )
+    ensureInstanceState(panelKey, { messages: optimistic })
+    updateConversationMessages(projectId, convId, optimistic)
+    setLiveError(null)
+    setSending(true)
+    sendingRef.current = true
+
+    try {
+      await respondQuestion(projectId, requestId, answers, convId)
+      // Resume polling for the continued assistant turn after the tool unblocks
+      const pollGen = ++pollAbortRef.current
+      const streamStartedAt = Date.now()
+      ;(async () => {
+        const deadline = Date.now() + 180_000
+        try {
+          // Immediate hydrate so tool completion shows up quickly
+          await hydrateSession(projectId, convId, {
+            force: true,
+            streamStartedAt,
+          })
+          while (Date.now() < deadline && pollAbortRef.current === pollGen) {
+            await new Promise((r) => setTimeout(r, 1200))
+            if (pollAbortRef.current !== pollGen) break
+            const hydrated = await hydrateSession(projectId, convId, {
+              force: true,
+              streamStartedAt,
+            })
+            const lastAsst = [...hydrated]
+              .reverse()
+              .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
+            if (assistantTurnReady(lastAsst)) break
+          }
+        } finally {
+          if (pollAbortRef.current === pollGen) {
+            setSending(false)
+            sendingRef.current = false
+          }
+        }
+      })()
+    } catch (e) {
+      // Re-open the question so the user can retry
+      answeredQuestionIdsRef.current.delete(requestId)
+      const reopened = (
+        usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
+      ).map((m) => {
+        if (!m.blocks) return m
+        return {
+          ...m,
+          blocks: m.blocks.map((b) =>
+            b.type === 'question' && b.questionRequest?.id === requestId
+              ? {
+                  ...b,
+                  questionRequest: {
+                    ...b.questionRequest,
+                    status: 'pending' as const,
+                  },
+                }
+              : b,
+          ),
+        }
+      })
+      ensureInstanceState(panelKey, { messages: reopened })
+      updateConversationMessages(projectId, convId, reopened)
+      setSending(false)
+      sendingRef.current = false
+      const detail = (e as Error).message || 'Failed to submit answer'
+      setLiveError(`Could not submit answer: ${detail}`)
+    }
+  }
+
+  const onQuestionReject = async (requestId: string) => {
+    if (!useLive || !currentProjectId || !st.convId) return
+    const projectId = currentProjectId
+    const convId = st.convId
+    answeredQuestionIdsRef.current.add(requestId)
+    const optimistic = resolveQuestionMessage(
+      usePlaygroundStore.getState().instanceState[panelKey]?.messages || [],
+      requestId,
+      'rejected',
+    )
+    ensureInstanceState(panelKey, { messages: optimistic })
+    updateConversationMessages(projectId, convId, optimistic)
+    try {
+      await rejectQuestion(projectId, requestId, convId)
+    } catch (e) {
+      answeredQuestionIdsRef.current.delete(requestId)
+      setLiveError(`Could not dismiss question: ${(e as Error).message}`)
+    }
+  }
+
   const liveNewChat = async () => {
     if (!currentProjectId) return
     const created = await createSession(currentProjectId, 'New chat')
@@ -909,6 +1138,10 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
                   useLive ? void liveFork(id) : forkConversation(panelKey, id)
                 }
                 onQuestionOption={(opt) => send(opt)}
+                onQuestionReply={(requestId, answers) =>
+                  void onQuestionReply(requestId, answers)
+                }
+                onQuestionReject={(requestId) => void onQuestionReject(requestId)}
                 onPermission={onPermission}
               />
             ))

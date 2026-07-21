@@ -1,21 +1,35 @@
 /** Minimal OpenCode wire types (defensive; schema may drift). */
 
+export type OcToolState = {
+  status?: string
+  input?: Record<string, unknown>
+  output?: string
+  error?: string
+  title?: string
+  metadata?: Record<string, unknown>
+  raw?: string
+  time?: { start?: number; end?: number }
+}
+
 export type OcPart = {
   type: string
   text?: string
   content?: string
   id?: string
+  sessionID?: string
+  messageID?: string
   tool?: string
   name?: string
   title?: string
-  state?: string | { status?: string; output?: string; error?: string }
+  state?: string | OcToolState
   input?: unknown
   output?: unknown
   callID?: string
-  // question
+  // question (rare as part; usually SSE question.asked)
   question?: string
   header?: string
-  options?: Array<string | { label?: string; value?: string }>
+  options?: Array<string | { label?: string; value?: string; description?: string }>
+  questions?: OcQuestionInfo[]
   // permission
   permission?: string
   permissionID?: string
@@ -28,6 +42,26 @@ export type OcPart = {
   mime?: string
   url?: string
   [key: string]: unknown
+}
+
+export type OcQuestionOption = {
+  label: string
+  description?: string
+}
+
+export type OcQuestionInfo = {
+  question: string
+  header?: string
+  options?: OcQuestionOption[]
+  multiple?: boolean
+  custom?: boolean
+}
+
+export type OcQuestionRequest = {
+  id: string
+  sessionID?: string
+  questions: OcQuestionInfo[]
+  tool?: { messageID?: string; callID?: string }
 }
 
 export type OcMessageInfo = {

@@ -15,6 +15,8 @@ interface ChatMessageRowProps {
   onRetry?: (messageId: string) => void
   onFork?: (messageId: string) => void
   onQuestionOption?: (option: string) => void
+  onQuestionReply?: (requestId: string, answers: string[][]) => void
+  onQuestionReject?: (requestId: string) => void
   onPermission?: (permissionId: string, response: 'once' | 'always' | 'reject') => void
 }
 
@@ -43,6 +45,8 @@ export function ChatMessageRow({
   onRetry,
   onFork,
   onQuestionOption,
+  onQuestionReply,
+  onQuestionReject,
   onPermission,
 }: ChatMessageRowProps) {
   const isUser = message.role === 'user'
@@ -109,6 +113,8 @@ export function ChatMessageRow({
             <ChatMessageContent
               message={message}
               onQuestionOption={onQuestionOption}
+              onQuestionReply={onQuestionReply}
+              onQuestionReject={onQuestionReject}
               onPermission={onPermission}
             />
           )}

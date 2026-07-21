@@ -52,6 +52,27 @@ export interface ChatPermissionRequest {
   status?: 'pending' | 'resolved'
 }
 
+export interface ChatQuestionOption {
+  label: string
+  description?: string
+}
+
+/** One prompt inside an OpenCode question request (may be multi-question). */
+export interface ChatQuestionItem {
+  header?: string
+  question: string
+  options: ChatQuestionOption[]
+  multiple?: boolean
+  custom?: boolean
+}
+
+export interface ChatQuestionRequest {
+  /** OpenCode question request id (POST /question/{id}/reply) */
+  id: string
+  items: ChatQuestionItem[]
+  status?: 'pending' | 'answered' | 'rejected'
+}
+
 export interface ChatBlock {
   type:
     | 'text'
@@ -70,9 +91,21 @@ export interface ChatBlock {
   attachment?: ChatAttachment
   terminal?: { command: string; output: string; exitCode?: number }
   webSearch?: { query: string; results: WebSearchResult[] }
-  tool?: { title: string; body: string; status?: 'done' | 'running' | 'error' }
+  tool?: {
+    title: string
+    body: string
+    status?: 'done' | 'running' | 'error'
+    /** OpenCode tool name (bash, edit, read, …) */
+    name?: string
+    /** OpenCode part / call id for streaming upserts */
+    callId?: string
+  }
   options?: string[]
+  /** Full OpenCode question request (preferred over flat options) */
+  questionRequest?: ChatQuestionRequest
   permission?: ChatPermissionRequest
+  /** Stable id for streaming part upserts */
+  partId?: string
 }
 
 export interface ChatMessageMetrics {

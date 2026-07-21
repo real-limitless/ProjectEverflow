@@ -1,5 +1,18 @@
-import type { ChatAgentRef, ChatBlock, ChatMessage } from '@/types/panels'
-import type { OcMessageBundle, OcPart, OcSession } from './types'
+import type {
+  ChatAgentRef,
+  ChatBlock,
+  ChatMessage,
+  ChatQuestionItem,
+  ChatQuestionRequest,
+} from '@/types/panels'
+import type {
+  OcMessageBundle,
+  OcPart,
+  OcQuestionInfo,
+  OcQuestionRequest,
+  OcSession,
+  OcToolState,
+} from './types'
 import type { ChatConversation } from '@/types/panels'
 import { DEFAULT_CHAT_MODE, DEFAULT_CONTEXT_WINDOW } from '@/data/chatCatalog'
 
@@ -7,16 +20,150 @@ function partText(p: OcPart): string {
   return String(p.text ?? p.content ?? '')
 }
 
-function mapPartToBlocks(p: OcPart): ChatBlock[] {
-  const t = (p.type || '').toLowerCase()
+function toolState(p: OcPart): OcToolState | null {
+  if (typeof p.state === 'object' && p.state) return p.state as OcToolState
+  return null
+}
 
-  // OpenCode stream bookends — not user-visible content
-  if (t === 'step-start' || t === 'step-finish') return []
+function toolStatus(
+  statusRaw: string,
+): 'done' | 'running' | 'error' {
+  const s = statusRaw.toLowerCase()
+  if (s.includes('error') || s === 'error') return 'error'
+  if (s.includes('run') || s === 'pending' || s === 'running') return 'running'
+  return 'done'
+}
+
+function formatToolInput(input: Record<string, unknown> | undefined): string {
+  if (!input || typeof input !== 'object') return ''
+  const keys = Object.keys(input)
+  if (keys.length === 0) return ''
+  // Prefer readable single-field summaries
+  if (typeof input.command === 'string') return input.command
+  if (typeof input.filePath === 'string' || typeof input.path === 'string') {
+    const path = String(input.filePath || input.path)
+    const content =
+      typeof input.content === 'string'
+        ? input.content
+        : typeof input.newString === 'string'
+          ? input.newString
+          : typeof input.oldString === 'string'
+            ? `… → replace\n${input.oldString}`
+            : ''
+    if (content) {
+      const clip = content.length > 3000 ? `${content.slice(0, 3000)}\n…` : content
+      return `${path}\n\n${clip}`
+    }
+    return path
+  }
+  if (typeof input.pattern === 'string') {
+    const glob = input.include || input.glob || input.path || ''
+    return glob ? `${input.pattern}  (${glob})` : String(input.pattern)
+  }
+  if (typeof input.url === 'string') return String(input.url)
+  if (typeof input.query === 'string') return String(input.query)
+  try {
+    const json = JSON.stringify(input, null, 2)
+    return json.length > 4000 ? `${json.slice(0, 4000)}\n…` : json
+  } catch {
+    return String(input)
+  }
+}
+
+function mapQuestionInfos(raw: OcQuestionInfo[] | undefined): ChatQuestionItem[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((q) => ({
+      header: q.header ? String(q.header) : undefined,
+      question: String(q.question || q.header || 'Choose an option'),
+      options: (q.options || []).map((o) =>
+        typeof o === 'string'
+          ? { label: o }
+          : {
+              label: String(o.label || ''),
+              description: o.description ? String(o.description) : undefined,
+            },
+      ).filter((o) => o.label),
+      multiple: !!q.multiple,
+      custom: q.custom !== false,
+    }))
+    .filter((q) => q.question)
+}
+
+/** Collapse duplicate question cards; prefer ones with a request id. */
+function dedupeQuestionBlocksInPlace(blocks: ChatBlock[]): ChatBlock[] {
+  const out: ChatBlock[] = []
+  const seen = new Set<string>()
+  let keptOrphan = false
+  const hasRequestIdCard = blocks.some(
+    (b) => b.type === 'question' && b.questionRequest?.id,
+  )
+  for (const b of blocks) {
+    if (b.type !== 'question') {
+      out.push(b)
+      continue
+    }
+    const rid = b.questionRequest?.id
+    if (!rid) {
+      // Orphan chips without API id — only keep if no real request exists
+      if (!hasRequestIdCard && !keptOrphan) {
+        out.push(b)
+        keptOrphan = true
+      }
+      continue
+    }
+    if (seen.has(rid)) continue
+    seen.add(rid)
+    out.push(b)
+  }
+  return out
+}
+
+/** Build a UI question block from an OpenCode question request (SSE or GET /question). */
+export function mapQuestionRequest(req: OcQuestionRequest): ChatBlock {
+  const items = mapQuestionInfos(req.questions)
+  const first = items[0]
+  const options = first?.options.map((o) => o.label) || []
+  const qr: ChatQuestionRequest = {
+    id: String(req.id),
+    items:
+      items.length > 0
+        ? items
+        : [{ question: 'Choose an option', options: [] }],
+    status: 'pending',
+  }
+  return {
+    type: 'question',
+    text: first
+      ? [first.header, first.question].filter(Boolean).join(' — ')
+      : 'Choose an option',
+    options,
+    questionRequest: qr,
+    partId: `question-${req.id}`,
+  }
+}
+
+export function mapPartToBlocks(p: OcPart): ChatBlock[] {
+  const t = (p.type || '').toLowerCase()
+  const partId = p.id ? String(p.id) : undefined
+  const callId = p.callID ? String(p.callID) : undefined
+
+  // OpenCode stream bookends / internal — not user-visible content
+  if (
+    t === 'step-start' ||
+    t === 'step-finish' ||
+    t === 'snapshot' ||
+    t === 'compaction' ||
+    t === 'retry' ||
+    t === 'agent'
+  ) {
+    return []
+  }
 
   if (t === 'text' || t === 'markdown') {
     const text = partText(p)
     if (!text) return []
-    return [{ type: 'markdown', text }]
+    return [{ type: 'markdown', text, partId }]
   }
 
   if (t === 'reasoning' || t === 'thinking') {
@@ -25,40 +172,154 @@ function mapPartToBlocks(p: OcPart): ChatBlock[] {
   }
 
   if (t === 'tool' || t === 'tool-invocation' || t === 'tool_use' || t === 'tool-call') {
-    const title = String(p.tool || p.name || p.title || 'tool')
-    let body = ''
-    if (typeof p.output === 'string') body = p.output
-    else if (p.output != null) body = JSON.stringify(p.output, null, 2)
-    else if (typeof p.state === 'object' && p.state && 'output' in p.state) {
-      body = String((p.state as { output?: string }).output || '')
-    } else if (p.input != null) body = JSON.stringify(p.input, null, 2)
+    const st = toolState(p)
+    const toolName = String(p.tool || p.name || 'tool').toLowerCase()
     const statusRaw =
       typeof p.state === 'string'
         ? p.state
-        : typeof p.state === 'object' && p.state
-          ? String((p.state as { status?: string }).status || '')
-          : ''
-    const status =
-      statusRaw.includes('error') || statusRaw === 'error'
-        ? 'error'
-        : statusRaw.includes('run') || statusRaw === 'pending'
-          ? 'running'
-          : 'done'
-    return [{ type: 'tool', tool: { title, body, status } }]
+        : st?.status || ''
+    const status = toolStatus(statusRaw)
+    const input = st?.input || (typeof p.input === 'object' && p.input
+      ? (p.input as Record<string, unknown>)
+      : undefined)
+
+    // Interactive UI comes only from question.asked / GET /question (has request id).
+    // Mapping the tool part into another question card causes a duplicate in the UI.
+    if (toolName === 'question') {
+      if (status === 'running' || status === 'error') {
+        // Suppress — the SSE question card (or hydrate listQuestions) owns the UX.
+        return []
+      }
+      // Completed: compact non-interactive summary only (no option chips)
+      const nested = input?.questions as OcQuestionInfo[] | undefined
+      const first = Array.isArray(nested) && nested[0] ? nested[0] : null
+      const summary =
+        (typeof st?.output === 'string' && st.output) ||
+        (first
+          ? [first.header, first.question].filter(Boolean).join(' — ')
+          : st?.title || 'question')
+      return [
+        {
+          type: 'tool',
+          partId: partId || callId,
+          tool: {
+            title: 'question',
+            body: String(summary).slice(0, 500),
+            status: 'done',
+            name: toolName,
+            callId,
+          },
+        },
+      ]
+    }
+
+    // Shell tools → terminal card
+    if (toolName === 'bash' || toolName === 'shell' || toolName === 'terminal') {
+      const command = String(
+        input?.command || st?.title || p.command || p.title || 'bash',
+      )
+      const output =
+        (typeof st?.output === 'string' && st.output) ||
+        (typeof p.output === 'string' ? p.output : '') ||
+        (status === 'error' && st?.error ? st.error : '') ||
+        (status === 'running' ? '…' : '')
+      return [
+        {
+          type: 'terminal',
+          partId: partId || callId,
+          terminal: {
+            command,
+            output: String(output).slice(0, 8000),
+            exitCode: status === 'error' ? 1 : status === 'done' ? 0 : undefined,
+          },
+        },
+      ]
+    }
+
+    // Web tools
+    if (toolName === 'websearch' || toolName === 'web_search') {
+      return [
+        {
+          type: 'web_search',
+          partId: partId || callId,
+          webSearch: {
+            query: String(input?.query || st?.title || 'search'),
+            results: [],
+          },
+        },
+      ]
+    }
+    if (toolName === 'webfetch') {
+      return [
+        {
+          type: 'tool',
+          partId: partId || callId,
+          tool: {
+            title: st?.title || `webfetch · ${input?.url || ''}`.trim(),
+            body:
+              (typeof st?.output === 'string' && st.output.slice(0, 4000)) ||
+              String(input?.url || ''),
+            status,
+            name: toolName,
+            callId,
+          },
+        },
+      ]
+    }
+
+    // File tools (read / write / edit / apply_patch / glob / grep)
+    let body = ''
+    if (typeof st?.output === 'string' && st.output) body = st.output
+    else if (typeof p.output === 'string') body = p.output
+    else if (status === 'error' && st?.error) body = st.error
+    else body = formatToolInput(input)
+
+    if (body.length > 8000) body = `${body.slice(0, 8000)}\n…`
+
+    const pathHint = String(
+      input?.filePath || input?.path || input?.file || '',
+    )
+    const title =
+      st?.title ||
+      (pathHint ? `${toolName} · ${pathHint}` : toolName)
+
+    return [
+      {
+        type: 'tool',
+        partId: partId || callId,
+        tool: {
+          title,
+          body,
+          status,
+          name: toolName,
+          callId,
+        },
+      },
+    ]
   }
 
   if (t === 'question') {
+    // Legacy / rare part-shaped questions
+    if (Array.isArray(p.questions) && p.questions.length) {
+      return [
+        mapQuestionRequest({
+          id: String(p.id || callId || `q-${Math.random().toString(36).slice(2, 8)}`),
+          questions: p.questions,
+        }),
+      ]
+    }
     const text = String(p.question || p.header || partText(p) || 'Choose an option')
     const options = (p.options || []).map((o) =>
       typeof o === 'string' ? o : String(o.label || o.value || ''),
     )
-    return [{ type: 'question', text, options: options.filter(Boolean) }]
+    return [{ type: 'question', text, options: options.filter(Boolean), partId }]
   }
 
   if (t === 'permission' || t === 'permission-request') {
     return [
       {
         type: 'permission',
+        partId,
         permission: {
           id: String(p.permissionID || p.id || ''),
           title: String(p.permission || p.title || 'Permission required'),
@@ -71,13 +332,19 @@ function mapPartToBlocks(p: OcPart): ChatBlock[] {
   }
 
   if (t === 'file' || t === 'patch') {
+    const filesRaw = (p as OcPart & { files?: unknown }).files
+    const files = Array.isArray(filesRaw)
+      ? filesRaw.map(String).join('\n')
+      : ''
     return [
       {
         type: 'tool',
+        partId,
         tool: {
-          title: `File ${p.path || p.filename || ''}`.trim(),
-          body: partText(p).slice(0, 4000),
+          title: `File ${p.path || p.filename || ''}`.trim() || 'file',
+          body: (partText(p) || files).slice(0, 4000),
           status: 'done',
+          name: t,
         },
       },
     ]
@@ -87,6 +354,7 @@ function mapPartToBlocks(p: OcPart): ChatBlock[] {
     return [
       {
         type: 'terminal',
+        partId,
         terminal: {
           command: String(p.command || p.title || ''),
           output: partText(p) || String(p.output || ''),
@@ -100,6 +368,7 @@ function mapPartToBlocks(p: OcPart): ChatBlock[] {
     return [
       {
         type: 'web_search',
+        partId,
         webSearch: {
           query: String(p.title || p.url || 'search'),
           results: [],
@@ -110,7 +379,7 @@ function mapPartToBlocks(p: OcPart): ChatBlock[] {
 
   // fallback
   const text = partText(p)
-  if (text) return [{ type: 'markdown', text }]
+  if (text) return [{ type: 'markdown', text, partId }]
   return []
 }
 
@@ -195,10 +464,37 @@ export function messageHasReplyText(m: ChatMessage): boolean {
   })
 }
 
+/** True if message shows tool / question / permission activity (not empty). */
+export function messageHasActivity(m: ChatMessage): boolean {
+  if (messageHasReplyText(m)) return true
+  if ((m.thinking || '').trim()) return true
+  return (m.blocks || []).some(
+    (b) =>
+      b.type === 'tool' ||
+      b.type === 'terminal' ||
+      b.type === 'web_search' ||
+      b.type === 'question' ||
+      b.type === 'permission' ||
+      b.type === 'image' ||
+      b.type === 'attachment',
+  )
+}
+
+/** Whether a pending question is still waiting on the user. */
+export function messageHasPendingQuestion(m: ChatMessage): boolean {
+  return (m.blocks || []).some(
+    (b) =>
+      b.type === 'question' &&
+      (!b.questionRequest || b.questionRequest.status === 'pending'),
+  )
+}
+
 /** Whether poll can stop: generation finished, or real answer text is present. */
 export function assistantTurnReady(m: ChatMessage | undefined): boolean {
   if (!m || m.role !== 'assistant') return false
   if (m.id.startsWith('pending-')) return false
+  // Waiting on interactive question — not "ready" for poll end (user must answer)
+  if (messageHasPendingQuestion(m)) return false
   if (m.generationStatus === 'error') return true
   // Still streaming / empty shell — keep polling (even if UI shows Thinking…)
   if (m.generationStatus === 'incomplete') return false
@@ -206,6 +502,74 @@ export function assistantTurnReady(m: ChatMessage | undefined): boolean {
   if (m.generationStatus === 'complete') return true
   // Fallback when status missing: only stop if we have real answer text
   return messageHasReplyText(m)
+}
+
+/**
+ * Merge a streamed OpenCode part into an existing ChatMessage (by partId/callId).
+ * Used for message.part.updated with full tool/text parts.
+ */
+export function applyOcPartToMessage(
+  message: ChatMessage,
+  part: OcPart,
+): ChatMessage {
+  const t = (part.type || '').toLowerCase()
+  if (t === 'reasoning' || t === 'thinking') {
+    const chunk = partText(part)
+    if (!chunk) return message
+    // Prefer full text when part carries complete reasoning
+    const prev = message.thinking || ''
+    const thinking =
+      chunk.length >= prev.length && chunk.startsWith(prev.slice(0, 32))
+        ? chunk
+        : prev
+          ? prev + (prev.endsWith(chunk) ? '' : chunk)
+          : chunk
+    return {
+      ...message,
+      thinking,
+      generationStatus:
+        message.generationStatus === 'complete' ? 'complete' : 'incomplete',
+    }
+  }
+
+  const newBlocks = mapPartToBlocks(part)
+  if (!newBlocks.length) return message
+
+  const blocks = [...(message.blocks || [])]
+  for (const nb of newBlocks) {
+    const key = nb.partId || nb.tool?.callId
+    if (key) {
+      const idx = blocks.findIndex(
+        (b) => b.partId === key || b.tool?.callId === key,
+      )
+      if (idx >= 0) {
+        blocks[idx] = nb
+        continue
+      }
+    }
+    // Same tool callId without partId
+    if (nb.tool?.callId) {
+      const idx = blocks.findIndex((b) => b.tool?.callId === nb.tool?.callId)
+      if (idx >= 0) {
+        blocks[idx] = nb
+        continue
+      }
+    }
+    blocks.push(nb)
+  }
+
+  const textFallback = blocks
+    .filter((b) => b.type === 'text' || b.type === 'markdown')
+    .map((b) => b.text || '')
+    .join('\n')
+
+  return {
+    ...message,
+    blocks,
+    text: textFallback || message.text,
+    generationStatus:
+      message.generationStatus === 'complete' ? 'complete' : 'incomplete',
+  }
 }
 
 function generationStatusFromInfo(
@@ -346,6 +710,16 @@ export function mapOcMessage(
         !!(b.text || '').trim() &&
         !isReplyPlaceholder(b.text),
     )
+  const hasVisibleActivity = blocks.some(
+    (b) =>
+      b.type === 'tool' ||
+      b.type === 'terminal' ||
+      b.type === 'web_search' ||
+      b.type === 'question' ||
+      b.type === 'permission' ||
+      b.type === 'image' ||
+      b.type === 'attachment',
+  )
 
   let errorText: string | undefined
   const err = bundle.info?.error
@@ -358,21 +732,28 @@ export function mapOcMessage(
     role === 'assistant'
       ? generationStatusFromInfo(
           bundle.info,
-          hasReply,
+          hasReply || hasVisibleActivity,
           !!thinking,
           (bundle.parts || []).length,
         )
       : 'complete'
 
   // No fake markdown placeholders — incomplete turns use empty body + stream status in UI
-  let finalBlocks = blocks.length > 0 ? blocks : undefined
+  // Dedupe question cards (at most one per request id; drop orphans without id)
+  let finalBlocks = blocks.length > 0 ? dedupeQuestionBlocksInPlace(blocks) : undefined
   let finalText = text
-  if (role === 'assistant' && errorText && !hasReply) {
+  if (role === 'assistant' && errorText && !hasReply && !hasVisibleActivity) {
     finalBlocks = [{ type: 'markdown', text: `**Error:** ${errorText}` }]
     finalText = errorText
   } else if (!finalBlocks && text && !isReplyPlaceholder(text)) {
     finalBlocks = [{ type: role === 'user' ? 'text' : 'markdown', text }]
-  } else if (role === 'assistant' && !hasReply && generationStatus === 'complete' && !thinking) {
+  } else if (
+    role === 'assistant' &&
+    !hasReply &&
+    !hasVisibleActivity &&
+    generationStatus === 'complete' &&
+    !thinking
+  ) {
     finalBlocks = [{ type: 'markdown', text: '*(No response content)*' }]
   }
 

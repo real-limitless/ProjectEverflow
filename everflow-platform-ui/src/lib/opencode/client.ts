@@ -12,6 +12,7 @@ import type {
   OcMessageBundle,
   OcMcpStatus,
   OcProvider,
+  OcQuestionRequest,
   OcSession,
 } from './types'
 
@@ -166,10 +167,114 @@ export async function respondPermission(
   response: 'once' | 'always' | 'reject',
   remember?: boolean,
 ): Promise<void> {
-  await ocFetch(projectId, `session/${sessionId}/permissions/${permissionId}`, {
-    method: 'POST',
-    body: JSON.stringify({ response, remember }),
-  })
+  // Prefer modern permission reply; fall back to session-scoped path
+  try {
+    await ocFetch(projectId, `permission/${permissionId}/reply`, {
+      method: 'POST',
+      body: JSON.stringify({ reply: response }),
+    })
+    return
+  } catch {
+    await ocFetch(projectId, `session/${sessionId}/permissions/${permissionId}`, {
+      method: 'POST',
+      body: JSON.stringify({ response, remember }),
+    })
+  }
+}
+
+/** List pending OpenCode question requests (all sessions or filter client-side). */
+export async function listQuestions(projectId: string): Promise<OcQuestionRequest[]> {
+  try {
+    const data = await ocFetch<unknown>(projectId, 'question')
+    if (Array.isArray(data)) return data as OcQuestionRequest[]
+    if (data && typeof data === 'object') {
+      const o = data as { data?: unknown; questions?: unknown; items?: unknown }
+      if (Array.isArray(o.data)) return o.data as OcQuestionRequest[]
+      if (Array.isArray(o.questions)) return o.questions as OcQuestionRequest[]
+      if (Array.isArray(o.items)) return o.items as OcQuestionRequest[]
+    }
+  } catch {
+    /* older OpenCode may lack /question */
+  }
+  return []
+}
+
+/**
+ * Reply to a question tool request.
+ * answers: one entry per question; each entry is selected label(s).
+ *
+ * Tries global `/question/{id}/reply` first, then session-scoped path used by
+ * newer OpenCode builds.
+ */
+export async function respondQuestion(
+  projectId: string,
+  requestId: string,
+  answers: string[][],
+  sessionId?: string,
+): Promise<void> {
+  const id = encodeURIComponent(requestId)
+  const body = JSON.stringify({ answers })
+  try {
+    await ocFetch(projectId, `question/${id}/reply`, {
+      method: 'POST',
+      body,
+    })
+    return
+  } catch (first) {
+    if (sessionId) {
+      try {
+        await ocFetch(
+          projectId,
+          `session/${encodeURIComponent(sessionId)}/question/${id}/reply`,
+          { method: 'POST', body },
+        )
+        return
+      } catch {
+        /* fall through */
+      }
+      // Alternate v2-style path seen in some OpenCode builds
+      try {
+        await ocFetch(
+          projectId,
+          `api/session/${encodeURIComponent(sessionId)}/question/${id}/reply`,
+          { method: 'POST', body },
+        )
+        return
+      } catch {
+        /* fall through */
+      }
+    }
+    throw first
+  }
+}
+
+export async function rejectQuestion(
+  projectId: string,
+  requestId: string,
+  sessionId?: string,
+): Promise<void> {
+  const id = encodeURIComponent(requestId)
+  try {
+    await ocFetch(projectId, `question/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+    return
+  } catch (first) {
+    if (sessionId) {
+      try {
+        await ocFetch(
+          projectId,
+          `session/${encodeURIComponent(sessionId)}/question/${id}/reject`,
+          { method: 'POST', body: JSON.stringify({}) },
+        )
+        return
+      } catch {
+        /* fall through */
+      }
+    }
+    throw first
+  }
 }
 
 export async function abortSession(projectId: string, sessionId: string): Promise<void> {
