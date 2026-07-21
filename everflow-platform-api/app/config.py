@@ -76,6 +76,18 @@ class Settings(BaseSettings):
     )
     sandbox_agent_timeout_seconds: float = 120.0
 
+    # Live Preview edge: {endpoint_id}.{preview_base_domain}
+    # Local default includes :8000 so browsers never hit implicit :80/:443.
+    # Production: PREVIEW_BASE_DOMAIN=preview.example.com + PREVIEW_PUBLIC_SCHEME=https
+    preview_enabled: bool = True
+    preview_base_domain: str = "preview.localhost:8000"
+    preview_public_scheme: str = "http"
+    # If base domain has no :port, append this (local/dev). None/0 = leave as-is
+    # (except *.localhost hardening in public_preview_url).
+    preview_public_port: int | None = None
+    preview_ticket_ttl_seconds: int = 1200
+    preview_cookie_name: str = "ef_preview_auth"
+
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")

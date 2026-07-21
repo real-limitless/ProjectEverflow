@@ -15,8 +15,21 @@ from app.routes import router
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     Path(settings.workspace_root).mkdir(parents=True, exist_ok=True)
-    app.state.backend = build_backend(settings)
+    backend = build_backend(settings)
+    app.state.backend = backend
+    try:
+        from app.guest_tunnel import get_tunnel_manager
+
+        get_tunnel_manager().bind_backend(backend)
+    except Exception:
+        pass
     yield
+    try:
+        from app.guest_tunnel import get_tunnel_manager
+
+        await get_tunnel_manager().close_all()
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:

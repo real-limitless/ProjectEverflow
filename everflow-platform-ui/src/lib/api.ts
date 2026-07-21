@@ -351,4 +351,67 @@ export function sandboxShellWsUrl(
   return `${base}/api/v1/projects/${projectId}/sandbox/shell?${q}`
 }
 
+export type SandboxListeningPort = {
+  port: number
+  address: string
+  protocol: string
+  process: string | null
+  http_likely: boolean
+  label: string
+}
+
+export type SandboxPortsResponse = {
+  sandbox_name: string
+  ports: SandboxListeningPort[]
+}
+
+export type PreviewEndpoint = {
+  endpoint_id: string
+  port: number
+  sandbox_name: string
+  url: string
+  ticket: string
+  expires_at: number
+}
+
+/** Listening ports inside the project sandbox (for Preview dropdown). */
+export async function listSandboxPorts(
+  projectId: string,
+  opts?: { probe?: boolean },
+): Promise<SandboxPortsResponse> {
+  const q = new URLSearchParams()
+  if (opts?.probe) q.set('probe', 'true')
+  const suffix = q.toString() ? `?${q}` : ''
+  return apiFetch(`/api/v1/projects/${projectId}/sandbox/ports${suffix}`)
+}
+
+/**
+ * Create or reuse a GUID preview host for a sandbox port.
+ * Returns absolute URL + short-lived ticket for the iframe.
+ */
+export async function createPreviewEndpoint(
+  projectId: string,
+  port: number,
+): Promise<PreviewEndpoint> {
+  return apiFetch(`/api/v1/projects/${projectId}/preview/endpoints`, {
+    method: 'POST',
+    body: JSON.stringify({ port }),
+  })
+}
+
+/** Build iframe src with ticket on the preview subdomain. */
+export function previewIframeSrc(endpoint: PreviewEndpoint, path = '/'): string {
+  try {
+    const u = new URL(endpoint.url)
+    const cleaned = path.startsWith('/') ? path : `/${path}`
+    u.pathname = cleaned === '/' ? '/' : cleaned
+    u.searchParams.set('ticket', endpoint.ticket)
+    return u.href
+  } catch {
+    const base = endpoint.url.replace(/\/?$/, '/')
+    const p = path.startsWith('/') ? path.slice(1) : path
+    return `${base}${p}?ticket=${encodeURIComponent(endpoint.ticket)}`
+  }
+}
+
 export { API_BASE }

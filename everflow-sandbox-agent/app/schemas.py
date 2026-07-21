@@ -81,3 +81,17 @@ class OpenCodeEnsureResponse(BaseModel):
     pid: int | None = None
     workspace: str | None = None
     error: str | None = None
+
+
+class ListeningPortInfo(BaseModel):
+    port: int
+    address: str
+    protocol: str = "tcp"
+    process: str | None = None
+    http_likely: bool = False
+    label: str = ""
+
+
+class PortsListResponse(BaseModel):
+    sandbox_name: str
+    ports: list[ListeningPortInfo] = Field(default_factory=list)

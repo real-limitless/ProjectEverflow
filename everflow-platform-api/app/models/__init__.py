@@ -4,6 +4,7 @@
 from app.models.user import OAuthAccount, User
 from app.models.organization import Organization, OrganizationMember
 from app.models.project import Project
+from app.models.preview import PreviewEndpoint
 
 __all__ = [
     "User",
@@ -11,4 +12,5 @@ __all__ = [
     "Organization",
     "OrganizationMember",
     "Project",
+    "PreviewEndpoint",
 ]

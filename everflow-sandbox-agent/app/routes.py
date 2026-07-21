@@ -15,6 +15,9 @@ from app.config import Settings, get_settings
 from app.msb import SandboxBackend
 from app.opencode_mgr import get_opencode_manager
 from app.opencode_proxy import proxy_to_opencode, proxy_to_opencode_guest
+from app.guest_tunnel import resolve_dial_target
+from app.ports import list_listening_ports
+from app.preview_proxy import proxy_http_to_port, proxy_websocket_to_port
 from app.schemas import (
     BootstrapRequest,
     ExecRequest,
@@ -22,8 +25,10 @@ from app.schemas import (
     FsEntry,
     FsWriteRequest,
     HealthResponse,
+    ListeningPortInfo,
     OpenCodeEnsureRequest,
     OpenCodeEnsureResponse,
+    PortsListResponse,
     SandboxCreateRequest,
     SandboxInfo,
 )
@@ -400,7 +405,8 @@ async def opencode_proxy(
         inst = mgr.get(name)
 
     if inst and inst.mode == "guest":
-        # MicroVM: OpenCode is on guest loopback — proxy via in-guest HTTP client
+        # MicroVM: REST via exec; SSE via stream_exec (token streaming)
+        stream_fn = getattr(backend, "stream_exec", None)
         return await proxy_to_opencode_guest(
             request,
             exec_fn=backend.exec,
@@ -408,6 +414,7 @@ async def opencode_proxy(
             path=path or "",
             port=inst.port or 4096,
             cwd="/workspace",
+            stream_exec_fn=stream_fn,
         )
 
     base = mgr.base_url(name)
@@ -421,3 +428,133 @@ async def opencode_proxy(
         )
 
     return await proxy_to_opencode(request, base_url=base, path=path or "")
+
+
+@router.get(
+    "/v1/sandboxes/{name}/ports",
+    response_model=PortsListResponse,
+    dependencies=[Depends(require_agent_token)],
+)
+async def list_sandbox_ports(
+    name: str,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+    probe: bool = Query(default=False, description="Optional HTTP probe for http_likely"),
+) -> PortsListResponse:
+    """List TCP listen ports inside the sandbox (for Preview dropdown)."""
+    await _require_running_sandbox(name, backend)
+    try:
+        ports = await list_listening_ports(
+            backend.exec,
+            name,
+            cwd="/workspace",
+            probe_http=probe,
+        )
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found") from None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("list ports failed name=%s: %s", name, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Port discovery failed: {exc}",
+        ) from exc
+
+    return PortsListResponse(
+        sandbox_name=name,
+        ports=[ListeningPortInfo(**p.to_dict()) for p in ports],
+    )
+
+
+@router.api_route(
+    "/v1/sandboxes/{name}/proxy/{port}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    dependencies=[Depends(require_agent_token)],
+)
+@router.api_route(
+    "/v1/sandboxes/{name}/proxy/{port}/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    dependencies=[Depends(require_agent_token)],
+)
+async def sandbox_port_proxy(
+    name: str,
+    port: int,
+    request: Request,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+    path: str = "",
+) -> Response:
+    """Reverse-proxy HTTP to a sandbox process (host dial or guest tunnel)."""
+    if port < 1 or port > 65535:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid port")
+    await _require_running_sandbox(name, backend)
+    try:
+        dial_host, dial_port, mode = await resolve_dial_target(name, port, backend=backend)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("resolve dial target failed name=%s port=%s: %s", name, port, exc)
+        dial_host, dial_port, mode = "127.0.0.1", port, "unreachable"
+
+    # Prefer real TCP (host or tunnel). Guest-exec HTTP only if still unreachable.
+    return await proxy_http_to_port(
+        request,
+        port=dial_port,
+        path=path or "",
+        host=dial_host,
+        host_header=f"127.0.0.1:{port}",
+        exec_fn=backend.exec if mode == "unreachable" else None,
+        sandbox_name=name if mode == "unreachable" else None,
+    )
+
+
+@router.websocket("/v1/sandboxes/{name}/proxy/{port}")
+@router.websocket("/v1/sandboxes/{name}/proxy/{port}/{path:path}")
+async def sandbox_port_proxy_ws(
+    websocket: WebSocket,
+    name: str,
+    port: int,
+    path: str = "",
+    token: str = Query(default=""),
+) -> None:
+    """WebSocket reverse-proxy (host dial or guest TCP tunnel for HMR)."""
+    settings = get_settings()
+    if token != settings.sandbox_agent_token:
+        await websocket.accept()
+        await websocket.close(code=4403)
+        return
+    if port < 1 or port > 65535:
+        await websocket.accept()
+        await websocket.close(code=4400)
+        return
+
+    backend: SandboxBackend = websocket.app.state.backend  # type: ignore[assignment]
+    rec = await backend.get(name)
+    if rec is None or rec.status != "running":
+        await websocket.accept()
+        await websocket.close(code=4404)
+        return
+
+    query = websocket.url.query
+    # Strip our auth token from upstream query
+    if query:
+        from urllib.parse import parse_qsl, urlencode
+
+        pairs = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True) if k != "token"]
+        query = urlencode(pairs)
+
+    try:
+        dial_host, dial_port, mode = await resolve_dial_target(name, port, backend=backend)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ws resolve dial failed name=%s port=%s: %s", name, port, exc)
+        await websocket.accept()
+        await websocket.close(code=1011, reason="tunnel setup failed"[:120])
+        return
+
+    if mode == "unreachable":
+        await websocket.accept()
+        await websocket.close(code=1011, reason="guest port not reachable"[:120])
+        return
+
+    await proxy_websocket_to_port(
+        websocket,
+        port=dial_port,
+        path=path or "",
+        query=query,
+        host=dial_host,
+    )

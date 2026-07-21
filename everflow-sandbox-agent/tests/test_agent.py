@@ -208,6 +208,60 @@ def test_volume_attempt_order_auto_prefers_last_success() -> None:
 
 
 @pytest.mark.asyncio
+async def test_guest_sse_streams_chunks() -> None:
+    """Guest /event must stream OpenCode SSE, not a one-shot stub."""
+    from app.opencode_proxy import proxy_to_opencode_guest
+    from starlette.requests import Request
+
+    chunks = [
+        b'data: {"type":"server.connected"}\n\n',
+        b'data: {"type":"message.part.delta","properties":{"messageID":"m1","delta":"Hel"}}\n\n',
+        b'data: {"type":"message.part.delta","properties":{"messageID":"m1","delta":"lo"}}\n\n',
+    ]
+
+    async def fake_stream(name, cmd, args, **kwargs):
+        for c in chunks:
+            yield c
+
+    async def fake_exec(*a, **k):
+        return 0, "", ""
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/event",
+        "raw_path": b"/event",
+        "query_string": b"",
+        "headers": [(b"accept", b"text/event-stream")],
+        "client": ("127.0.0.1", 123),
+        "server": ("test", 80),
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    req = Request(scope, receive)
+    res = await proxy_to_opencode_guest(
+        req,
+        exec_fn=fake_exec,
+        sandbox_name="ef",
+        path="event",
+        port=4096,
+        stream_exec_fn=fake_stream,
+    )
+    assert res.media_type == "text/event-stream"
+    body = b""
+    async for part in res.body_iterator:
+        body += part if isinstance(part, bytes) else part.encode()
+    assert b"message.part.delta" in body
+    assert b"Hel" in body and b"lo" in body
+    assert b"guest-sse" in body
+
+
+@pytest.mark.asyncio
 async def test_opencode_guest_proxy_via_exec() -> None:
     """Guest mode has no host base_url — proxy uses in-guest HTTP via exec."""
     import base64
@@ -354,3 +408,101 @@ async def test_microsandbox_defers_bootstrap_and_cancels_on_remove() -> None:
     await asyncio.sleep(0.05)
     assert name not in backend._bootstrap_tasks or backend._bootstrap_tasks[name].done()
     assert finished.is_set()
+
+
+def test_parse_ss_output_basic() -> None:
+    from app.ports import parse_ss_output
+
+    sample = """
+LISTEN 0 4096 0.0.0.0:5173 0.0.0.0:* users:(("node",pid=42,fd=23))
+LISTEN 0 128 127.0.0.1:4096 0.0.0.0:* users:(("opencode",pid=7,fd=3))
+LISTEN 0 511 *:3000 *:* users:(("next-server",pid=99,fd=18))
+LISTEN 0 128 [::]:8080 [::]:* users:(("python3",pid=11,fd=5))
+"""
+    ports = parse_ss_output(sample)
+    by_port = {p.port: p for p in ports}
+    assert 5173 in by_port
+    assert by_port[5173].process == "node"
+    assert by_port[5173].http_likely is True
+    assert 3000 in by_port
+    assert by_port[3000].http_likely is True
+    assert 8080 in by_port
+    assert by_port[8080].process == "python3"
+
+
+def test_parse_proc_net_tcp_listen() -> None:
+    """Guest images without ss still expose listeners via /proc/net/tcp."""
+    from app.ports import parse_proc_net_tcp
+
+    # 127.0.0.1:4096 LISTEN, 0.0.0.0:8765 LISTEN, established row ignored
+    sample = """  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:1000 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1127 1 0000000000182fe7 100 0 0 10 0
+   1: 00000000:223D 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1788 1 000000000e1fce59 100 0 0 10 0
+   2: 3E0010AC:BDD8 22031068:01BB 01 00000000:00000000 00:00000000 00000000     0        0 1285 1 00000000afce0590 20 4 12 10 -1
+"""
+    ports = parse_proc_net_tcp(sample)
+    by_port = {p.port: p for p in ports}
+    assert 4096 in by_port
+    assert by_port[4096].address == "127.0.0.1"
+    assert 8765 in by_port
+    assert by_port[8765].address == "0.0.0.0"
+    assert by_port[8765].http_likely is True
+    # established connection must not appear
+    assert all(p.port != 0xBDD8 for p in ports)
+
+
+@pytest.mark.asyncio
+async def test_list_ports_and_http_proxy(client: AsyncClient) -> None:
+    """Start a tiny HTTP server, discover port, proxy through agent."""
+    import socket
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    create = await client.post(
+        "/v1/sandboxes",
+        headers=HEADERS,
+        json={"name": "ef-preview", "harnesses": []},
+    )
+    assert create.status_code == 201, create.text
+
+    # Bind ephemeral port on host (mock exec runs on host)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            body = b'{"ok":true,"path":"' + self.path.encode() + b'"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Frame-Options", "DENY")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):  # noqa: A003
+            return
+
+    httpd = HTTPServer(("127.0.0.1", port), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        # Port list (ss may or may not show our port; still test proxy)
+        ports_res = await client.get("/v1/sandboxes/ef-preview/ports", headers=HEADERS)
+        assert ports_res.status_code == 200, ports_res.text
+        assert ports_res.json()["sandbox_name"] == "ef-preview"
+        assert "ports" in ports_res.json()
+
+        proxied = await client.get(
+            f"/v1/sandboxes/ef-preview/proxy/{port}/hello",
+            headers=HEADERS,
+        )
+        assert proxied.status_code == 200, proxied.text
+        assert proxied.json()["ok"] is True
+        assert "/hello" in proxied.json()["path"]
+        # Frame blockers stripped
+        assert "x-frame-options" not in {k.lower() for k in proxied.headers.keys()}
+    finally:
+        httpd.shutdown()
+        await client.post("/v1/sandboxes/ef-preview/remove", headers=HEADERS)

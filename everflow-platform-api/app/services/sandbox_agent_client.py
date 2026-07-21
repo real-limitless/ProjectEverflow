@@ -179,6 +179,84 @@ class SandboxAgentClient:
             await client.aclose()
             raise SandboxAgentError(f"sandbox-agent unreachable: {exc}") from exc
 
+    async def list_ports(self, name: str, *, probe: bool = False) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/v1/sandboxes/{name}/ports",
+            params={"probe": "true" if probe else "false"},
+        )
+
+    async def preview_proxy_stream(
+        self,
+        name: str,
+        *,
+        port: int,
+        method: str,
+        path: str,
+        query: str | None = None,
+        headers: dict[str, str] | None = None,
+        content: bytes | None = None,
+    ) -> tuple[httpx.Response, httpx.AsyncClient]:
+        """Stream HTTP through agent port proxy. Caller must aclose response + client."""
+        rel = path.lstrip("/")
+        url = self._url(
+            f"/v1/sandboxes/{name}/proxy/{port}/{rel}"
+            if rel
+            else f"/v1/sandboxes/{name}/proxy/{port}"
+        )
+        if query:
+            url = f"{url}?{query}"
+        hdrs = self._headers()
+        if headers:
+            for k, v in headers.items():
+                lk = k.lower()
+                if lk in ("host", "content-length", "authorization", "cookie"):
+                    continue
+                hdrs[k] = v
+        timeout = httpx.Timeout(connect=10.0, read=None, write=60.0, pool=10.0)
+        client = httpx.AsyncClient(timeout=timeout)
+        try:
+            req = client.build_request(method.upper(), url, headers=hdrs, content=content)
+            res = await client.send(req, stream=True)
+            return res, client
+        except httpx.RequestError as exc:
+            await client.aclose()
+            raise SandboxAgentError(f"sandbox-agent unreachable: {exc}") from exc
+
+    def preview_proxy_ws_url(
+        self,
+        name: str,
+        *,
+        port: int,
+        path: str = "",
+        query: str | None = None,
+    ) -> str:
+        base = self._settings.sandbox_agent_url.rstrip("/")
+        if base.startswith("https://"):
+            ws_base = "wss://" + base[len("https://") :]
+        elif base.startswith("http://"):
+            ws_base = "ws://" + base[len("http://") :]
+        else:
+            ws_base = base
+        from urllib.parse import quote, urlencode
+
+        rel = path.lstrip("/")
+        # Encode path segments so Vite routes like @vite/client stay intact
+        if rel:
+            rel_enc = "/".join(quote(seg, safe="") for seg in rel.split("/"))
+            path_part = f"/v1/sandboxes/{quote(name, safe='')}/proxy/{port}/{rel_enc}"
+        else:
+            path_part = f"/v1/sandboxes/{quote(name, safe='')}/proxy/{port}"
+        q: dict[str, str] = {"token": self._settings.sandbox_agent_token}
+        if query:
+            # merge raw query pairs without token collision handled by agent
+            from urllib.parse import parse_qsl
+
+            for k, v in parse_qsl(query, keep_blank_values=True):
+                if k != "token":
+                    q[k] = v
+        return f"{ws_base}{path_part}?{urlencode(q)}"
+
     async def _request(
         self,
         method: str,

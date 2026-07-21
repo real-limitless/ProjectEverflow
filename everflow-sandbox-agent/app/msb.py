@@ -181,6 +181,20 @@ class SandboxBackend(ABC):
         """Interactive PTY over WebSocket. Override in backends."""
         raise NotImplementedError("Interactive shell not supported on this backend")
 
+    async def stream_exec(
+        self,
+        name: str,
+        cmd: str,
+        args: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ):
+        """Yield stdout chunks as they arrive (for SSE bridges). Override in backends."""
+        if False:  # pragma: no cover
+            yield b""
+        raise NotImplementedError("stream_exec not supported on this backend")
+
 
 def kvm_available() -> bool:
     return Path("/dev/kvm").exists()
@@ -347,6 +361,49 @@ class MockSandboxBackend(SandboxBackend):
                 return 124, "", "exec timed out"
 
         return await asyncio.to_thread(_run)
+
+    async def stream_exec(
+        self,
+        name: str,
+        cmd: str,
+        args: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ):
+        """Stream stdout from a long-running command (host process for mock)."""
+        rec = self._require(name)
+        if rec.status != "running":
+            raise RuntimeError(f"Sandbox {name} is not running (status={rec.status})")
+        workdir = cwd or rec.workspace_path or str(self._settings.workspace_path / name)
+        full_env = os.environ.copy()
+        if rec.workspace_path:
+            bin_dir = str(Path(rec.workspace_path) / ".everflow" / "bin")
+            full_env["PATH"] = bin_dir + os.pathsep + full_env.get("PATH", "")
+        if env:
+            full_env.update(env)
+        proc = await asyncio.create_subprocess_exec(
+            cmd,
+            *args,
+            cwd=workdir,
+            env=full_env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        assert proc.stdout is not None
+        try:
+            while True:
+                chunk = await proc.stdout.read(4096)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                if proc.returncode is None:
+                    proc.kill()
+                await proc.wait()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _ws_path(self, name: str, path: str) -> Path:
         rec = self._require(name)
@@ -787,6 +844,34 @@ class MicrosandboxBackend(SandboxBackend):
                 raise KeyError(name) from exc
             raise
 
+    async def open_exec_stream(
+        self,
+        name: str,
+        *,
+        cmd: str,
+        args: list[str] | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> tuple[Any, Any]:
+        """Start a streaming exec with piped stdin. Returns (ExecHandle, ExecSink)."""
+        from microsandbox import Stdin
+
+        sb = await self._connect(name)
+        kwargs: dict[str, Any] = {"stdin": Stdin.pipe()}
+        if cwd:
+            kwargs["cwd"] = cwd
+        if env:
+            kwargs["env"] = env
+        handle = await sb.exec_stream(cmd, args or [], **kwargs)
+        sink = handle.take_stdin()
+        if sink is None:
+            try:
+                await handle.kill()
+            except Exception:
+                pass
+            raise RuntimeError("exec_stream did not provide stdin sink")
+        return handle, sink
+
     async def exec(
         self,
         name: str,
@@ -832,6 +917,61 @@ class MicrosandboxBackend(SandboxBackend):
             if _is_sandbox_not_found(exc):
                 raise KeyError(name) from exc
             raise
+
+    async def stream_exec(
+        self,
+        name: str,
+        cmd: str,
+        args: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ):
+        """Stream stdout from guest via microsandbox exec_stream (for OpenCode SSE)."""
+        try:
+            sb = await self._connect(name)
+        except KeyError:
+            raise
+        kwargs: dict[str, Any] = {"tty": False}
+        if cwd:
+            kwargs["cwd"] = cwd
+        if env:
+            kwargs["env"] = env
+        try:
+            from microsandbox import Stdin
+
+            handle = await sb.exec_stream(
+                cmd,
+                args,
+                stdin=Stdin.null() if hasattr(Stdin, "null") else Stdin.pipe(),
+                **kwargs,
+            )
+        except Exception:
+            # Fallback without stdin kw
+            try:
+                handle = await sb.exec_stream(cmd, args, **{k: v for k, v in kwargs.items() if k != "tty"})
+            except Exception as exc:
+                logger.exception("exec_stream failed name=%s cmd=%s: %s", name, cmd, exc)
+                raise RuntimeError(f"stream_exec failed: {exc}") from exc
+
+        try:
+            async for event in handle:
+                et = getattr(event, "event_type", None) or getattr(event, "kind", None)
+                et_s = str(et).lower() if et else type(event).__name__.lower()
+                if "stdout" in et_s or "stderr" in et_s:
+                    data = getattr(event, "data", None) or b""
+                    if data:
+                        yield bytes(data)
+                elif "exit" in et_s or "fail" in et_s:
+                    break
+        finally:
+            try:
+                if hasattr(handle, "kill"):
+                    res = handle.kill()
+                    if asyncio.iscoroutine(res):
+                        await res
+            except Exception:  # noqa: BLE001
+                pass
 
     async def list_fs(self, name: str, path: str) -> list[dict[str, Any]]:
         """List one directory under the guest workspace (relative paths, no . / ..)."""

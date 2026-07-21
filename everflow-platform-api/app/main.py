@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.preview import PreviewHostMiddleware
 from app.api.v1.router import api_router
 from app.config import get_settings
 from app.db.session import dispose_db, get_engine, init_db
@@ -58,6 +59,9 @@ def create_app() -> FastAPI:
             "docs": "/docs",
             "health": "/api/v1/health",
         }
+
+    # Wildcard preview hosts: {endpoint_id}.{preview_base_domain}
+    application.add_middleware(PreviewHostMiddleware)
 
     return application
 

@@ -77,6 +77,14 @@ async def provision_project_sandbox(
             await client.remove_sandbox(name)
         except SandboxAgentError:
             pass
+        try:
+            from app.services.preview_endpoints import revoke_endpoints_for_sandbox
+
+            await revoke_endpoints_for_sandbox(
+                session, project_id=project.id, sandbox_name=name
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("preview endpoint revoke on force: %s", exc)
 
     try:
         await client.create_sandbox(
@@ -164,6 +172,16 @@ async def mark_sandbox_missing(
 ) -> Project:
     project.sandbox_status = "error"
     project.sandbox_error = message[:2000]
+    try:
+        from app.services.preview_endpoints import revoke_endpoints_for_sandbox
+
+        await revoke_endpoints_for_sandbox(
+            session,
+            project_id=project.id,
+            sandbox_name=project.sandbox_name,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("preview endpoint revoke on missing: %s", exc)
     await session.commit()
     await session.refresh(project)
     return project
