@@ -105,6 +105,8 @@ interface PlaygroundState {
   catalogVersion: number
   /** Prefill Terminal input (e.g. from Agents panel) */
   terminalPrefill: string | null
+  /** Per-project active repository id (Repository panel + repo strip) */
+  activeRepoByProject: Record<string, string>
 
   // derived helpers exposed as methods
   nextGroupId: () => string
@@ -114,6 +116,8 @@ interface PlaygroundState {
   getLayout: () => LayoutNode
   setLayout: (layout: LayoutNode) => void
   persist: () => void
+  /** Resolve active repo for a project (store override → catalog active flag → first). */
+  getActiveRepoId: (projectId?: string | null) => string
 
   setSidebarCollapsed: (v: boolean) => void
   setSidebarOpen: (v: boolean) => void
@@ -171,7 +175,7 @@ interface PlaygroundState {
     insertIndex?: number,
   ) => void
   resizeSplit: (pathToSplit: number[], sizes: number[]) => void
-  setActiveRepo: (repoId: string) => void
+  setActiveRepo: (repoId: string, projectId?: string | null) => void
 
   ensureProjectChats: (projectId: string | null | undefined) => ChatConversation[]
   getConversations: (projectId?: string | null) => ChatConversation[]
@@ -453,6 +457,7 @@ function createInitial() {
       paletteMode: persisted.paletteMode || ('float' as PaletteMode),
       palettePos: persisted.palettePos || { x: 24, y: window.innerHeight - 160 },
       catalogVersion: 0,
+      activeRepoByProject: {},
     }
   }
 
@@ -469,6 +474,7 @@ function createInitial() {
     palettePos: { x: 24, y: typeof window !== 'undefined' ? window.innerHeight - 160 : 600 },
     catalogVersion: 0,
     terminalPrefill: null as string | null,
+    activeRepoByProject: {},
   }
 }
 
@@ -490,9 +496,20 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   theme: typeof document !== 'undefined' ? loadTheme() : 'light',
   paletteDragging: false,
   terminalPrefill: null,
+  activeRepoByProject: initial.activeRepoByProject || {},
 
   setTerminalPrefill: (cmd) => set({ terminalPrefill: cmd }),
   clearTerminalPrefill: () => set({ terminalPrefill: null }),
+
+  getActiveRepoId: (projectId) => {
+    const id = projectId === undefined ? get().currentProjectId : projectId
+    if (!id) return ''
+    const override = get().activeRepoByProject[id]
+    const p = getProject(id)
+    const repos = p?.repos || []
+    if (override && repos.some((r) => r.id === override)) return override
+    return repos.find((r) => r.active)?.id || repos[0]?.id || ''
+  },
 
   nextGroupId: () => {
     const id = `g${get().groupIdSeq}`
@@ -1023,10 +1040,19 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     get().persist()
   },
 
-  setActiveRepo: (repoId) => {
-    // Demo: repos live in static PROJECTS — mutate local copy in memory only via layout n/a
-    // For demo we keep repos in PROJECTS as shared; use a light override map if needed.
-    void repoId
+  setActiveRepo: (repoId, projectId) => {
+    const id = projectId || get().currentProjectId
+    if (!id || !repoId) return
+    const p = getProject(id)
+    if (!p?.repos?.length) return
+    if (!p.repos.some((r) => r.id === repoId)) return
+    const repos = p.repos.map((r) => ({ ...r, active: r.id === repoId }))
+    updateProjectInCatalog(id, { repos })
+    set({
+      activeRepoByProject: { ...get().activeRepoByProject, [id]: repoId },
+      catalogVersion: get().catalogVersion + 1,
+    })
+    get().persist()
   },
 
   ensureProjectChats: (projectId) => {

@@ -11,8 +11,10 @@ import type {
   DeployService,
   EnvEntry,
   HttpToolDef,
+  EmbedStatus,
   KnowledgeCanvas,
   KnowledgeDoc,
+  KnowledgeOrigin,
   McpServerDef,
   MindMap,
   ProjectStudioState,
@@ -49,6 +51,9 @@ function resolveProjectId(projectId: string | null | undefined): string {
 function seedProject(projectId: string): ProjectStudioState {
   const d = getStudioExtras(projectId)
   const p = getProject(projectId)
+  const primaryRepoId =
+    p?.repos.find((r) => r.active)?.id || p?.repos[0]?.id || 'main'
+  const secondaryRepos = (p?.repos || []).filter((r) => r.id !== primaryRepoId)
 
   const issues: RepoIssue[] = [
     {
@@ -63,6 +68,7 @@ function seedProject(projectId: string): ProjectStudioState {
       comments: [
         { id: 'c1', author: 'agent', body: 'Thresholds updated in PR draft — see Changes.', createdAt: '2m ago' },
       ],
+      repoId: primaryRepoId,
     },
     {
       id: 'iss-41',
@@ -74,6 +80,7 @@ function seedProject(projectId: string): ProjectStudioState {
       author: 'rafi',
       updatedAt: '1d ago',
       comments: [],
+      repoId: primaryRepoId,
     },
     {
       id: 'iss-38',
@@ -85,7 +92,21 @@ function seedProject(projectId: string): ProjectStudioState {
       author: 'siti',
       updatedAt: '3d ago',
       comments: [],
+      repoId: primaryRepoId,
     },
+    // Light seeds so secondary repos are not empty when multi-repo
+    ...secondaryRepos.slice(0, 2).map((r, i) => ({
+      id: `iss-sec-${r.id}`,
+      number: 20 + i,
+      title: `[${r.label}] Follow up items`,
+      body: `Demo issues for repository ${r.label}.`,
+      status: 'open' as const,
+      labels: ['triage'],
+      author: 'you',
+      updatedAt: '1d ago',
+      comments: [] as RepoIssue['comments'],
+      repoId: r.id,
+    })),
   ]
 
   const pullRequests: PullRequest[] = [
@@ -105,6 +126,7 @@ function seedProject(projectId: string): ProjectStudioState {
         { name: 'preview', status: 'ok' },
       ],
       reviewStatus: 'pending',
+      repoId: primaryRepoId,
     },
     {
       id: 'pr-11',
@@ -121,6 +143,7 @@ function seedProject(projectId: string): ProjectStudioState {
         { name: 'unit', status: 'ok' },
       ],
       reviewStatus: 'approved',
+      repoId: primaryRepoId,
     },
     {
       id: 'pr-10',
@@ -134,7 +157,22 @@ function seedProject(projectId: string): ProjectStudioState {
       updatedAt: '2d ago',
       checks: [],
       reviewStatus: 'pending',
+      repoId: primaryRepoId,
     },
+    ...secondaryRepos.slice(0, 1).map((r) => ({
+      id: `pr-sec-${r.id}`,
+      number: 3,
+      title: `[${r.label}] Align shared types`,
+      body: `Demo PR scoped to ${r.label}.`,
+      status: 'open' as const,
+      base: 'main',
+      head: 'chore/shared-types',
+      author: 'you',
+      updatedAt: '3d ago',
+      checks: [{ name: 'lint', status: 'ok' as const }],
+      reviewStatus: 'pending' as const,
+      repoId: r.id,
+    })),
   ]
 
   const commits = [
@@ -149,6 +187,7 @@ function seedProject(projectId: string): ProjectStudioState {
       branchLabels: ['fix/metric-threshold', 'HEAD'],
       files: ['src/MetricCard.tsx', 'src/MetricCard.test.tsx'],
       isHead: true,
+      repoId: primaryRepoId,
     },
     {
       id: 'c-b02',
@@ -160,6 +199,7 @@ function seedProject(projectId: string): ProjectStudioState {
       parents: ['c-c11'],
       branchLabels: ['main'],
       files: ['deploy/nginx.conf'],
+      repoId: primaryRepoId,
     },
     {
       id: 'c-c11',
@@ -171,6 +211,7 @@ function seedProject(projectId: string): ProjectStudioState {
       parents: ['c-d20'],
       branchLabels: [],
       files: ['workflows/scrape.json'],
+      repoId: primaryRepoId,
     },
     {
       id: 'c-d20',
@@ -182,6 +223,7 @@ function seedProject(projectId: string): ProjectStudioState {
       parents: [],
       branchLabels: [],
       files: ['src/App.tsx'],
+      repoId: primaryRepoId,
     },
     {
       id: 'c-e33',
@@ -193,7 +235,21 @@ function seedProject(projectId: string): ProjectStudioState {
       parents: ['c-c11'],
       branchLabels: ['experiment/charts'],
       files: ['src/styles/charts.css'],
+      repoId: primaryRepoId,
     },
+    ...secondaryRepos.slice(0, 2).map((r, i) => ({
+      id: `c-sec-${r.id}`,
+      hash: `sec${i}0000000`,
+      shortHash: `sec${i}000`,
+      message: `Bootstrap ${r.label}`,
+      author: 'you',
+      when: `${i + 2}d ago`,
+      parents: [] as string[],
+      branchLabels: ['main', ...(i === 0 ? ['HEAD'] : [])],
+      files: ['README.md'],
+      isHead: i === 0,
+      repoId: r.id,
+    })),
   ]
 
   const workflows: WorkflowDef[] = d.workflows.map((w, i) => ({
@@ -233,40 +289,62 @@ function seedProject(projectId: string): ProjectStudioState {
     log: [`started ${r.id}`, `status=${r.status}`, `duration=${r.dur}`],
   }))
 
-  const canvases: KnowledgeCanvas[] = (p?.canvases ?? [{ name: 'Architecture', desc: 'System sketch' }]).map(
-    (c, i) => ({
-      id: `cv-${i}`,
-      name: c.name,
-      desc: c.desc,
-      docIds: [],
-    }),
-  )
+  const seedCanvases = p?.canvases ?? [{ name: 'Architecture', desc: 'System sketch' }]
+  const canvases: KnowledgeCanvas[] = seedCanvases.map((c, i) => ({
+    id: `cv-${i}`,
+    name: c.name,
+    desc: c.desc,
+    contentMd:
+      i === 0
+        ? `# ${c.name}\n\n${c.desc || 'Project knowledge document.'}\n\n## Overview\n\nUse this canvas as Markdown knowledge for the project chatbot. Edit in **Source** or review the rich **Preview**.\n\n## Notes\n\n- Chunk and embed when ready for retrieval\n- Upload PDFs for Unlimited OCR → Markdown conversion\n`
+        : `# ${c.name}\n\n${c.desc || ''}\n`,
+    origin: 'created' as KnowledgeOrigin,
+    // First seed note is in chatbot knowledge; others are notes-only until indexed
+    status: (i === 0 ? 'indexed' : 'ready') as EmbedStatus,
+    chunks: i === 0 ? 42 : undefined,
+    updatedAt: 'just now',
+  }))
 
-  const docs: KnowledgeDoc[] = [
-    {
-      id: 'doc-1',
-      name: 'runbook.pdf',
-      mime: 'application/pdf',
-      sizeLabel: '2.4 MB',
-      status: 'indexed',
-      chunks: 128,
-      canvasId: canvases[0]?.id,
-    },
-  ]
+  // Seed OCR document as a full canvas (knowledge document)
+  canvases.unshift({
+    id: 'cv-runbook',
+    name: 'runbook.pdf',
+    desc: 'Converted via Unlimited OCR',
+    contentMd: `# Operations Runbook\n\n> Extracted from **runbook.pdf** via Unlimited OCR (demo).\n\n## Deploy checklist\n\n1. Confirm host health\n2. Apply compose stack\n3. Smoke-test preview URL\n\n## Rollback\n\n- Keep previous image tag\n- Restore env snapshot if needed\n\n## Contacts\n\n- On-call: platform team\n`,
+    origin: 'ocr',
+    status: 'indexed',
+    chunks: 128,
+    mime: 'application/pdf',
+    sizeLabel: '2.4 MB',
+    updatedAt: 'earlier',
+  })
 
-  if (canvases[0]) canvases[0].docIds = ['doc-1']
+  const docs: KnowledgeDoc[] = []
 
   const mindMaps: MindMap[] = [
     {
       id: 'mm-1',
       name: 'Product map',
-      nodes: [
-        { id: 'r', label: d.projectName, parentId: null },
-        { id: 'a', label: 'Studio', parentId: 'r' },
-        { id: 'b', label: 'Deploy', parentId: 'r' },
-        { id: 'c', label: 'Agents', parentId: 'a' },
-        { id: 'd', label: 'Workflows', parentId: 'a' },
-      ],
+      mermaid: `mindmap
+  root((${d.projectName || 'Project'}))
+    Studio
+      Agents
+      Workflows
+    Deploy
+      Hosts
+      Compose`,
+      updatedAt: 'just now',
+    },
+    {
+      id: 'mm-2',
+      name: 'RAG pipeline',
+      mermaid: `flowchart LR
+  A[Upload / Canvas] --> B[OCR / Markdown]
+  B --> C[Chunk]
+  C --> D[Embed]
+  D --> E[(Vector store)]
+  E --> F[Chatbot retrieve]`,
+      updatedAt: 'yesterday',
     },
   ]
 
@@ -537,12 +615,18 @@ interface StudioDemoState {
   update: (projectId: string, fn: (s: ProjectStudioState) => ProjectStudioState) => void
 
   // Issues
-  createIssue: (projectId: string, data: { title: string; body: string; labels: string[] }) => void
+  createIssue: (
+    projectId: string,
+    data: { title: string; body: string; labels: string[]; repoId?: string },
+  ) => void
   updateIssue: (projectId: string, id: string, patch: Partial<RepoIssue>) => void
   deleteIssue: (projectId: string, id: string) => void
 
   // PRs
-  createPr: (projectId: string, data: { title: string; body: string; base: string; head: string }) => void
+  createPr: (
+    projectId: string,
+    data: { title: string; body: string; base: string; head: string; repoId?: string },
+  ) => void
 
   // Jobs
   createJob: (projectId: string, data: { title: string; type: string; schedule?: string }) => void
@@ -571,9 +655,31 @@ interface StudioDemoState {
   runSuite: (projectId: string, suiteId: string) => void
 
   // Knowledge
+  createCanvas: (
+    projectId: string,
+    data: {
+      name: string
+      contentMd?: string
+      origin?: KnowledgeOrigin
+      mime?: string
+      sizeLabel?: string
+      desc?: string
+    },
+  ) => string
+  updateCanvas: (projectId: string, id: string, patch: Partial<KnowledgeCanvas>) => void
+  deleteCanvas: (projectId: string, id: string) => void
+  /** Upload path: creates a canvas and runs Unlimited OCR → embed demo pipeline */
+  uploadToCanvas: (
+    projectId: string,
+    file: { name: string; mime: string; sizeLabel: string; textContent?: string },
+  ) => string
+  createMindMap: (projectId: string, name: string, mermaid?: string) => string
+  updateMindMap: (projectId: string, id: string, patch: Partial<Pick<MindMap, 'name' | 'mermaid'>>) => void
+  deleteMindMap: (projectId: string, id: string) => void
+  /** @deprecated Prefer createCanvas / uploadToCanvas */
   addDoc: (projectId: string, doc: Omit<KnowledgeDoc, 'id' | 'status' | 'chunks'>) => void
   setDocStatus: (projectId: string, id: string, status: KnowledgeDoc['status'], chunks?: number) => void
-  createMindMap: (projectId: string, name: string) => void
+  /** @deprecated Mind maps use Mermaid source */
   addMindNode: (projectId: string, mapId: string, label: string, parentId: string | null) => void
 
   // Deploy
@@ -647,6 +753,7 @@ export const useStudioDemoStore = create<StudioDemoState>((set, get) => ({
         author: 'you',
         updatedAt: 'just now',
         comments: [],
+        repoId: data.repoId,
       }
       return { ...s, issues: [issue, ...s.issues] }
     })
@@ -681,6 +788,7 @@ export const useStudioDemoStore = create<StudioDemoState>((set, get) => ({
           { name: 'unit', status: 'pending' },
         ],
         reviewStatus: 'pending',
+        repoId: data.repoId,
       }
       return { ...s, pullRequests: [pr, ...s.pullRequests] }
     })
@@ -828,47 +936,163 @@ export const useStudioDemoStore = create<StudioDemoState>((set, get) => ({
     })
   },
 
-  addDoc: (projectId, doc) => {
-    const id = uid('doc')
+  createCanvas: (projectId, data) => {
+    const id = uid('cv')
+    const canvas: KnowledgeCanvas = {
+      id,
+      name: data.name,
+      desc: data.desc,
+      contentMd:
+        data.contentMd ??
+        `# ${data.name}\n\nStart writing knowledge for your project chatbot here.\n`,
+      origin: data.origin ?? 'created',
+      // Notes-only until the user (or upload pipeline) adds to chatbot knowledge
+      status: 'ready',
+      chunks: undefined,
+      mime: data.mime,
+      sizeLabel: data.sizeLabel,
+      updatedAt: 'just now',
+    }
     get().update(projectId, (s) => ({
       ...s,
-      docs: [{ ...doc, id, status: 'uploading', chunks: 0 }, ...s.docs],
+      canvases: [canvas, ...s.canvases],
     }))
-    const steps: KnowledgeDoc['status'][] = ['chunking', 'embedding', 'indexed']
-    steps.forEach((status, i) => {
+    return id
+  },
+
+  updateCanvas: (projectId, id, patch) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      canvases: s.canvases.map((c) =>
+        c.id === id ? { ...c, ...patch, updatedAt: 'just now' } : c,
+      ),
+    }))
+  },
+
+  deleteCanvas: (projectId, id) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      canvases: s.canvases.filter((c) => c.id !== id),
+    }))
+  },
+
+  uploadToCanvas: (projectId, file) => {
+    const isPdf =
+      file.mime === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+    const id = uid('cv')
+    const origin: KnowledgeOrigin = isPdf ? 'ocr' : 'upload'
+    const initialMd =
+      file.textContent ||
+      (isPdf
+        ? `# ${file.name.replace(/\.pdf$/i, '')}\n\n> Converted from PDF via **Unlimited OCR** (demo).\n\n## Extracted content\n\nPage 1 of **${file.name}** was converted to Markdown for embedding.\n\n- Heading and body text preserved\n- Tables flattened to lists where needed\n- Ready for chunk → embed → vector store\n`
+        : `# ${file.name}\n\nUploaded knowledge document.\n`)
+
+    const canvas: KnowledgeCanvas = {
+      id,
+      name: file.name,
+      desc: isPdf ? 'Unlimited OCR conversion' : 'Uploaded document',
+      contentMd: isPdf ? '' : initialMd,
+      origin,
+      status: 'uploading',
+      chunks: 0,
+      mime: file.mime,
+      sizeLabel: file.sizeLabel,
+      updatedAt: 'just now',
+    }
+    get().update(projectId, (s) => ({
+      ...s,
+      canvases: [canvas, ...s.canvases],
+    }))
+
+    const schedule = (
+      delay: number,
+      status: EmbedStatus,
+      patch?: Partial<KnowledgeCanvas>,
+    ) => {
       window.setTimeout(() => {
-        get().setDocStatus(projectId, id, status, status === 'indexed' ? 48 + Math.floor(Math.random() * 80) : undefined)
-      }, (i + 1) * 700)
+        get().updateCanvas(projectId, id, { status, ...patch })
+      }, delay)
+    }
+
+    if (isPdf) {
+      // Unlimited OCR → Markdown only; chatbot indexing is a separate optional step
+      schedule(600, 'ocr')
+      schedule(1400, 'ocr', { contentMd: initialMd })
+      schedule(2200, 'ready', { contentMd: initialMd, chunks: undefined })
+    } else {
+      // Text/Markdown land as notes-only immediately
+      schedule(400, 'ready', { contentMd: initialMd, chunks: undefined })
+    }
+
+    return id
+  },
+
+  createMindMap: (projectId, name, mermaid) => {
+    const id = uid('mm')
+    const source =
+      mermaid ??
+      `mindmap
+  root((${name.replace(/[()]/g, '')}))
+    Topic A
+      Detail
+    Topic B`
+    get().update(projectId, (s) => ({
+      ...s,
+      mindMaps: [
+        { id, name, mermaid: source, updatedAt: 'just now' },
+        ...s.mindMaps,
+      ],
+    }))
+    return id
+  },
+
+  updateMindMap: (projectId, id, patch) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      mindMaps: s.mindMaps.map((m) =>
+        m.id === id ? { ...m, ...patch, updatedAt: 'just now' } : m,
+      ),
+    }))
+  },
+
+  deleteMindMap: (projectId, id) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      mindMaps: s.mindMaps.filter((m) => m.id !== id),
+    }))
+  },
+
+  addDoc: (projectId, doc) => {
+    get().uploadToCanvas(projectId, {
+      name: doc.name,
+      mime: doc.mime,
+      sizeLabel: doc.sizeLabel,
     })
   },
 
   setDocStatus: (projectId, id, status, chunks) => {
-    get().update(projectId, (s) => ({
-      ...s,
-      docs: s.docs.map((d) =>
-        d.id === id ? { ...d, status, chunks: chunks ?? d.chunks } : d,
-      ),
-    }))
-  },
-
-  createMindMap: (projectId, name) => {
-    get().update(projectId, (s) => ({
-      ...s,
-      mindMaps: [
-        ...s.mindMaps,
-        { id: uid('mm'), name, nodes: [{ id: 'r', label: name, parentId: null }] },
-      ],
-    }))
+    // Legacy: treat id as canvas id when present
+    get().updateCanvas(projectId, id, {
+      status,
+      chunks: chunks,
+    })
   },
 
   addMindNode: (projectId, mapId, label, parentId) => {
+    // Legacy path: append a note line into mermaid source
+    void parentId
     get().update(projectId, (s) => ({
       ...s,
-      mindMaps: s.mindMaps.map((m) =>
-        m.id === mapId
-          ? { ...m, nodes: [...m.nodes, { id: uid('mn'), label, parentId }] }
-          : m,
-      ),
+      mindMaps: s.mindMaps.map((m) => {
+        if (m.id !== mapId) return m
+        const indent = '      '
+        return {
+          ...m,
+          mermaid: `${(m.mermaid || '').trimEnd()}\n${indent}${label}`,
+          updatedAt: 'just now',
+          nodes: m.nodes,
+        }
+      }),
     }))
   },
 

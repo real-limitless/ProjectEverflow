@@ -1,22 +1,22 @@
-import { useEffect, useState } from 'react'
 import { Label } from '@patternfly/react-core'
 import { getProject } from '@/data/projects'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 export function RepoStrip() {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
+  const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
+  const activeRepoByProject = usePlaygroundStore((s) => s.activeRepoByProject)
+  const setActiveRepo = usePlaygroundStore((s) => s.setActiveRepo)
   const setConnectRepoModal = usePlaygroundStore((s) => s.setConnectRepoModal)
+  const getActiveRepoId = usePlaygroundStore((s) => s.getActiveRepoId)
+
+  void catalogVersion
+  void activeRepoByProject
+
   const project = getProject(currentProjectId)
-  const [activeRepo, setActiveRepo] = useState(
-    project?.repos.find((r) => r.active)?.id || project?.repos[0]?.id || '',
-  )
-
-  useEffect(() => {
-    const p = getProject(currentProjectId)
-    setActiveRepo(p?.repos.find((r) => r.active)?.id || p?.repos[0]?.id || '')
-  }, [currentProjectId])
-
   if (!project) return null
+
+  const activeRepo = getActiveRepoId(currentProjectId)
 
   return (
     <div className="repo-strip repo-strip--surface" id="repoStrip">

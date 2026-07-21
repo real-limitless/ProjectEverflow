@@ -3,7 +3,18 @@
 export type JobStatus = 'run' | 'queued' | 'ok' | 'err' | 'cancelled'
 export type IssueStatus = 'open' | 'closed'
 export type PrStatus = 'open' | 'merged' | 'draft' | 'closed'
-export type EmbedStatus = 'uploading' | 'chunking' | 'embedding' | 'indexed' | 'error'
+/** Knowledge canvas pipeline / chat-readiness status */
+export type EmbedStatus =
+  | 'ready' // saved notes; not in chatbot vector knowledge yet
+  | 'uploading'
+  | 'ocr'
+  | 'chunking'
+  | 'embedding'
+  | 'indexed' // available to chatbot retrieval
+  | 'stale' // was indexed; content changed — needs re-index
+  | 'error'
+
+export type KnowledgeOrigin = 'created' | 'upload' | 'ocr' | 'web'
 export type TestCaseType = 'unit' | 'e2e' | 'smoke'
 export type TestRunStatus = 'idle' | 'running' | 'passed' | 'failed'
 export type DeployHostStatus = 'online' | 'offline' | 'unknown'
@@ -26,6 +37,8 @@ export interface RepoIssue {
   author: string
   updatedAt: string
   comments: RepoIssueComment[]
+  /** Scopes demo issues to a project repository when multi-repo. */
+  repoId?: string
 }
 
 export interface PullRequest {
@@ -40,6 +53,8 @@ export interface PullRequest {
   updatedAt: string
   checks: { name: string; status: 'ok' | 'pending' | 'fail' }[]
   reviewStatus: 'approved' | 'changes_requested' | 'pending'
+  /** Scopes demo PRs to a project repository when multi-repo. */
+  repoId?: string
 }
 
 export interface GitCommit {
@@ -53,6 +68,8 @@ export interface GitCommit {
   branchLabels: string[]
   files: string[]
   isHead?: boolean
+  /** Scopes demo commits to a project repository when multi-repo. */
+  repoId?: string
 }
 
 export interface GitGraphLane {
@@ -101,6 +118,7 @@ export interface WorkflowRun {
   log: string[]
 }
 
+/** @deprecated Prefer KnowledgeCanvas as the knowledge document unit */
 export interface KnowledgeDoc {
   id: string
   name: string
@@ -111,11 +129,19 @@ export interface KnowledgeDoc {
   canvasId?: string
 }
 
+/** Knowledge document: Markdown body for LLM / embedding use */
 export interface KnowledgeCanvas {
   id: string
   name: string
-  desc: string
-  docIds: string[]
+  desc?: string
+  /** Markdown knowledge body */
+  contentMd: string
+  origin: KnowledgeOrigin
+  status: EmbedStatus
+  chunks?: number
+  mime?: string
+  sizeLabel?: string
+  updatedAt?: string
 }
 
 export interface WebSearchHit {
@@ -123,8 +149,11 @@ export interface WebSearchHit {
   title: string
   url: string
   snippet: string
+  /** Cleaned full-page text for Reader mode (Markdown) */
+  readerMarkdown?: string
 }
 
+/** @deprecated Mind maps are Mermaid-sourced now */
 export interface MindMapNode {
   id: string
   label: string
@@ -134,7 +163,11 @@ export interface MindMapNode {
 export interface MindMap {
   id: string
   name: string
-  nodes: MindMapNode[]
+  /** Mermaid diagram source (mindmap, flowchart, etc.) */
+  mermaid: string
+  updatedAt?: string
+  /** @deprecated Prefer mermaid source */
+  nodes?: MindMapNode[]
 }
 
 export interface DbTable {

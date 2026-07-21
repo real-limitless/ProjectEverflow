@@ -9,6 +9,8 @@ export interface ProjectRepo {
   url?: string
   branch?: string
   provider?: RepoProvider
+  /** Workspace-relative git root (e.g. "." or "web"). Resolved at runtime when omitted. */
+  localPath?: string
 }
 
 export interface ProjectHarness {

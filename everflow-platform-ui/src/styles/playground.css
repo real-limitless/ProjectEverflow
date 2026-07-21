@@ -727,30 +727,21 @@
       color: var(--pf-t--global--text--color--regular);
     }
     .preview-frame-wrap {
-      flex: 1; min-height: 0; overflow: auto; display: flex; justify-content: center;
-      padding: var(--pf-t--global--spacer--md);
+      flex: 1; min-height: 0; overflow: hidden; display: flex; justify-content: center;
+      align-items: stretch;
+      padding: var(--pf-t--global--spacer--sm) var(--pf-t--global--spacer--md);
       background: var(--pf-t--global--background--color--secondary--default);
     }
-    .preview-device {
-      width: 100%; max-width: 68.75rem;
-      border-radius: var(--pf-t--global--border--radius--medium);
-      border: 1px solid var(--pf-t--global--border--color--default);
-      overflow: hidden;
-      background: var(--pf-t--global--background--color--primary--default);
-      transition: max-width 0.2s;
-    }
+    /* Device widths are driven by PreviewPanel inline styles; keep full-mode only here */
     .preview-device.full {
       max-width: none;
+      width: 100%;
       margin: 0;
       border: none;
       border-radius: 0;
       box-shadow: none;
       height: 100%;
     }
-    .preview-device.desktop { max-width: 60rem; }
-    .preview-device.tablet { max-width: 48rem; }
-    .preview-device.mobile,
-    .preview-device.phone { max-width: 24.375rem; }
     .fake-app {
       padding: 1.125rem; min-height: 22.5rem;
       background: var(--pf-t--global--background--color--primary--default);
@@ -1052,6 +1043,60 @@
       border-block-end: 1px solid var(--pf-t--global--border--color--default);
       flex-shrink: 0; flex-wrap: wrap;
       background: var(--pf-t--global--background--color--secondary--default);
+    }
+    .repo-toolbar-left {
+      display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; min-width: 0;
+    }
+    .repo-select {
+      min-width: 10rem; max-width: 16rem; width: auto;
+    }
+    .repo-toolbar-label {
+      font-weight: 600; font-size: 0.85rem; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; max-width: 14rem;
+    }
+    .repo-branch-toggle {
+      --pf-v6-c-menu-toggle--MinWidth: 0;
+      min-height: 1.75rem;
+      padding-block: 0.15rem;
+      padding-inline: 0.5rem 0.4rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      max-width: 12rem;
+    }
+    .repo-branch-toggle-text {
+      font-family: var(--pg-mono, ui-monospace, monospace);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 9rem;
+      display: inline-block;
+      vertical-align: bottom;
+    }
+    .repo-refresh-btn {
+      min-width: 2rem;
+      width: 2rem;
+      height: 2rem;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .repo-refresh-btn.is-spinning svg {
+      animation: repo-refresh-spin 0.85s linear infinite;
+    }
+    @keyframes repo-refresh-spin {
+      to { transform: rotate(360deg); }
+    }
+    .repo-source-meta {
+      font-size: 0.7rem; color: var(--pf-t--global--text--color--subtle);
+      padding: 0.25rem 0.75rem 0;
+      flex-shrink: 0;
+    }
+    .repo-git-error {
+      font-size: 0.75rem;
+      color: var(--pf-t--global--text--color--status--danger--default);
+      padding: 0.25rem 0.75rem;
+      flex-shrink: 0;
     }
     .repo-body { flex: 1; overflow-y: auto; padding: 0.75rem; }
     .change-row {
