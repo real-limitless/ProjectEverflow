@@ -79,9 +79,88 @@ def rewrite_vite_client_js(content: bytes) -> bytes:
         text2,
         count=1,
     )
+    # Force hmrPort null so client uses location.port (preview public port)
+    text2 = re.sub(
+        r'const hmrPort = [^;]+;',
+        "const hmrPort = null;",
+        text2,
+        count=1,
+    )
     if text2 != text:
         logger.info("rewrote Vite client HMR hosts for preview proxy")
     return text2.encode("utf-8")
+
+
+# Injected into HTML so any code that still opens ws://127.0.0.1:5173 is redirected
+# to the preview public host (iframe origin). Covers cached clients & Vite fallbacks.
+_WS_PATCH_SCRIPT = (
+    "<script data-everflow-ws-patch>"
+    "(function(){"
+    "var N=window.WebSocket;"
+    "if(!N||N.__efPatched)return;"
+    "function P(u){"
+    "try{"
+    "var x=new URL(u,location.href);"
+    "if(x.hostname==='127.0.0.1'||x.hostname==='localhost'){"
+    "x.hostname=location.hostname;"
+    "x.protocol=location.protocol==='https:'?'wss:':'ws:';"
+    "if(location.port)x.port=location.port;else x.port='';"
+    "return x.toString();"
+    "}}catch(e){}"
+    "return u;"
+    "}"
+    "function W(u,p){"
+    "var w=p===undefined?new N(P(u)):new N(P(u),p);"
+    "return w;"
+    "}"
+    "W.prototype=N.prototype;"
+    "W.CONNECTING=N.CONNECTING;W.OPEN=N.OPEN;W.CLOSING=N.CLOSING;W.CLOSED=N.CLOSED;"
+    "W.__efPatched=1;window.WebSocket=W;"
+    "})();"
+    "</script>"
+)
+
+
+def inject_ws_patch_html(content: bytes) -> bytes:
+    """Inject WebSocket host rewrite into HTML documents."""
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    if "data-everflow-ws-patch" in text:
+        return content
+    lower = text.lower()
+    # Prefer <head>
+    idx = lower.find("<head>")
+    if idx >= 0:
+        insert_at = idx + len("<head>")
+        text = text[:insert_at] + _WS_PATCH_SCRIPT + text[insert_at:]
+        return text.encode("utf-8")
+    idx = lower.find("<!doctype")
+    if idx >= 0:
+        # after first line
+        nl = text.find("\n", idx)
+        if nl > 0:
+            text = text[: nl + 1] + _WS_PATCH_SCRIPT + "\n" + text[nl + 1 :]
+            return text.encode("utf-8")
+    text = _WS_PATCH_SCRIPT + text
+    return text.encode("utf-8")
+
+
+def preview_cache_headers(path: str, headers: dict[str, str]) -> dict[str, str]:
+    """Prevent browsers from caching pre-rewrite Vite client / HTML."""
+    out = dict(headers)
+    pl = (path or "").lower()
+    if (
+        "@vite/client" in pl
+        or pl.endswith(".html")
+        or pl == ""
+        or pl.endswith("/")
+        or "vite/dist/client" in pl
+    ):
+        out["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        out["Pragma"] = "no-cache"
+    return out
 
 
 def ws_requested_subprotocol(websocket: WebSocket) -> str | None:
@@ -223,7 +302,7 @@ async def proxy_http_to_port(
         await upstream.aclose()
         await client.aclose()
 
-    # Rewrite Vite client so HMR WebSocket uses the preview public host, not 127.0.0.1:5173
+    # Rewrite Vite client + inject HTML WebSocket patch for HMR through preview host
     path_l = (path or "").lstrip("/")
     if (
         path_l.endswith("@vite/client")
@@ -232,6 +311,9 @@ async def proxy_http_to_port(
         or "vite/dist/client" in path_l
     ):
         content = rewrite_vite_client_js(content)
+    media_l = (media or "").lower()
+    if "text/html" in media_l or path_l == "" or path_l.endswith(".html"):
+        content = inject_ws_patch_html(content)
 
     headers = _filter_response_headers(upstream.headers, strip_encoding=True)
     headers = {
@@ -239,6 +321,7 @@ async def proxy_http_to_port(
         for k, v in headers.items()
         if k.lower() not in ("content-length", "content-encoding")
     }
+    headers = preview_cache_headers(path_l, headers)
 
     return Response(
         content=content,

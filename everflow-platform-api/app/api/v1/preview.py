@@ -325,11 +325,37 @@ async def handle_preview_http(request: Request) -> Response:
     finally:
         await _close()
 
+    # Defense in depth: rewrite Vite HMR client + inject WS host patch if agent missed it
+    path_l = (path or "").lstrip("/")
+    try:
+        from app.services.preview_rewrite import (
+            inject_ws_patch_html,
+            preview_cache_headers,
+            rewrite_vite_client_js,
+        )
+
+        if "@vite/client" in path_l or "vite/dist/client" in path_l:
+            content = rewrite_vite_client_js(content)
+        if "text/html" in (media or "").lower() or path_l == "" or path_l.endswith(".html"):
+            content = inject_ws_patch_html(content)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("preview rewrite skipped: %s", exc)
+
     clean = {
         k: v
         for k, v in resp_headers.items()
         if k.lower() not in ("content-encoding", "content-length")
     }
+    try:
+        from app.services.preview_rewrite import preview_cache_headers
+
+        clean = preview_cache_headers(path_l, clean)
+    except Exception:
+        pass
+    # Always discourage caching of proxied preview docs/modules (HMR rewrite must stick)
+    clean["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    clean["Pragma"] = "no-cache"
+
     return Response(
         content=content,
         status_code=upstream.status_code,

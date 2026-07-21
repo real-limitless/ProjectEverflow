@@ -535,8 +535,11 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
               title="Sandbox preview"
               src={iframeSrc}
               className="preview-iframe"
-              sandbox="allow-forms allow-modals allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts allow-downloads"
-              allow="clipboard-read; clipboard-write"
+              // No sandbox attribute: sandboxed iframes break Vite HMR WebSockets
+              // and many app APIs. Preview content is already isolated by origin
+              // ({uuid}.preview.localhost) and capability auth.
+              allow="clipboard-read; clipboard-write; fullscreen; autoplay"
+              referrerPolicy="strict-origin-when-cross-origin"
             />
           )}
         </div>
