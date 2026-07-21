@@ -20,7 +20,9 @@ services:
     environment:
       SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
       SANDBOX_MOCK: ${SANDBOX_MOCK:-false}
-      DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-python}
+      # Guest image for project microVMs (build: ./deploy/build-sandbox-guest.sh)
+      DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ghcr.io/real-limitless/everflow-sandbox-guest:dev}
+      VOLUME_STRATEGY: ${VOLUME_STRATEGY:-auto}
       WORKSPACE_ROOT: /workspaces
       MSB_HOME: /root/.microsandbox
     volumes:
@@ -67,7 +69,7 @@ services:
       SANDBOX_ENABLED: ${SANDBOX_ENABLED:-true}
       SANDBOX_AGENT_URL: http://sandbox-agent:8090
       SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
-      SANDBOX_DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-python}
+      SANDBOX_DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ghcr.io/real-limitless/everflow-sandbox-guest:dev}
       SANDBOX_DEFAULT_MEMORY_MIB: ${SANDBOX_DEFAULT_MEMORY_MIB:-2048}
       SANDBOX_DEFAULT_CPUS: ${SANDBOX_DEFAULT_CPUS:-2}
       UVICORN_RELOAD: "true"

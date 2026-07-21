@@ -16,6 +16,90 @@ from app.config import Settings
 
 logger = logging.getLogger(__name__)
 
+# Prefer named volumes in nested Docker+KVM; bind and guest-only are fallbacks.
+VOLUME_STRATEGY_ORDER: tuple[str, ...] = ("named-volume", "bind", "no-volumes")
+# Process-local: last strategy that successfully booted a sandbox (speeds later creates).
+_last_volume_strategy: str | None = None
+
+
+def volume_attempt_order(strategy: str | None, *, last_success: str | None = None) -> list[str]:
+    """Resolve which mount strategies to try, and in what order."""
+    raw = (strategy or "auto").strip().lower()
+    if raw in VOLUME_STRATEGY_ORDER:
+        return [raw]
+    # auto (or unknown → auto)
+    order = list(VOLUME_STRATEGY_ORDER)
+    cached = last_success if last_success in VOLUME_STRATEGY_ORDER else _last_volume_strategy
+    if cached and cached in order:
+        order.remove(cached)
+        order.insert(0, cached)
+    return order
+
+
+def remember_volume_strategy(label: str) -> None:
+    global _last_volume_strategy
+    if label in VOLUME_STRATEGY_ORDER:
+        _last_volume_strategy = label
+
+
+WORKSPACE_GUEST = "/workspace"
+
+
+def normalize_guest_path(path: str | None, *, allow_tmp: bool = False) -> str:
+    """Map a request path to an absolute path inside the guest workspace.
+
+    Relative paths (including ``.`` / ``./``) resolve under ``/workspace``.
+    Absolute paths must stay under ``/workspace``, or under ``/tmp`` when
+    ``allow_tmp`` is true (bootstrap scripts).
+    """
+    raw = (path or ".").strip() or "."
+    if raw in (".", "./"):
+        return WORKSPACE_GUEST
+    while raw.startswith("./"):
+        raw = raw[2:]
+        if not raw:
+            return WORKSPACE_GUEST
+
+    if raw.startswith("/"):
+        if raw == WORKSPACE_GUEST or raw.startswith(WORKSPACE_GUEST + "/"):
+            # Collapse /workspace and /workspace/
+            cleaned = raw.rstrip("/") or WORKSPACE_GUEST
+            return cleaned if cleaned.startswith(WORKSPACE_GUEST) else WORKSPACE_GUEST
+        if allow_tmp and (raw == "/tmp" or raw.startswith("/tmp/")):
+            return raw
+        raise PermissionError(f"path escapes workspace: {path}")
+
+    cleaned = raw.lstrip("/")
+    if cleaned.startswith("workspace/"):
+        cleaned = cleaned[len("workspace/") :]
+    parts: list[str] = []
+    for part in cleaned.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                raise PermissionError("path escapes workspace")
+            parts.pop()
+            continue
+        parts.append(part)
+    if not parts:
+        return WORKSPACE_GUEST
+    return f"{WORKSPACE_GUEST}/{'/'.join(parts)}"
+
+
+def guest_entry_relpath(guest_dir: str, entry_name: str) -> str:
+    """Workspace-relative path for a directory listing entry (no leading ./)."""
+    base = guest_dir.rstrip("/") or WORKSPACE_GUEST
+    if base == WORKSPACE_GUEST:
+        parent_rel = ""
+    elif base.startswith(WORKSPACE_GUEST + "/"):
+        parent_rel = base[len(WORKSPACE_GUEST) + 1 :]
+    else:
+        parent_rel = base.lstrip("/")
+    if not parent_rel:
+        return entry_name
+    return f"{parent_rel}/{entry_name}"
+
 
 @dataclass
 class SandboxRecord:
@@ -85,6 +169,17 @@ class SandboxBackend(ABC):
 
     @abstractmethod
     async def bootstrap(self, name: str, harnesses: list[str]) -> SandboxRecord: ...
+
+    async def shell_session(
+        self,
+        name: str,
+        websocket: Any,
+        *,
+        cmd: str | None = None,
+        cwd: str = "/workspace",
+    ) -> None:
+        """Interactive PTY over WebSocket. Override in backends."""
+        raise NotImplementedError("Interactive shell not supported on this backend")
 
 
 def kvm_available() -> bool:
@@ -301,6 +396,30 @@ class MockSandboxBackend(SandboxBackend):
         rec.harnesses = list(dict.fromkeys([*rec.harnesses, *harnesses]))
         return rec
 
+    async def shell_session(
+        self,
+        name: str,
+        websocket: Any,
+        *,
+        cmd: str | None = None,
+        cwd: str = "/workspace",
+    ) -> None:
+        from app.shell_ws import run_mock_shell
+
+        rec = self._require(name)
+        if rec.status != "running":
+            raise RuntimeError(f"Sandbox {name} is not running")
+        ws = rec.workspace_path or str(self._settings.workspace_path / name)
+        # cwd relative to workspace when mock
+        work = ws
+        if cwd and cwd not in (".", "/workspace", "/workspace/"):
+            # best-effort map /workspace/... → host path
+            rel = cwd[len("/workspace") :].lstrip("/") if cwd.startswith("/workspace") else cwd
+            candidate = Path(ws) / rel
+            if candidate.is_dir():
+                work = str(candidate)
+        await run_mock_shell(work, websocket, cmd=cmd)
+
     def _require(self, name: str) -> SandboxRecord:
         rec = self._sandboxes.get(name)
         if rec is None:
@@ -314,6 +433,9 @@ class MicrosandboxBackend(SandboxBackend):
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._meta: dict[str, SandboxRecord] = {}
+        # name -> in-flight harness install (cancelled on remove/replace)
+        self._bootstrap_tasks: dict[str, asyncio.Task[None]] = {}
+        self._bootstrap_gen: dict[str, int] = {}
 
     async def health(self) -> dict[str, Any]:
         try:
@@ -329,12 +451,106 @@ class MicrosandboxBackend(SandboxBackend):
             "mock": False,
         }
 
+    def _cancel_bootstrap(self, name: str) -> None:
+        """Cancel any in-flight background harness install for this sandbox."""
+        self._bootstrap_gen[name] = self._bootstrap_gen.get(name, 0) + 1
+        task = self._bootstrap_tasks.pop(name, None)
+        if task is not None and not task.done():
+            task.cancel()
+            logger.debug("cancelled in-flight bootstrap name=%s", name)
+
+    def _schedule_bootstrap(self, name: str, harnesses: list[str]) -> None:
+        """Install harnesses after create returns (does not block ready)."""
+        if not harnesses:
+            return
+        self._cancel_bootstrap(name)
+        gen = self._bootstrap_gen.get(name, 0)
+
+        async def _run() -> None:
+            if self._bootstrap_gen.get(name, 0) != gen:
+                return
+            try:
+                await self.bootstrap(name, harnesses)
+                if self._bootstrap_gen.get(name, 0) != gen:
+                    return
+                rec = self._meta.get(name)
+                if rec is not None:
+                    rec.harnesses = list(dict.fromkeys([*rec.harnesses, *harnesses]))
+                    if rec.error and rec.error.startswith("bootstrap failed:"):
+                        rec.error = None
+                logger.info("background bootstrap finished name=%s harnesses=%s", name, harnesses)
+            except asyncio.CancelledError:
+                logger.info("background bootstrap cancelled name=%s", name)
+                raise
+            except Exception as exc:
+                if self._bootstrap_gen.get(name, 0) != gen:
+                    return
+                logger.exception(
+                    "background bootstrap failed name=%s (sandbox still running): %s",
+                    name,
+                    exc,
+                )
+                rec = self._meta.get(name)
+                if rec is not None:
+                    rec.error = f"bootstrap failed: {exc}"[:500]
+            finally:
+                if self._bootstrap_tasks.get(name) is asyncio.current_task():
+                    self._bootstrap_tasks.pop(name, None)
+
+        self._bootstrap_tasks[name] = asyncio.create_task(_run(), name=f"bootstrap:{name}")
+
     async def _force_cleanup(self, name: str) -> None:
         """Best-effort stop+remove so create/replace is clean."""
         try:
             await self.remove(name)
         except Exception as exc:
             logger.debug("cleanup before create name=%s: %s", name, exc)
+
+    async def _build_volume_attempts(
+        self,
+        name: str,
+        ws: Path,
+    ) -> tuple[list[tuple[str, dict[str, Any]]], list[str]]:
+        """Build ordered mount strategies to try; only prep strategies we will attempt."""
+        from microsandbox import Volume
+
+        vol_name = f"ef-ws-{name}"[:120]
+        errors: list[str] = []
+        order = volume_attempt_order(self._settings.volume_strategy)
+        attempts: list[tuple[str, dict[str, Any]]] = []
+
+        for label in order:
+            if label == "named-volume":
+                try:
+                    try:
+                        await Volume.create(vol_name, kind="dir")
+                    except Exception:
+                        pass  # already exists
+                    attempts.append(
+                        (
+                            "named-volume",
+                            {
+                                "volumes": {"/workspace": Volume.named(vol_name)},
+                                "workdir": "/workspace",
+                            },
+                        )
+                    )
+                except Exception as exc:
+                    errors.append(f"named-volume-prep: {exc}")
+            elif label == "bind":
+                attempts.append(
+                    (
+                        "bind",
+                        {
+                            "volumes": {"/workspace": Volume.bind(str(ws))},
+                            "workdir": "/workspace",
+                        },
+                    )
+                )
+            elif label == "no-volumes":
+                attempts.append(("no-volumes", {"workdir": "/root"}))
+
+        return attempts, errors
 
     async def create(
         self,
@@ -348,7 +564,7 @@ class MicrosandboxBackend(SandboxBackend):
         workspace_host_path: str | None,
         replace: bool = False,
     ) -> SandboxRecord:
-        from microsandbox import Sandbox, Volume
+        from microsandbox import Sandbox
 
         if not kvm_available():
             raise RuntimeError("/dev/kvm is not available on this host")
@@ -356,49 +572,18 @@ class MicrosandboxBackend(SandboxBackend):
         ws = Path(workspace_host_path or (self._settings.workspace_path / name))
         ws.mkdir(parents=True, exist_ok=True)
 
+        # Drop any previous bootstrap for this name before teardown/recreate
+        self._cancel_bootstrap(name)
+
         if replace:
             await self._force_cleanup(name)
 
-        # Try several mount strategies. Nested Docker+KVM often rejects bind mounts
-        # or crashes the guest; named volumes under ~/.microsandbox are more reliable.
+        # Nested Docker+KVM often rejects bind mounts; try preferred/cached strategy first.
         vol_name = f"ef-ws-{name}"[:120]
-        errors: list[str] = []
+        attempts, errors = await self._build_volume_attempts(name, ws)
         sb = None
         used_workspace = str(ws)
-
-        attempts: list[tuple[str, dict[str, Any]]] = []
-
-        # 1) Named volume (managed by microsandbox)
-        try:
-            try:
-                await Volume.create(vol_name, kind="dir")
-            except Exception:
-                pass  # already exists
-            attempts.append(
-                (
-                    "named-volume",
-                    {
-                        "volumes": {"/workspace": Volume.named(vol_name)},
-                        "workdir": "/workspace",
-                    },
-                )
-            )
-        except Exception as exc:
-            errors.append(f"named-volume-prep: {exc}")
-
-        # 2) Host bind mount
-        attempts.append(
-            (
-                "bind",
-                {
-                    "volumes": {"/workspace": Volume.bind(str(ws))},
-                    "workdir": "/workspace",
-                },
-            )
-        )
-
-        # 3) No extra mounts (guest-only FS)
-        attempts.append(("no-volumes", {"workdir": "/root"}))
+        won_label: str | None = None
 
         for label, extra in attempts:
             try:
@@ -415,6 +600,8 @@ class MicrosandboxBackend(SandboxBackend):
                 )
                 await sb.detach()
                 logger.info("Sandbox.create succeeded attempt=%s name=%s", label, name)
+                won_label = label
+                remember_volume_strategy(label)
                 if label == "named-volume":
                     used_workspace = f"named:{vol_name}"
                 elif label == "no-volumes":
@@ -436,6 +623,7 @@ class MicrosandboxBackend(SandboxBackend):
                 "or set SANDBOX_MOCK=true for local mock sandboxes."
             )
 
+        # Ready as soon as the microVM is up. Harness install runs in the background.
         rec = SandboxRecord(
             name=name,
             status="running",
@@ -446,14 +634,16 @@ class MicrosandboxBackend(SandboxBackend):
             created_at=datetime.now(timezone.utc),
         )
         self._meta[name] = rec
-        # Bootstrap is best-effort: never fail create after the VM is up
         if harnesses:
-            try:
-                await self.bootstrap(name, harnesses)
-                rec.harnesses = list(harnesses)
-            except Exception as exc:
-                logger.exception("bootstrap failed name=%s (sandbox still running): %s", name, exc)
-                rec.error = f"bootstrap failed: {exc}"[:500]
+            self._schedule_bootstrap(name, list(harnesses))
+            logger.info(
+                "Sandbox.create ready name=%s strategy=%s harnesses deferred=%s",
+                name,
+                won_label,
+                harnesses,
+            )
+        else:
+            logger.info("Sandbox.create ready name=%s strategy=%s", name, won_label)
         return rec
 
     async def get(self, name: str) -> SandboxRecord | None:
@@ -481,6 +671,7 @@ class MicrosandboxBackend(SandboxBackend):
             harnesses=meta.harnesses if meta else [],
             workspace_path=meta.workspace_path if meta else None,
             created_at=meta.created_at if meta else None,
+            error=meta.error if meta else None,
         )
         self._meta[name] = rec
         return rec
@@ -549,6 +740,8 @@ class MicrosandboxBackend(SandboxBackend):
     async def remove(self, name: str) -> None:
         """Idempotent: missing sandbox is success (supports recreate after agent wipe)."""
         from microsandbox import Sandbox
+
+        self._cancel_bootstrap(name)
 
         try:
             handle = await Sandbox.get(name)
@@ -641,28 +834,53 @@ class MicrosandboxBackend(SandboxBackend):
             raise
 
     async def list_fs(self, name: str, path: str) -> list[dict[str, Any]]:
-        guest_path = path if path.startswith("/") else f"/workspace/{path.lstrip('/')}"
-        code, stdout, stderr = await self.exec(
-            name,
-            "sh",
-            [
-                "-c",
-                f'ls -la --time-style=long-iso {guest_path!s} 2>/dev/null || ls -la {guest_path!s}',
-            ],
+        """List one directory under the guest workspace (relative paths, no . / ..)."""
+        guest_path = normalize_guest_path(path)
+        q = shlex_quote(guest_path)
+        # Prefer GNU find -printf; fall back to ls -1A (never emits . / ..).
+        script = (
+            f"if [ ! -e {q} ]; then exit 2; fi; "
+            f"if [ ! -d {q} ]; then exit 3; fi; "
+            f'if find {q} -maxdepth 1 -mindepth 1 -printf "%y\\t%s\\t%f\\n" 2>/dev/null; then '
+            f":; "
+            f"else "
+            f"ls -1A {q} | while IFS= read -r n; do "
+            f'[ -z "$n" ] && continue; '
+            f'p={q}/"$n"; '
+            f'if [ -d "$p" ]; then t=d; else t=f; fi; '
+            f's=$(stat -c %s "$p" 2>/dev/null || wc -c <"$p" 2>/dev/null || echo 0); '
+            f'printf "%s\\t%s\\t%s\\n" "$t" "$s" "$n"; '
+            f"done; "
+            f"fi"
         )
+        code, stdout, stderr = await self.exec(name, "sh", ["-c", script])
+        if code == 2:
+            raise FileNotFoundError(path)
+        if code == 3:
+            raise NotADirectoryError(path)
         if code != 0:
             raise FileNotFoundError(stderr or path)
+
         entries: list[dict[str, Any]] = []
-        for line in stdout.splitlines()[1:]:
-            parts = line.split(maxsplit=7)
-            if len(parts) < 8:
+        for line in stdout.splitlines():
+            line = line.rstrip("\n")
+            if not line:
                 continue
-            name_part = parts[7]
-            is_dir = parts[0].startswith("d")
-            size = int(parts[4]) if parts[4].isdigit() else None
+            parts = line.split("\t", 2)
+            if len(parts) != 3:
+                continue
+            ftype, size_s, name_part = parts
+            if not name_part or name_part in (".", ".."):
+                continue
+            is_dir = ftype.startswith("d")
+            size: int | None
+            try:
+                size = int(str(size_s).strip()) if not is_dir else None
+            except ValueError:
+                size = None
             entries.append(
                 {
-                    "path": f"{path.rstrip('/')}/{name_part}".lstrip("/"),
+                    "path": guest_entry_relpath(guest_path, name_part),
                     "name": name_part,
                     "is_dir": is_dir,
                     "size": size,
@@ -672,7 +890,7 @@ class MicrosandboxBackend(SandboxBackend):
 
     async def read_fs(self, name: str, path: str) -> bytes:
         sb = await self._connect(name)
-        guest_path = path if path.startswith("/") else f"/workspace/{path.lstrip('/')}"
+        guest_path = normalize_guest_path(path, allow_tmp=True)
         if hasattr(sb, "fs"):
             data = await sb.fs.read(guest_path)
             return bytes(data)
@@ -683,7 +901,7 @@ class MicrosandboxBackend(SandboxBackend):
 
     async def write_fs(self, name: str, path: str, content: bytes) -> None:
         sb = await self._connect(name)
-        guest_path = path if path.startswith("/") else f"/workspace/{path.lstrip('/')}"
+        guest_path = normalize_guest_path(path, allow_tmp=True)
         if hasattr(sb, "fs"):
             await sb.fs.write(guest_path, content)
             return
@@ -691,10 +909,11 @@ class MicrosandboxBackend(SandboxBackend):
         import base64
 
         b64 = base64.b64encode(content).decode("ascii")
+        q = shlex_quote(guest_path)
         code, _, stderr = await self.exec(
             name,
             "sh",
-            ["-c", f'mkdir -p "$(dirname "{guest_path}")" && echo {b64} | base64 -d > "{guest_path}"'],
+            ["-c", f"mkdir -p \"$(dirname {q})\" && echo {b64} | base64 -d > {q}"],
         )
         if code != 0:
             raise RuntimeError(stderr or "write failed")
@@ -729,6 +948,20 @@ class MicrosandboxBackend(SandboxBackend):
         rec.harnesses = list(dict.fromkeys([*rec.harnesses, *harnesses]))
         self._meta[name] = rec
         return rec
+
+    async def shell_session(
+        self,
+        name: str,
+        websocket: Any,
+        *,
+        cmd: str | None = None,
+        cwd: str = "/workspace",
+    ) -> None:
+        from app.shell_ws import run_microsandbox_shell
+
+        sb = await self._connect(name)
+        workdir = cwd or "/workspace"
+        await run_microsandbox_shell(sb, websocket, cmd=cmd, cwd=workdir)
 
 
 def shlex_quote(s: str) -> str:

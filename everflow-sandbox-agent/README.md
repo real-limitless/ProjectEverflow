@@ -10,6 +10,33 @@ Internal control plane for [microsandbox](https://agentsandbox.dev/) microVMs.
 - Exec + filesystem access inside microVMs
 - Bootstrap agent harnesses (Claude Code, OpenCode)
 
+## Fast create (ready ≠ harnesses installed)
+
+`POST /v1/sandboxes` returns **as soon as the microVM is up** (`status=running`).  
+Agent harness install runs **in the background** only when tools are missing from the guest image.
+
+- Terminal / FS work immediately after create.
+- Soft-fail bootstrap leaves the sandbox running.
+- Mount strategy: set `VOLUME_STRATEGY=named-volume|bind|no-volumes|auto` (default `auto` caches the last successful strategy in-process).
+
+## Guest image vs agent image
+
+| Image | Dockerfile | Role |
+|-------|------------|------|
+| **Agent host** | `deploy/sandbox-agent.Dockerfile` | Runs `msb` + this FastAPI service |
+| **Project guest** | `deploy/sandbox-guest.Dockerfile` | Root FS for each project microVM |
+
+**Recommended:** prebake harnesses into the guest image:
+
+```bash
+./deploy/build-sandbox-guest.sh
+export SANDBOX_DEFAULT_IMAGE=everflow-sandbox-guest:dev   # or a registry ref
+```
+
+The guest image includes Node 22, `@anthropic-ai/claude-code`, and OpenCode CLI, plus `/etc/everflow/prebaked`. Bootstrap then only writes workspace markers.
+
+Stock images (`python`, `ubuntu:24.04`) still work; bootstrap will install tools on first use (slower, needs network).
+
 ## Local run (mock mode)
 
 Without KVM / microsandbox, mock mode stores sandboxes in memory:

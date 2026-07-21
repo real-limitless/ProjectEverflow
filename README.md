@@ -77,7 +77,20 @@ SANDBOX_MOCK=false
 SANDBOX_AGENT_TOKEN=your-long-secret
 ```
 
-Project create → backend provisions a detached sandbox via sandbox-agent → bootstrap installs **Claude Code** + **OpenCode** harness stubs (full CLIs when image/network allow).
+Project create → backend provisions a detached sandbox via sandbox-agent. Create returns once the microVM is up; harness install (if needed) runs in the background.
+
+### Prebaked guest image (recommended)
+
+Project sandboxes boot an **OCI guest image** (separate from the sandbox-agent host image). Bake Node + Claude Code + OpenCode into that image so tools are ready immediately:
+
+```bash
+./deploy/build-sandbox-guest.sh
+# optional: PUSH=true SANDBOX_GUEST_IMAGE=ghcr.io/you/everflow-sandbox-guest:latest ./deploy/build-sandbox-guest.sh
+```
+
+Set `SANDBOX_DEFAULT_IMAGE=everflow-sandbox-guest:dev` (default in `.env.example`). Microsandbox must be able to pull the tag (local store or registry). First boot may pull/cache the image once; later creates stay fast.
+
+See `deploy/sandbox-guest.Dockerfile` and `everflow-sandbox-agent/README.md`.
 
 ## Local development (without Compose)
 

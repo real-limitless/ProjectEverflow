@@ -17,10 +17,13 @@ class Settings(BaseSettings):
     sandbox_agent_token: str = "change-me"
     # Explicit true → mock. False/None → real microsandbox (fail if KVM/SDK missing).
     sandbox_mock: bool | None = False
-    # Prefer microsandbox-friendly defaults (docs use "python" / "debian")
-    default_image: str = "python"
+    # Guest microVM image (prebaked harnesses on GHCR)
+    default_image: str = "ghcr.io/real-limitless/everflow-sandbox-guest:dev"
     default_cpus: int = 2
     default_memory_mib: int = 2048
+    # Mount strategy for microVM workspace: named-volume | bind | no-volumes | auto
+    # auto tries strategies in order and caches the last success for this process.
+    volume_strategy: str = "auto"
     workspace_root: str = "/workspaces"
     host: str = "0.0.0.0"
     port: int = 8090

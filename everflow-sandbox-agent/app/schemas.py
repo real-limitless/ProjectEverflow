@@ -65,3 +65,19 @@ class HealthResponse(BaseModel):
     kvm: bool
     sdk: str
     mock: bool
+
+
+class OpenCodeEnsureRequest(BaseModel):
+    force_restart: bool = False
+
+
+class OpenCodeEnsureResponse(BaseModel):
+    sandbox_name: str
+    healthy: bool
+    port: int | None = None
+    base_url: str | None = None
+    version: str | None = None
+    mode: str | None = None
+    pid: int | None = None
+    workspace: str | None = None
+    error: str | None = None

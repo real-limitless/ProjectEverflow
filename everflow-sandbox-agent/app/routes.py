@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+import logging
+from pathlib import Path
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, status
 from fastapi.responses import PlainTextResponse
+from starlette.websockets import WebSocketDisconnect
 
 from app.auth import require_agent_token
 from app.config import Settings, get_settings
 from app.msb import SandboxBackend
+from app.opencode_mgr import get_opencode_manager
+from app.opencode_proxy import proxy_to_opencode, proxy_to_opencode_guest
 from app.schemas import (
     BootstrapRequest,
     ExecRequest,
@@ -17,10 +22,13 @@ from app.schemas import (
     FsEntry,
     FsWriteRequest,
     HealthResponse,
+    OpenCodeEnsureRequest,
+    OpenCodeEnsureResponse,
     SandboxCreateRequest,
     SandboxInfo,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -45,6 +53,49 @@ def _to_info(rec) -> SandboxInfo:  # noqa: ANN001
 async def health(backend: Annotated[SandboxBackend, Depends(get_backend)]) -> HealthResponse:
     data = await backend.health()
     return HealthResponse(**data)
+
+
+@router.websocket("/v1/sandboxes/{name}/shell")
+async def sandbox_shell_ws(
+    websocket: WebSocket,
+    name: str,
+    token: str = Query(default=""),
+    cmd: str | None = Query(default=None),
+    cwd: str = Query(default="/workspace"),
+) -> None:
+    """
+    Interactive PTY session (for opencode, bash, etc.).
+
+    Auth: ?token=<SANDBOX_AGENT_TOKEN>
+    Frames (JSON): see app/shell_ws.py
+    """
+    settings = get_settings()
+    await websocket.accept()
+    if token != settings.sandbox_agent_token:
+        await websocket.send_json({"type": "error", "message": "Invalid agent token"})
+        await websocket.close(code=4403)
+        return
+
+    backend: SandboxBackend = websocket.app.state.backend  # type: ignore[assignment]
+    try:
+        await backend.shell_session(name, websocket, cmd=cmd, cwd=cwd or "/workspace")
+    except KeyError:
+        await websocket.send_json({"type": "error", "message": "Sandbox not found"})
+    except RuntimeError as exc:
+        await websocket.send_json({"type": "error", "message": str(exc)})
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("shell_ws failed name=%s", name)
+        try:
+            await websocket.send_json({"type": "error", "message": str(exc)})
+        except Exception:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @router.post(
@@ -145,6 +196,10 @@ async def remove_sandbox(
     backend: Annotated[SandboxBackend, Depends(get_backend)],
 ) -> None:
     """Idempotent remove: missing sandbox still returns 204 (recreate-friendly)."""
+    try:
+        await get_opencode_manager().stop(name)
+    except Exception:  # noqa: BLE001
+        logger.debug("opencode stop on remove ignored name=%s", name)
     try:
         await backend.remove(name)
     except KeyError:
@@ -261,3 +316,108 @@ async def write_fs(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found") from None
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+
+async def _require_running_sandbox(
+    name: str,
+    backend: SandboxBackend,
+) -> Any:
+    rec = await backend.get(name)
+    if rec is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found")
+    if rec.status != "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Sandbox is not running (status={rec.status})",
+        )
+    return rec
+
+
+@router.post(
+    "/v1/sandboxes/{name}/opencode/ensure",
+    response_model=OpenCodeEnsureResponse,
+    dependencies=[Depends(require_agent_token)],
+)
+async def opencode_ensure(
+    name: str,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+    body: OpenCodeEnsureRequest | None = None,
+) -> OpenCodeEnsureResponse:
+    """Start (or reuse) opencode serve for this sandbox workspace."""
+    rec = await _require_running_sandbox(name, backend)
+    mgr = get_opencode_manager()
+    force = bool(body.force_restart) if body else False
+    workspace = rec.workspace_path or ""
+
+    try:
+        # Host path available → run OpenCode as host process against workspace
+        if workspace and not workspace.startswith("named:") and workspace != "(guest-only)":
+            ws_path = Path(workspace)
+            if ws_path.is_dir():
+                status_dict = await mgr.ensure_host(name, str(ws_path), force_restart=force)
+                return OpenCodeEnsureResponse(**status_dict)
+
+        # Guest-only: start inside VM (proxy may be limited)
+        status_dict = await mgr.ensure_guest_via_exec(
+            name,
+            exec_fn=backend.exec,
+            workspace_guest="/workspace",
+        )
+        return OpenCodeEnsureResponse(**status_dict)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found") from None
+
+
+@router.api_route(
+    "/v1/sandboxes/{name}/opencode",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    dependencies=[Depends(require_agent_token)],
+)
+@router.api_route(
+    "/v1/sandboxes/{name}/opencode/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    dependencies=[Depends(require_agent_token)],
+)
+async def opencode_proxy(
+    name: str,
+    request: Request,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+    path: str = "",
+) -> Response:
+    """Reverse-proxy to the sandbox's OpenCode HTTP server (SSE-safe on host mode)."""
+    await _require_running_sandbox(name, backend)
+    mgr = get_opencode_manager()
+    inst = mgr.get(name)
+
+    if not inst:
+        # Auto-ensure once if not started
+        try:
+            await opencode_ensure(name, backend, OpenCodeEnsureRequest())
+        except HTTPException:
+            raise
+        inst = mgr.get(name)
+
+    if inst and inst.mode == "guest":
+        # MicroVM: OpenCode is on guest loopback — proxy via in-guest HTTP client
+        return await proxy_to_opencode_guest(
+            request,
+            exec_fn=backend.exec,
+            sandbox_name=name,
+            path=path or "",
+            port=inst.port or 4096,
+            cwd="/workspace",
+        )
+
+    base = mgr.base_url(name)
+    if not base:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "OpenCode is not running for this sandbox. Call /opencode/ensure first. "
+                f"(instance={inst.mode if inst else None})"
+            ),
+        )
+
+    return await proxy_to_opencode(request, base_url=base, path=path or "")
