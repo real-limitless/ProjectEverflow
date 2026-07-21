@@ -44,6 +44,14 @@ export interface WebSearchResult {
   snippet: string
 }
 
+export interface ChatPermissionRequest {
+  id: string
+  title: string
+  detail?: string
+  patterns?: string[]
+  status?: 'pending' | 'resolved'
+}
+
 export interface ChatBlock {
   type:
     | 'text'
@@ -54,6 +62,7 @@ export interface ChatBlock {
     | 'web_search'
     | 'tool'
     | 'question'
+    | 'permission'
   text?: string
   language?: string
   imageUrl?: string
@@ -63,6 +72,7 @@ export interface ChatBlock {
   webSearch?: { query: string; results: WebSearchResult[] }
   tool?: { title: string; body: string; status?: 'done' | 'running' | 'error' }
   options?: string[]
+  permission?: ChatPermissionRequest
 }
 
 export interface ChatMessageMetrics {
@@ -101,6 +111,8 @@ export interface ChatConversation {
   messages: ChatMessage[]
   metrics: ConversationMetrics
   chatMode: ChatMode
+  /** demo = local showcase; opencode = sandbox OpenCode session */
+  source?: 'demo' | 'opencode'
 }
 
 export interface PanelInstanceState {

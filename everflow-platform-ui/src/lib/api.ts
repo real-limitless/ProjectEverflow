@@ -335,4 +335,20 @@ export async function ensureOrg(email: string): Promise<Org> {
   throw new ApiError(409, 'Could not create organization')
 }
 
+/**
+ * WebSocket URL for interactive sandbox PTY shell.
+ * Browser connects here only (JWT in query) — never to sandbox-agent.
+ */
+export function sandboxShellWsUrl(
+  projectId: string,
+  opts?: { cmd?: string; cwd?: string },
+): string {
+  const token = getAccessToken() || ''
+  const base = API_BASE.replace(/^http/, 'ws').replace(/\/$/, '')
+  const q = new URLSearchParams({ token })
+  if (opts?.cmd) q.set('cmd', opts.cmd)
+  if (opts?.cwd) q.set('cwd', opts.cwd)
+  return `${base}/api/v1/projects/${projectId}/sandbox/shell?${q}`
+}
+
 export { API_BASE }

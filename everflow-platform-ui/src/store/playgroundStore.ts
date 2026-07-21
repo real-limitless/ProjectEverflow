@@ -73,7 +73,6 @@ import {
   type ApiProject,
 } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
-import { waitForSandbox } from '@/lib/sandboxPoll'
 import { pushToast } from '@/lib/studioToast'
 
 interface PlaygroundState {
@@ -891,29 +890,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     })
     get().persist()
 
-    // Poll sandbox for API projects (non-blocking)
-    if (project.fromApi) {
-      const pid = project.id
-      void waitForSandbox(pid, {
-        onUpdate: (st) => {
-          get().patchProjectSandbox(pid, {
-            sandboxStatus: st.status,
-            sandboxName: st.sandbox_name,
-            sandboxError: st.error,
-            sandboxImage: st.image,
-            sandboxCreatedAt: st.created_at,
-          })
-        },
-      }).then((st) => {
-        if (st.status === 'running') {
-          pushToast('Sandbox ready', { kind: 'success' })
-        } else if (st.status === 'error') {
-          pushToast(st.error || 'Sandbox failed to start', { kind: 'danger' })
-        }
-      }).catch(() => {
-        /* ignore poll errors */
-      })
-    }
+    // API projects open into SandboxBootGate (PlaygroundPage) which owns
+    // ensure/poll until sandbox_status === running. Do not mount workbench early.
 
     return project.id
   },

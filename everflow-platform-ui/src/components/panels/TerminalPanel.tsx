@@ -1,26 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Label, Spinner } from '@patternfly/react-core'
 import { getProject } from '@/data/projects'
 import {
   ApiError,
-  execShellLine,
   getSandboxStatus,
   recreateSandbox,
 } from '@/lib/api'
 import { waitForSandbox } from '@/lib/sandboxPoll'
 import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
+import {
+  InteractiveSandboxTerminal,
+  type InteractiveTerminalHandle,
+} from './InteractiveSandboxTerminal'
 import { SandboxXterm, type SandboxXtermHandle } from './SandboxXterm'
 
 type SessionMeta = {
   id: string
   name: string
+  /** If set, WS launches this command instead of an interactive shell. */
+  cmd?: string
 }
 
-function newSessionMeta(index: number): SessionMeta {
+function newSessionMeta(index: number, cmd?: string): SessionMeta {
   return {
     id: `sh-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 5)}`,
-    name: index === 0 ? 'bash' : `shell-${index + 1}`,
+    name: cmd ? cmd.split(/\s+/)[0] || `shell-${index + 1}` : index === 0 ? 'shell' : `shell-${index + 1}`,
+    cmd,
   }
 }
 
@@ -33,56 +39,11 @@ const STATUS_COLOR: Record<string, 'blue' | 'green' | 'orange' | 'red' | 'grey' 
   destroyed: 'grey',
 }
 
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\"'\"'`)}'`
-}
-
-async function execShellLineWithSignal(
-  projectId: string,
-  line: string,
-  signal: AbortSignal,
-  cwd: string,
-): Promise<{ stdout: string; stderr: string; exit_code: number }> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'))
-      return
-    }
-    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'))
-    signal.addEventListener('abort', onAbort, { once: true })
-    void execShellLine(projectId, line, { cwd, timeout_seconds: 120 })
-      .then((r) => {
-        signal.removeEventListener('abort', onAbort)
-        resolve(r)
-      })
-      .catch((e) => {
-        signal.removeEventListener('abort', onAbort)
-        reject(e)
-      })
-  })
-}
-
-function formatOutput(result: {
-  stdout: string
-  stderr: string
-  exit_code: number
-}): string {
-  let out = ''
-  if (result.stdout) {
-    const s = result.stdout.replace(/\r\n/g, '\n')
-    out += s.endsWith('\n') ? s : s + '\n'
-  }
-  if (result.stderr) {
-    const s = result.stderr.replace(/\r\n/g, '\n')
-    const body = s.endsWith('\n') ? s : s + '\n'
-    out += `\x1b[31m${body}\x1b[0m`
-  }
-  if (result.exit_code !== 0) {
-    out += `\x1b[90mexit ${result.exit_code}\x1b[0m\n`
-  }
-  return out.replace(/\n/g, '\r\n')
-}
-
+/**
+ * Terminal panel:
+ * - API projects → interactive PTY WebSocket (opencode, bash, etc.)
+ * - Local demo projects → line-mode xterm (no remote)
+ */
 export function TerminalPanel() {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
   const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
@@ -95,40 +56,41 @@ export function TerminalPanel() {
   const [sessions, setSessions] = useState<SessionMeta[]>(() => [newSessionMeta(0)])
   const [activeId, setActiveId] = useState(() => sessions[0]?.id ?? '')
   const [recreating, setRecreating] = useState(false)
-  const [cwdBySession, setCwdBySession] = useState<Record<string, string>>({})
-  const handlesRef = useRef<Record<string, SandboxXtermHandle | null>>({})
+  const [wsStatus, setWsStatus] = useState<string>('')
+  const handlesRef = useRef<Record<string, InteractiveTerminalHandle | SandboxXtermHandle | null>>(
+    {},
+  )
+  // Remount key when sandbox recreated so WS reconnects cleanly
+  const [sessionEpoch, setSessionEpoch] = useState(0)
 
   useEffect(() => {
     const first = newSessionMeta(0)
     setSessions([first])
     setActiveId(first.id)
-    setCwdBySession({})
     handlesRef.current = {}
+    setSessionEpoch((e) => e + 1)
   }, [currentProjectId])
 
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
   const status = p?.sandboxStatus || 'unknown'
-  const sandboxReady = Boolean(p?.fromApi && status === 'running')
+  // UUID project ids from the API must use interactive PTY (not line-mode demo).
+  const looksLikeApiId =
+    Boolean(currentProjectId) &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      currentProjectId || '',
+    )
+  const isApiProject = Boolean(p?.fromApi) || looksLikeApiId
+  const sandboxReady = Boolean(isApiProject && status === 'running')
   const needsRecreate =
-    Boolean(p?.fromApi) &&
+    isApiProject &&
     (status === 'error' ||
       status === 'destroyed' ||
       (status !== 'running' &&
         status !== 'pending' &&
         status !== 'creating' &&
-        status !== 'stopped'))
+        status !== 'stopped' &&
+        status !== 'unknown'))
   const provisioning = status === 'pending' || status === 'creating'
-  const slug = p?.slug || p?.name || 'project'
-  const cwd = (active && cwdBySession[active.id]) || '/workspace'
-
-  const prompt = useMemo(() => {
-    const shortCwd =
-      cwd === '/workspace' || cwd === '/workspace/'
-        ? '~'
-        : cwd.replace(/^\/workspace\/?/, '~/') || '~'
-    return `sandbox@${slug}:${shortCwd}$ `
-  }, [slug, cwd])
-
   const syncStatus = useCallback(async () => {
     if (!p?.fromApi || !currentProjectId) return
     try {
@@ -148,15 +110,19 @@ export function TerminalPanel() {
   useEffect(() => {
     if (!p?.fromApi || !currentProjectId) return
     void syncStatus()
-    const id = window.setInterval(() => void syncStatus(), 3000)
+    const id = window.setInterval(() => void syncStatus(), 5000)
     return () => window.clearInterval(id)
   }, [p?.fromApi, currentProjectId, syncStatus])
 
+  // Agents panel: send command into interactive shell (or open dedicated session)
   useEffect(() => {
     if (!prefill || !active) return
     const h = handlesRef.current[active.id]
-    if (h) {
-      h.setLine(prefill)
+    if (h && 'sendLine' in h && typeof h.sendLine === 'function') {
+      h.sendLine(prefill)
+      h.focus()
+    } else if (h && 'setLine' in h) {
+      ;(h as SandboxXtermHandle).setLine(prefill)
       h.focus()
     }
     clearTerminalPrefill()
@@ -165,8 +131,6 @@ export function TerminalPanel() {
   const doRecreate = async () => {
     if (!p?.fromApi || !currentProjectId || recreating) return
     setRecreating(true)
-    const h = active ? handlesRef.current[active.id] : null
-    h?.write('\r\n\x1b[33mrecreating sandbox…\x1b[0m\r\n')
     try {
       await recreateSandbox(currentProjectId)
       patchProjectSandbox(currentProjectId, {
@@ -186,115 +150,21 @@ export function TerminalPanel() {
       })
       if (st.status === 'running') {
         pushToast('Sandbox recreated', { kind: 'success' })
-        h?.writeln('\x1b[32msandbox ready\x1b[0m')
+        setSessionEpoch((e) => e + 1)
       } else {
         pushToast(st.error || 'Sandbox recreate failed', { kind: 'danger' })
-        h?.writeln(`\x1b[31m${st.error || 'recreate failed'}\x1b[0m`)
       }
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'recreate failed'
-      pushToast(msg, { kind: 'danger' })
-      h?.writeln(`\x1b[31m${msg}\x1b[0m`)
+      pushToast(e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'recreate failed', {
+        kind: 'danger',
+      })
     } finally {
       setRecreating(false)
     }
   }
 
-  const makeOnCommand = useCallback(
-    (sessionId: string) => {
-      return async (line: string, signal: AbortSignal) => {
-        const write = (text: string) => {
-          handlesRef.current[sessionId]?.write(text)
-        }
-
-        if (!p?.fromApi) {
-          write(`\x1b[90mdemo: would run \`${line}\` in sandbox\x1b[0m\r\n`)
-          return
-        }
-
-        await syncStatus()
-        if (signal.aborted) return
-        const latest = getProject(currentProjectId)
-        if (latest?.sandboxStatus !== 'running') {
-          const msg =
-            latest?.sandboxError ||
-            `sandbox not ready (status=${latest?.sandboxStatus || 'unknown'}). Use Recreate if missing.`
-          write(`\x1b[31m${msg}\x1b[0m\r\n`)
-          return
-        }
-
-        const sessionCwd = cwdBySession[sessionId] || '/workspace'
-        const trimmed = line.trim()
-
-        // Client-side cd for prompt / cwd passthrough
-        if (trimmed === 'cd' || trimmed.startsWith('cd ')) {
-          const arg = trimmed === 'cd' ? '/workspace' : trimmed.slice(3).trim() || '/workspace'
-          let next = arg
-          if (arg === '~' || arg === '') next = '/workspace'
-          else if (arg.startsWith('/')) next = arg
-          else if (arg === '..') {
-            const parts = sessionCwd.split('/').filter(Boolean)
-            parts.pop()
-            next = parts.length ? `/${parts.join('/')}` : '/workspace'
-          } else {
-            next = `${sessionCwd.replace(/\/$/, '')}/${arg}`
-          }
-          try {
-            const check = await execShellLineWithSignal(
-              p.id,
-              `test -d ${shellQuote(next)}`,
-              signal,
-              sessionCwd,
-            )
-            if (signal.aborted) return
-            if (check.exit_code === 0) {
-              setCwdBySession((m) => ({ ...m, [sessionId]: next }))
-            } else {
-              write(`\x1b[31mcd: no such directory: ${arg}\x1b[0m\r\n`)
-            }
-          } catch (e) {
-            if (signal.aborted) return
-            write(`\x1b[31m${e instanceof Error ? e.message : String(e)}\x1b[0m\r\n`)
-          }
-          return
-        }
-
-        try {
-          const result = await execShellLineWithSignal(p.id, line, signal, sessionCwd)
-          if (signal.aborted) return
-          write(formatOutput(result))
-        } catch (e) {
-          if (signal.aborted) return
-          const msg =
-            e instanceof ApiError
-              ? e.message
-              : e instanceof Error
-                ? e.message
-                : 'exec failed'
-          const missing =
-            e instanceof ApiError &&
-            (e.status === 404 ||
-              e.status === 409 ||
-              /not found on agent|recreate/i.test(msg))
-          if (missing && currentProjectId) {
-            patchProjectSandbox(currentProjectId, {
-              sandboxStatus: 'error',
-              sandboxError: msg,
-            })
-            write(
-              `\x1b[31m${msg}\x1b[0m\r\n\x1b[90mSandbox missing — use Recreate sandbox above.\x1b[0m\r\n`,
-            )
-          } else {
-            write(`\x1b[31m${msg}\x1b[0m\r\n`)
-          }
-        }
-      }
-    },
-    [p, currentProjectId, cwdBySession, syncStatus, patchProjectSandbox],
-  )
-
-  const addSession = () => {
-    const s = newSessionMeta(sessions.length)
+  const addSession = (cmd?: string) => {
+    const s = newSessionMeta(sessions.length, cmd)
     setSessions((prev) => [...prev, s])
     setActiveId(s.id)
   }
@@ -314,22 +184,8 @@ export function TerminalPanel() {
     handlesRef.current[active.id]?.clear()
   }
 
-  const inputEnabled = !recreating && (p?.fromApi ? sandboxReady : true)
-
-  const welcome = useMemo(() => {
-    const lines = [
-      '\x1b[90mEverflow sandbox terminal · xterm.js\x1b[0m',
-      p?.fromApi
-        ? `\x1b[90m${p.name} · ${p.sandboxName || 'sandbox'} · ${status}\x1b[0m`
-        : '\x1b[90mlocal demo — commands are not run on a remote sandbox\x1b[0m',
-    ]
-    if (p?.fromApi && !sandboxReady) {
-      lines.push(
-        `\x1b[33mwaiting for sandbox (${status})${p.sandboxError ? `: ${p.sandboxError}` : ''}\x1b[0m`,
-      )
-    }
-    return lines
-  }, [p, status, sandboxReady])
+  const useInteractive = Boolean(isApiProject && currentProjectId)
+  const inputEnabled = !recreating && (isApiProject ? sandboxReady : true)
 
   return (
     <div className="term-wrap term-wrap--xterm">
@@ -337,10 +193,15 @@ export function TerminalPanel() {
         <span>
           sandbox · {p?.name || '—'}
           {p?.fromApi ? ` · ${p.sandboxName || 'unprovisioned'}` : ''} ·{' '}
-          {sessions.length} shell{sessions.length === 1 ? '' : 's'}
+          {sessions.length} session{sessions.length === 1 ? '' : 's'}
+          {wsStatus ? ` · ${wsStatus}` : ''}
         </span>
-        {p?.fromApi ? (
-          <Label color={STATUS_COLOR[status] || 'grey'} isCompact title={p.sandboxError || status}>
+        {isApiProject ? (
+          <Label
+            color={STATUS_COLOR[status] || 'grey'}
+            isCompact
+            title={p?.sandboxError || status}
+          >
             {status}
           </Label>
         ) : (
@@ -348,18 +209,36 @@ export function TerminalPanel() {
             local demo
           </Label>
         )}
+        <Label color={useInteractive && sandboxReady ? 'green' : 'grey'} isCompact>
+          {useInteractive && sandboxReady ? 'pty' : useInteractive ? 'wait' : 'line'}
+        </Label>
         <Button variant="link" size="sm" onClick={clearActive}>
           Clear
         </Button>
+        {useInteractive && sandboxReady ? (
+          <Button variant="link" size="sm" onClick={() => addSession('opencode')}>
+            + opencode
+          </Button>
+        ) : null}
+        {useInteractive && sandboxReady ? (
+          <Button
+            variant="link"
+            size="sm"
+            onClick={() => setSessionEpoch((e) => e + 1)}
+            title="Reconnect interactive shell"
+          >
+            Reconnect
+          </Button>
+        ) : null}
       </div>
 
-      {p?.fromApi && provisioning ? (
+      {isApiProject && provisioning ? (
         <div className="term-banner term-banner--info">
           <Spinner size="sm" aria-label="Provisioning" /> Provisioning sandbox…
         </div>
       ) : null}
 
-      {p?.fromApi && status === 'stopped' ? (
+      {isApiProject && status === 'stopped' ? (
         <div className="term-banner term-banner--warn">
           Sandbox is stopped.{' '}
           <Button variant="link" isInline size="sm" onClick={() => void doRecreate()} isLoading={recreating}>
@@ -368,14 +247,18 @@ export function TerminalPanel() {
         </div>
       ) : null}
 
-      {p?.fromApi && (needsRecreate || (status === 'error' && !provisioning)) ? (
+      {isApiProject && (needsRecreate || (status === 'error' && !provisioning)) ? (
         <div className="term-banner term-banner--error">
-          <span>
-            {p.sandboxError || 'Sandbox unavailable on agent.'} Recreate to continue.
-          </span>
+          <span>{p?.sandboxError || 'Sandbox unavailable.'} Recreate to continue.</span>
           <Button variant="primary" size="sm" onClick={() => void doRecreate()} isLoading={recreating}>
             Recreate sandbox
           </Button>
+        </div>
+      ) : null}
+
+      {useInteractive && !sandboxReady && !provisioning && status !== 'error' ? (
+        <div className="term-banner term-banner--warn">
+          Waiting for sandbox to be running before opening interactive shell…
         </div>
       ) : null}
 
@@ -388,7 +271,11 @@ export function TerminalPanel() {
             aria-selected={s.id === active?.id}
             onClick={() => {
               setActiveId(s.id)
-              requestAnimationFrame(() => handlesRef.current[s.id]?.focus())
+              requestAnimationFrame(() => {
+                const h = handlesRef.current[s.id]
+                h?.focus()
+                if (h && 'fit' in h && typeof h.fit === 'function') h.fit()
+              })
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') setActiveId(s.id)
@@ -411,7 +298,7 @@ export function TerminalPanel() {
             )}
           </div>
         ))}
-        <Button variant="plain" size="sm" onClick={addSession} aria-label="New shell">
+        <Button variant="plain" size="sm" onClick={() => addSession()} aria-label="New shell">
           +
         </Button>
       </div>
@@ -419,19 +306,45 @@ export function TerminalPanel() {
       <div className="term-xterm-stack">
         {sessions.map((s) => (
           <div
-            key={s.id}
+            key={`${s.id}-${sessionEpoch}`}
             className={`term-xterm-pane${s.id === active?.id ? ' is-active' : ''}`}
             hidden={s.id !== active?.id}
           >
-            <SandboxXterm
-              prompt={s.id === active?.id ? prompt : `sandbox@${slug}:~$ `}
-              enabled={inputEnabled && s.id === active?.id}
-              welcomeLines={s.id === sessions[0]?.id ? welcome : ['\x1b[90mnew shell\x1b[0m']}
-              onCommand={makeOnCommand(s.id)}
-              onReady={(h) => {
-                handlesRef.current[s.id] = h
-              }}
-            />
+            {useInteractive && currentProjectId && sandboxReady ? (
+              <InteractiveSandboxTerminal
+                projectId={currentProjectId}
+                cmd={s.cmd}
+                cwd="/workspace"
+                enabled={inputEnabled && s.id === active?.id}
+                onReady={(h) => {
+                  handlesRef.current[s.id] = h
+                }}
+                onStatus={(st, detail) => {
+                  if (s.id === active?.id) setWsStatus(detail ? `${st}: ${detail}` : st)
+                }}
+              />
+            ) : useInteractive && currentProjectId ? (
+              <div className="term-waiting">
+                <Spinner size="lg" />
+                <p>Sandbox must be running for interactive shell.</p>
+              </div>
+            ) : (
+              <SandboxXterm
+                prompt={`demo@${p?.slug || 'local'}:~$ `}
+                enabled={s.id === active?.id}
+                welcomeLines={[
+                  '\x1b[90mLocal demo terminal (line mode)\x1b[0m',
+                  '\x1b[90mAPI projects use interactive PTY for opencode etc.\x1b[0m',
+                ]}
+                onCommand={async (line) => {
+                  const h = handlesRef.current[s.id] as SandboxXtermHandle | undefined
+                  h?.write(`\x1b[90mdemo: would run \`${line}\`\x1b[0m\r\n`)
+                }}
+                onReady={(h) => {
+                  handlesRef.current[s.id] = h
+                }}
+              />
+            )}
           </div>
         ))}
       </div>

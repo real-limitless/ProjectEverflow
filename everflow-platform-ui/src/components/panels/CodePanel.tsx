@@ -125,22 +125,57 @@ function TreeRows({
   )
 }
 
+const FS_MAX_DEPTH = 12
+const FS_MAX_FILES = 2000
+
+/** Normalize a workspace-relative path from the sandbox agent (no leading ./). */
+function cleanFsPath(path: string, dir: string, name: string): string {
+  let raw = (path || '').replace(/^\.\//, '').replace(/\/+$/, '')
+  if (!raw || raw === '.') {
+    raw = dir && dir !== '.' ? `${dir.replace(/^\.\//, '')}/${name}` : name
+  }
+  return raw.replace(/^\.\//, '').replace(/\/+/g, '/')
+}
+
+/**
+ * Recursively list sandbox workspace files under `dir`.
+ * Skips `.` / `..` / `.everflow`, guards cycles, and caps depth/size.
+ */
 async function collectRemoteTree(
   projectId: string,
-  dir: string,
+  dir = '.',
   acc: ProjectFile[] = [],
-): Promise<ProjectFile[]> {
-  const entries = await listSandboxFs(projectId, dir || '.')
+  visited: Set<string> = new Set(),
+  depth = 0,
+): Promise<{ files: ProjectFile[]; truncated: boolean }> {
+  if (depth > FS_MAX_DEPTH || acc.length >= FS_MAX_FILES) {
+    return { files: acc, truncated: true }
+  }
+  const listKey = dir || '.'
+  if (visited.has(listKey)) {
+    return { files: acc, truncated: false }
+  }
+  visited.add(listKey)
+
+  const entries = await listSandboxFs(projectId, listKey)
+  let truncated = false
   for (const e of entries) {
-    if (e.name === '.everflow' || e.name.startsWith('.')) {
-      // still allow listing non-hidden; skip .everflow bulk
-      if (e.name === '.everflow') continue
+    if (acc.length >= FS_MAX_FILES) {
+      truncated = true
+      break
     }
-    const path = e.path.includes('/') || dir === '.' || !dir ? e.path : `${dir}/${e.name}`
-    const clean = path.replace(/^\.\//, '')
+    if (!e.name || e.name === '.' || e.name === '..' || e.name === '.everflow') {
+      continue
+    }
+    const clean = cleanFsPath(e.path, listKey, e.name)
+    if (!clean || clean === '.' || clean === '..' || visited.has(`f:${clean}`)) {
+      continue
+    }
     if (e.is_dir) {
-      await collectRemoteTree(projectId, clean, acc)
+      const nested = await collectRemoteTree(projectId, clean, acc, visited, depth + 1)
+      if (nested.truncated) truncated = true
     } else {
+      visited.add(`f:${clean}`)
       acc.push({
         path: clean,
         name: e.name,
@@ -148,7 +183,7 @@ async function collectRemoteTree(
       })
     }
   }
-  return acc
+  return { files: acc, truncated }
 }
 
 export function CodePanel({ panelKey }: CodePanelProps) {
@@ -169,41 +204,58 @@ export function CodePanel({ panelKey }: CodePanelProps) {
 
   const [loadingFs, setLoadingFs] = useState(false)
   const [fsError, setFsError] = useState<string | null>(null)
+  const [fsLoaded, setFsLoaded] = useState(false)
+  const [fsTruncated, setFsTruncated] = useState(false)
   const [draft, setDraft] = useState('')
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editMode, setEditMode] = useState(fromApi)
 
   const refreshTree = useCallback(async () => {
-    if (!p?.fromApi || !currentProjectId || p.sandboxStatus !== 'running') return
+    if (!fromApi || !currentProjectId || !sandboxRunning) return
     setLoadingFs(true)
     setFsError(null)
     try {
-      const treeFiles = await collectRemoteTree(currentProjectId, '.')
-      const code: Record<string, string> = { ...(p.code || {}) }
-      // Prefetch small set of root files only; open loads on demand
-      for (const f of treeFiles.slice(0, 8)) {
+      const { files: treeFiles, truncated } = await collectRemoteTree(currentProjectId, '.')
+      setFsTruncated(truncated)
+      const existingCode = getProject(currentProjectId)?.code || {}
+      const code: Record<string, string> = { ...existingCode }
+      // Prefetch a small set of shallow files; open still loads on demand
+      const shallow = treeFiles.filter((f) => !f.path.includes('/')).slice(0, 8)
+      for (const f of shallow) {
         if (code[f.path] || code[f.name]) continue
         try {
           code[f.path] = await readSandboxFs(currentProjectId, f.path)
         } catch {
-          /* skip */
+          /* skip unreadable / binary */
         }
       }
+      // Prefer live sandbox listing over catalog seed once remote list succeeds
       updateProjectInCatalog(currentProjectId, { files: treeFiles, code })
       usePlaygroundStore.setState({
         catalogVersion: usePlaygroundStore.getState().catalogVersion + 1,
       })
+      setFsLoaded(true)
+      if (truncated) {
+        pushToast('Workspace tree truncated (too many files or too deep)', { kind: 'info' })
+      }
     } catch (e) {
       setFsError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'FS error')
+      setFsLoaded(false)
     } finally {
       setLoadingFs(false)
     }
-  }, [currentProjectId, p?.fromApi, p?.sandboxStatus, p?.code])
+    // Intentionally omit catalog `code` / `files` — updating them must not re-trigger refresh
+  }, [currentProjectId, fromApi, sandboxRunning])
 
   useEffect(() => {
+    if (!fromApi || !sandboxRunning) {
+      setFsLoaded(false)
+      setFsTruncated(false)
+      return
+    }
     void refreshTree()
-  }, [refreshTree])
+  }, [fromApi, sandboxRunning, currentProjectId, refreshTree])
 
   const changesByPath = useMemo(() => {
     const map = new Map<string, GitFileChange>()
@@ -355,8 +407,17 @@ export function CodePanel({ panelKey }: CodePanelProps) {
           ) : null}
         </div>
         {fsError ? <div className="code-fs-error">{fsError}</div> : null}
+        {fsTruncated ? (
+          <div className="code-fs-error">Tree truncated — open folders via Refresh after pruning</div>
+        ) : null}
         {fromApi && !sandboxRunning ? (
           <div className="code-empty-msg">Sandbox {p.sandboxStatus || 'pending'}…</div>
+        ) : fromApi && loadingFs && !fsLoaded && tree.length === 0 ? (
+          <div className="code-empty-msg">
+            <Spinner size="sm" /> Loading workspace…
+          </div>
+        ) : fromApi && fsLoaded && tree.length === 0 && !fsError ? (
+          <div className="code-empty-msg">Workspace is empty</div>
         ) : (
           <TreeRows
             nodes={tree}

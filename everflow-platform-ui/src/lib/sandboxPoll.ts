@@ -9,7 +9,8 @@ export async function waitForSandbox(
   },
 ): Promise<SandboxStatus> {
   const intervalMs = opts?.intervalMs ?? 2000
-  const timeoutMs = opts?.timeoutMs ?? 180_000
+  // Create returns once the microVM is up (~10s); harness install is deferred.
+  const timeoutMs = opts?.timeoutMs ?? 60_000
   const start = Date.now()
 
   // First hit immediately

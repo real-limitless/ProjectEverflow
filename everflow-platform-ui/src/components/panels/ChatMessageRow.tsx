@@ -15,6 +15,7 @@ interface ChatMessageRowProps {
   onRetry?: (messageId: string) => void
   onFork?: (messageId: string) => void
   onQuestionOption?: (option: string) => void
+  onPermission?: (permissionId: string, response: 'once' | 'always' | 'reject') => void
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -42,6 +43,7 @@ export function ChatMessageRow({
   onRetry,
   onFork,
   onQuestionOption,
+  onPermission,
 }: ChatMessageRowProps) {
   const isUser = message.role === 'user'
   const [editing, setEditing] = useState(false)
@@ -104,7 +106,11 @@ export function ChatMessageRow({
               </div>
             </div>
           ) : (
-            <ChatMessageContent message={message} onQuestionOption={onQuestionOption} />
+            <ChatMessageContent
+              message={message}
+              onQuestionOption={onQuestionOption}
+              onPermission={onPermission}
+            />
           )}
         </div>
         <div className="msg-actions">

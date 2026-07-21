@@ -6,14 +6,17 @@ import type { ChatBlock, ChatMessage } from '@/types/panels'
 interface ChatMessageContentProps {
   message: ChatMessage
   onQuestionOption?: (option: string) => void
+  onPermission?: (permissionId: string, response: 'once' | 'always' | 'reject') => void
 }
 
 function BlockView({
   block,
   onQuestionOption,
+  onPermission,
 }: {
   block: ChatBlock
   onQuestionOption?: (option: string) => void
+  onPermission?: (permissionId: string, response: 'once' | 'always' | 'reject') => void
 }) {
   switch (block.type) {
     case 'markdown':
@@ -116,6 +119,43 @@ function BlockView({
           <pre>{block.tool?.body}</pre>
         </div>
       )
+    case 'permission':
+      return (
+        <div className="tool-card permission-card">
+          <div className="tool-card-head">
+            <span>🔐 {block.permission?.title || 'Permission'}</span>
+            <span className={block.permission?.status === 'resolved' ? 'ok' : ''}>
+              {block.permission?.status === 'resolved' ? 'resolved' : 'needs approval'}
+            </span>
+          </div>
+          {block.permission?.detail ? <pre>{block.permission.detail}</pre> : null}
+          {block.permission?.status !== 'resolved' && block.permission?.id ? (
+            <div className="msg-question-options" style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                className="msg-question-chip"
+                onClick={() => onPermission?.(block.permission!.id, 'once')}
+              >
+                Once
+              </button>
+              <button
+                type="button"
+                className="msg-question-chip"
+                onClick={() => onPermission?.(block.permission!.id, 'always')}
+              >
+                Always
+              </button>
+              <button
+                type="button"
+                className="msg-question-chip"
+                onClick={() => onPermission?.(block.permission!.id, 'reject')}
+              >
+                Reject
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )
     default:
       return block.text ? <p className="msg-text">{block.text}</p> : null
   }
@@ -124,13 +164,19 @@ function BlockView({
 export function ChatMessageContent({
   message,
   onQuestionOption,
+  onPermission,
 }: ChatMessageContentProps) {
   if (message.blocks?.length) {
     return (
       <div className="msg-blocks">
         {message.thinking ? <div className="thinking">{message.thinking}</div> : null}
         {message.blocks.map((b, i) => (
-          <BlockView key={i} block={b} onQuestionOption={onQuestionOption} />
+          <BlockView
+            key={i}
+            block={b}
+            onQuestionOption={onQuestionOption}
+            onPermission={onPermission}
+          />
         ))}
       </div>
     )

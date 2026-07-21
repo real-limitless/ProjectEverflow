@@ -1118,11 +1118,18 @@
       font-family: var(--pg-mono);
     }
     .term-toolbar {
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: center; justify-content: flex-start;
+      flex-wrap: wrap; gap: 0.35rem;
       padding: 0.35rem 0.65rem;
       border-block-end: 1px solid var(--pf-t--global--border--color--default);
       font-size: 0.75rem; flex-shrink: 0;
       background: var(--pf-t--global--background--color--secondary--default);
+      color: var(--pf-t--global--text--color--regular);
+    }
+    .term-toolbar > span {
+      color: var(--pf-t--global--text--color--subtle);
+      margin-inline-end: auto;
+      min-width: 0;
     }
     .term-output {
       flex: 1; overflow: auto; padding: 0.65rem; font-size: 0.75rem;
@@ -1145,47 +1152,143 @@
       color: var(--pf-t--global--text--color--regular); font: inherit;
     }
 
-    /* xterm.js sandbox terminal */
+    /* xterm.js sandbox terminal — fill dock panel completely */
+    .panel-host > .term-wrap {
+      flex: 1 1 auto !important;
+      min-height: 0 !important;
+      min-width: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      max-height: 100%;
+      align-self: stretch;
+    }
     .term-wrap--xterm {
-      background: #1a1d21;
+      /* Chrome (toolbar/session) follows app theme; xterm body stays dark */
+      background: var(--pf-t--global--background--color--primary--default);
+      overflow: hidden;
+      width: 100%;
+      min-width: 0;
     }
     .term-wrap--xterm .term-toolbar {
-      background: #121417;
-      color: #c8c8c8;
-      border-block-end-color: #2a2f36;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      justify-content: flex-start;
+      padding: 0.35rem 0.65rem;
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      background: var(--pf-t--global--background--color--secondary--default);
+      color: var(--pf-t--global--text--color--regular);
+      border-block-end: 1px solid var(--pf-t--global--border--color--default);
+    }
+    .term-wrap--xterm .term-toolbar > span {
+      color: var(--pf-t--global--text--color--subtle);
+      margin-inline-end: auto;
+      min-width: 0;
+    }
+    .term-wrap--xterm .term-toolbar .pf-v6-c-button.pf-m-link {
+      color: var(--pf-t--global--text--color--link--default);
+      --pf-v6-c-button--m-link--Color: var(--pf-t--global--text--color--link--default);
+    }
+    .term-wrap--xterm .term-toolbar .pf-v6-c-button.pf-m-link:hover {
+      color: var(--pf-t--global--text--color--link--hover);
+    }
+    .term-wrap--xterm .term-toolbar .pf-v6-c-label {
+      --pf-v6-c-label--BackgroundColor: var(--pf-t--global--background--color--primary--default);
+    }
+    .term-wrap--xterm .term-session-strip {
+      flex-shrink: 0;
+      background: var(--pf-t--global--background--color--secondary--default);
+      border-block-end: 1px solid var(--pf-t--global--border--color--default);
+      color: var(--pf-t--global--text--color--regular);
+    }
+    .term-wrap--xterm .term-session-pill {
+      color: var(--pf-t--global--text--color--subtle);
+    }
+    .term-wrap--xterm .term-session-pill.is-active {
+      color: var(--pf-t--global--text--color--regular);
+      background: var(--pf-t--global--background--color--primary--default);
+      border-color: var(--pf-t--global--border--color--brand--default);
+    }
+    .term-wrap--xterm .term-session-strip .pf-v6-c-button {
+      color: var(--pf-t--global--text--color--regular);
+    }
+    .term-wrap--xterm .term-banner {
+      flex-shrink: 0;
     }
     .term-xterm-stack {
-      flex: 1;
+      flex: 1 1 auto;
       min-height: 0;
+      min-width: 0;
       position: relative;
-      display: flex;
-      flex-direction: column;
+      display: block;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
     }
     .term-xterm-pane {
-      flex: 1;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       min-height: 0;
+      min-width: 0;
       display: none;
+      overflow: hidden;
     }
     .term-xterm-pane.is-active {
-      display: flex;
-      flex-direction: column;
+      display: block !important;
     }
     .term-xterm-pane[hidden] {
       display: none !important;
     }
+    /* Host for xterm — absolute fill so FitAddon reads full panel width/height */
     .sandbox-xterm {
-      flex: 1;
-      min-height: 0;
-      width: 100%;
-      height: 100%;
-      padding: 0.35rem 0.5rem 0.5rem;
+      position: absolute !important;
+      top: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      left: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      min-height: 0 !important;
+      min-width: 0 !important;
+      padding: 0 !important;
+      margin: 0 !important;
       box-sizing: border-box;
+      overflow: hidden;
+      background: #1a1d21;
     }
     .sandbox-xterm .xterm {
-      height: 100%;
+      position: absolute !important;
+      top: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      left: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      padding: 4px 6px 6px;
+      box-sizing: border-box;
     }
     .sandbox-xterm .xterm-viewport {
+      width: 100% !important;
+      height: 100% !important;
       overflow-y: auto !important;
+    }
+    .sandbox-xterm .xterm-screen {
+      height: 100%;
+    }
+    .term-waiting {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      color: #9ca3af;
+      background: #1a1d21;
     }
 
     /* Panel tray — light floating card */
@@ -1367,3 +1470,13 @@
     }
 
   
+.term-waiting {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  color: #9ca3af;
+  background: #1a1d21;
+}

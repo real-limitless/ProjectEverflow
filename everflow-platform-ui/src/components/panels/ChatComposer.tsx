@@ -20,8 +20,9 @@ import {
   CHAT_SKILLS,
   CHAT_TOOLS,
   modeLabel,
+  type CatalogItem,
 } from '@/data/chatCatalog'
-import type { ChatMode } from '@/types/panels'
+import type { ChatAgentRef, ChatMode } from '@/types/panels'
 
 interface ChatComposerProps {
   draft: string
@@ -38,6 +39,11 @@ interface ChatComposerProps {
   onMcpsChange: (ids: string[]) => void
   onSkillsChange: (ids: string[]) => void
   onAgentsChange: (ids: string[]) => void
+  /** Live catalogs from OpenCode (optional) */
+  modelOptions?: CatalogItem[]
+  mcpOptions?: CatalogItem[]
+  agentOptions?: ChatAgentRef[]
+  sendDisabled?: boolean
 }
 
 function toggle(list: string[], id: string) {
@@ -59,6 +65,10 @@ export function ChatComposer({
   onMcpsChange,
   onSkillsChange,
   onAgentsChange,
+  modelOptions,
+  mcpOptions,
+  agentOptions,
+  sendDisabled,
 }: ChatComposerProps) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const [modelOpen, setModelOpen] = useState(false)
@@ -70,7 +80,10 @@ export function ChatComposer({
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`
   }, [draft])
 
-  const modelLabel = CHAT_MODELS.find((m) => m.id === model)?.label || model
+  const modelList = modelOptions?.length ? modelOptions : CHAT_MODELS
+  const mcpList = mcpOptions?.length ? mcpOptions : CHAT_MCPS
+  const agentList = agentOptions?.length ? agentOptions : CHAT_AGENTS
+  const modelLabel = modelList.find((m) => m.id === model)?.label || model
 
   return (
     <div className="chat-composer">
@@ -108,7 +121,7 @@ export function ChatComposer({
                   />
                 ))}
                 <div className="composer-popover-title">MCP servers</div>
-                {CHAT_MCPS.map((m) => (
+                {mcpList.map((m) => (
                   <Checkbox
                     key={m.id}
                     id={`cm-${m.id}`}
@@ -137,7 +150,7 @@ export function ChatComposer({
             bodyContent={
               <div className="composer-popover-list">
                 <div className="composer-popover-title">Agents in this chat</div>
-                {CHAT_AGENTS.map((a) => (
+                {agentList.map((a) => (
                   <Checkbox
                     key={a.id}
                     id={`ca-${a.id}`}
@@ -202,7 +215,7 @@ export function ChatComposer({
             )}
           >
             <SelectList>
-              {CHAT_MODELS.map((m) => (
+              {modelList.map((m) => (
                 <SelectOption key={m.id} value={m.id} description={m.description}>
                   {m.label}
                 </SelectOption>
@@ -215,7 +228,7 @@ export function ChatComposer({
             className="chat-composer-send"
             aria-label="Send"
             title="Send"
-            isDisabled={!draft.trim()}
+            isDisabled={!draft.trim() || !!sendDisabled}
             onClick={onSend}
             icon={<PaperPlaneIcon />}
           />

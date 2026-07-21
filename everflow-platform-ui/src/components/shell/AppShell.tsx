@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
 import { Page, Spinner } from '@patternfly/react-core'
 import { Outlet, useLocation } from 'react-router-dom'
+import { getProject } from '@/data/projects'
+import { isSandboxWorkbenchReady } from '@/lib/sandboxReady'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { useAuthStore } from '@/store/authStore'
 import { CreateProjectModal } from '@/components/modals/CreateProjectModal'
@@ -21,10 +23,12 @@ export function AppShell({ detached = false }: AppShellProps) {
   const isSidebarOpen = usePlaygroundStore((s) => s.isSidebarOpen)
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
   const openProjectIds = usePlaygroundStore((s) => s.openProjectIds)
+  const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
   const ready = useAuthStore((s) => s.ready)
   const bootstrap = useAuthStore((s) => s.bootstrap)
   const user = useAuthStore((s) => s.user)
   const demoMode = useAuthStore((s) => s.demoMode)
+  void catalogVersion
 
   useEffect(() => {
     void bootstrap()
@@ -33,6 +37,8 @@ export function AppShell({ detached = false }: AppShellProps) {
   const isPlayground =
     location.pathname === '/' || location.pathname === ''
   const hasOpenProject = Boolean(currentProjectId && openProjectIds.length > 0)
+  const currentProject = currentProjectId ? getProject(currentProjectId) : undefined
+  const workbenchReady = hasOpenProject && isSandboxWorkbenchReady(currentProject)
 
   if (detached) {
     return (
@@ -69,7 +75,7 @@ export function AppShell({ detached = false }: AppShellProps) {
           <Outlet />
         )}
       </Page>
-      {!blocked && isPlayground && hasOpenProject ? <PanelPalette /> : null}
+      {!blocked && isPlayground && workbenchReady ? <PanelPalette /> : null}
       {!blocked ? (
         <>
           <OpenProjectModal />

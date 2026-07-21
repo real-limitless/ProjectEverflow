@@ -276,7 +276,19 @@ export function OpenProjectModal() {
                             </Label>
                           ) : null}
                           {r.sandboxStatus ? (
-                            <Label color="grey" isCompact>
+                            <Label
+                              color={
+                                r.sandboxStatus === 'running'
+                                  ? 'green'
+                                  : r.sandboxStatus === 'creating' ||
+                                      r.sandboxStatus === 'pending'
+                                    ? 'purple'
+                                    : r.sandboxStatus === 'error'
+                                      ? 'red'
+                                      : 'grey'
+                              }
+                              isCompact
+                            >
                               {r.sandboxStatus}
                             </Label>
                           ) : null}
@@ -313,7 +325,11 @@ export function OpenProjectModal() {
             ? 'Switch to project'
             : selected?.isActive
               ? 'Focus project'
-              : 'Open project'}
+              : selected?.fromApi &&
+                  selected.sandboxStatus &&
+                  selected.sandboxStatus !== 'running'
+                ? 'Open & start sandbox'
+                : 'Open project'}
         </Button>
         <Button variant="secondary" icon={<PlusCircleIcon />} onClick={goCreate}>
           Create project
