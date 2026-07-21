@@ -17,7 +17,7 @@ from app.opencode_mgr import get_opencode_manager
 from app.opencode_proxy import proxy_to_opencode, proxy_to_opencode_guest
 from app.guest_tunnel import resolve_dial_target
 from app.ports import list_listening_ports
-from app.preview_proxy import proxy_http_to_port, proxy_websocket_to_port
+from app.preview_proxy import proxy_http_to_port, proxy_websocket_to_port, ws_requested_subprotocol
 from app.schemas import (
     BootstrapRequest,
     ExecRequest,
@@ -510,45 +510,57 @@ async def sandbox_port_proxy_ws(
     name: str,
     port: int,
     path: str = "",
+    # Prefer agent_token so Vite HMR can keep using ?token= for its own handshake.
+    agent_token: str = Query(default=""),
     token: str = Query(default=""),
 ) -> None:
     """WebSocket reverse-proxy (host dial or guest TCP tunnel for HMR)."""
     settings = get_settings()
-    if token != settings.sandbox_agent_token:
-        await websocket.accept()
-        await websocket.close(code=4403)
+    auth = agent_token or token
+    sub = ws_requested_subprotocol(websocket)
+
+    async def _reject(code: int) -> None:
+        await websocket.accept(subprotocol=sub)
+        await websocket.close(code=code)
+
+    if auth != settings.sandbox_agent_token:
+        await _reject(4403)
         return
     if port < 1 or port > 65535:
-        await websocket.accept()
-        await websocket.close(code=4400)
+        await _reject(4400)
         return
 
     backend: SandboxBackend = websocket.app.state.backend  # type: ignore[assignment]
     rec = await backend.get(name)
     if rec is None or rec.status != "running":
-        await websocket.accept()
-        await websocket.close(code=4404)
+        await _reject(4404)
         return
 
     query = websocket.url.query
-    # Strip our auth token from upstream query
+    # Strip agent auth params only; keep Vite HMR ?token= (and everything else)
     if query:
         from urllib.parse import parse_qsl, urlencode
 
-        pairs = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True) if k != "token"]
+        agent_secret = settings.sandbox_agent_token
+        pairs = []
+        for k, v in parse_qsl(query, keep_blank_values=True):
+            if k == "agent_token":
+                continue
+            # Legacy agent auth used token=; strip only if value is the agent secret
+            if k == "token" and v == agent_secret:
+                continue
+            pairs.append((k, v))
         query = urlencode(pairs)
 
     try:
         dial_host, dial_port, mode = await resolve_dial_target(name, port, backend=backend)
     except Exception as exc:  # noqa: BLE001
         logger.warning("ws resolve dial failed name=%s port=%s: %s", name, port, exc)
-        await websocket.accept()
-        await websocket.close(code=1011, reason="tunnel setup failed"[:120])
+        await _reject(1011)
         return
 
     if mode == "unreachable":
-        await websocket.accept()
-        await websocket.close(code=1011, reason="guest port not reachable"[:120])
+        await _reject(1011)
         return
 
     await proxy_websocket_to_port(
@@ -557,4 +569,5 @@ async def sandbox_port_proxy_ws(
         path=path or "",
         query=query,
         host=dial_host,
+        guest_port=port,
     )

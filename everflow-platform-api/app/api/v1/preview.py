@@ -382,7 +382,11 @@ async def _handle_preview_websocket(
     from starlette.websockets import WebSocket
 
     websocket = WebSocket(scope, receive, send)
-    await websocket.accept()
+
+    # Vite HMR requires Sec-WebSocket-Protocol: vite-hmr — accept it or the browser aborts.
+    subprotocols = list(scope.get("subprotocols") or [])
+    accept_sub = "vite-hmr" if "vite-hmr" in subprotocols else (subprotocols[0] if subprotocols else None)
+    await websocket.accept(subprotocol=accept_sub)
 
     endpoint = await _load_endpoint(endpoint_id)
     if endpoint is None:
@@ -398,7 +402,7 @@ async def _handle_preview_websocket(
     path = scope.get("path", "/") or "/"
     path = path.lstrip("/")
     query = scope.get("query_string", b"").decode("latin-1")
-    # Strip ticket from upstream query
+    # Strip Everflow ticket only; keep Vite HMR ?token= and other params
     if query:
         from urllib.parse import parse_qsl, urlencode
 
@@ -412,6 +416,13 @@ async def _handle_preview_websocket(
         path=path,
         query=query or None,
     )
+    logger.info(
+        "preview ws edge→agent endpoint=%s port=%s path=%s sub=%s",
+        endpoint_id,
+        endpoint.port,
+        path or "/",
+        accept_sub,
+    )
 
     try:
         import websockets
@@ -420,12 +431,46 @@ async def _handle_preview_websocket(
         await websocket.close(code=1011)
         return
 
+    connect_kwargs: dict[str, Any] = {
+        "open_timeout": 60,
+        "max_size": 8 * 1024 * 1024,
+        "compression": None,
+    }
+    # Forward vite-hmr (or whatever the browser asked for) to the agent hop
+    if accept_sub:
+        connect_kwargs["subprotocols"] = [accept_sub]
+    elif "token=" in (query or ""):
+        connect_kwargs["subprotocols"] = ["vite-hmr"]
+
     try:
-        upstream = await websockets.connect(agent_url, open_timeout=20, max_size=8 * 1024 * 1024)
+        upstream = await websockets.connect(agent_url, **connect_kwargs)
+    except TypeError:
+        connect_kwargs.pop("compression", None)
+        try:
+            upstream = await websockets.connect(agent_url, **connect_kwargs)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("preview edge ws agent connect failed url=%s: %s", agent_url, exc)
+            await websocket.close(code=1011)
+            return
     except Exception as exc:  # noqa: BLE001
-        logger.warning("preview edge ws agent connect failed: %s", exc)
-        await websocket.close(code=1011)
-        return
+        # Retry without subprotocol
+        if "subprotocols" in connect_kwargs:
+            connect_kwargs.pop("subprotocols", None)
+            try:
+                upstream = await websockets.connect(agent_url, **connect_kwargs)
+            except Exception as exc2:  # noqa: BLE001
+                logger.warning(
+                    "preview edge ws agent connect failed url=%s: %s / %s",
+                    agent_url,
+                    exc,
+                    exc2,
+                )
+                await websocket.close(code=1011)
+                return
+        else:
+            logger.warning("preview edge ws agent connect failed url=%s: %s", agent_url, exc)
+            await websocket.close(code=1011)
+            return
 
     stop = asyncio.Event()
 

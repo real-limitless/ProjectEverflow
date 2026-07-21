@@ -3,6 +3,11 @@
 Host/mock mode dials http://127.0.0.1:{port}. Guest microVMs use a local
 tunnel port (see guest_tunnel.py) so HTTP and WebSockets (Vite HMR) work.
 Optional in-guest urllib remains as a last-resort HTTP-only fallback.
+
+Vite HMR notes:
+- Client connects with Sec-WebSocket-Protocol: vite-hmr (must be accepted/forwarded)
+- Bundled @vite/client hardcodes directSocketHost to the guest address; we rewrite
+  that so the browser stays on the preview host instead of 127.0.0.1:5173.
 """
 
 from __future__ import annotations
@@ -11,6 +16,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 from urllib.parse import urljoin
@@ -50,6 +56,42 @@ def resolve_upstream_base(port: int, *, host: str = "127.0.0.1") -> str:
     if port < 1 or port > 65535:
         raise ValueError(f"invalid port: {port}")
     return f"http://{host}:{port}"
+
+
+def rewrite_vite_client_js(content: bytes) -> bytes:
+    """Point Vite HMR at the browser's current host (preview proxy), not guest loopback."""
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    if "directSocketHost" not in text and "setupWebSocket" not in text:
+        return content
+    # serverHost / directSocketHost are injected as the guest listen address
+    text2 = re.sub(
+        r'const serverHost = "[^"]*";',
+        "const serverHost = importMetaUrl.host + \"/\";",
+        text,
+        count=1,
+    )
+    text2 = re.sub(
+        r'const directSocketHost = "[^"]*";',
+        "const directSocketHost = `${importMetaUrl.hostname}:${importMetaUrl.port}/`;",
+        text2,
+        count=1,
+    )
+    if text2 != text:
+        logger.info("rewrote Vite client HMR hosts for preview proxy")
+    return text2.encode("utf-8")
+
+
+def ws_requested_subprotocol(websocket: WebSocket) -> str | None:
+    """Pick a subprotocol to accept (prefer vite-hmr)."""
+    subs = list(websocket.scope.get("subprotocols") or [])
+    if "vite-hmr" in subs:
+        return "vite-hmr"
+    if subs:
+        return str(subs[0])
+    return None
 
 
 def _filter_request_headers(headers: Any, *, upstream_host: str) -> dict[str, str]:
@@ -181,10 +223,27 @@ async def proxy_http_to_port(
         await upstream.aclose()
         await client.aclose()
 
+    # Rewrite Vite client so HMR WebSocket uses the preview public host, not 127.0.0.1:5173
+    path_l = (path or "").lstrip("/")
+    if (
+        path_l.endswith("@vite/client")
+        or path_l == "@vite/client"
+        or "/@vite/client" in f"/{path_l}"
+        or "vite/dist/client" in path_l
+    ):
+        content = rewrite_vite_client_js(content)
+
+    headers = _filter_response_headers(upstream.headers, strip_encoding=True)
+    headers = {
+        k: v
+        for k, v in headers.items()
+        if k.lower() not in ("content-length", "content-encoding")
+    }
+
     return Response(
         content=content,
         status_code=upstream.status_code,
-        headers=_filter_response_headers(upstream.headers, strip_encoding=True),
+        headers=headers,
         media_type=media or None,
     )
 
@@ -306,17 +365,24 @@ async def proxy_websocket_to_port(
     path: str,
     query: str = "",
     host: str = "127.0.0.1",
+    guest_port: int | None = None,
 ) -> None:
-    """Bridge browser WebSocket to ws://host:port/path."""
-    # Caller should accept() after auth; accept here if still connecting
+    """Bridge browser WebSocket to ws://host:port/path (Vite HMR safe).
+
+    guest_port: original sandbox listen port for Host/Origin headers when
+    ``port`` is a local tunnel port (not the app's real port).
+    """
+    sub = ws_requested_subprotocol(websocket)
+    # Vite always uses "vite-hmr"; accept it when the browser asks.
     if websocket.client_state == WebSocketState.CONNECTING:
-        await websocket.accept()
+        await websocket.accept(subprotocol=sub)
 
     rel = path.lstrip("/") if path else ""
     qs = f"?{query}" if query else ""
     if rel:
         url = f"ws://{host}:{port}/{rel}{qs}"
     else:
+        # Root path — Vite HMR uses ws://host/?token=...
         url = f"ws://{host}:{port}/{qs}" if qs else f"ws://{host}:{port}/"
 
     try:
@@ -327,16 +393,71 @@ async def proxy_websocket_to_port(
         await websocket.close(code=1011)
         return
 
+    # Vite validates Host / Origin against the dev server port, not the tunnel port.
+    app_port = guest_port if guest_port is not None else port
+    extra_headers = {
+        "Host": f"127.0.0.1:{app_port}",
+        "Origin": f"http://127.0.0.1:{app_port}",
+    }
+    # Prefer client-requested protocol; default to vite-hmr for Vite HMR token URLs
+    upstream_subs: list[str]
+    if sub:
+        upstream_subs = [sub]
+    elif "token=" in (query or ""):
+        upstream_subs = ["vite-hmr"]
+    else:
+        upstream_subs = []
+
+    connect_kwargs: dict[str, Any] = {
+        "open_timeout": 45,
+        "max_size": 8 * 1024 * 1024,
+        "additional_headers": extra_headers,
+        "compression": None,
+    }
+    if upstream_subs:
+        connect_kwargs["subprotocols"] = upstream_subs
+
     upstream = None
     try:
-        upstream = await websockets.connect(url, open_timeout=15, max_size=8 * 1024 * 1024)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("preview ws connect failed port=%s url=%s: %s", port, url, exc)
+        upstream = await websockets.connect(url, **connect_kwargs)
+    except TypeError:
+        # Older websockets: no compression= kw
+        connect_kwargs.pop("compression", None)
         try:
-            await websocket.close(code=1011, reason=f"upstream: {exc}"[:120])
-        except Exception:
-            pass
-        return
+            upstream = await websockets.connect(url, **connect_kwargs)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("preview ws connect failed port=%s url=%s: %s", port, url, exc)
+            try:
+                await websocket.close(code=1011, reason=f"upstream: {exc}"[:120])
+            except Exception:
+                pass
+            return
+    except Exception as exc:  # noqa: BLE001
+        # Retry without subprotocol for non-Vite apps
+        if upstream_subs:
+            try:
+                connect_kwargs.pop("subprotocols", None)
+                upstream = await websockets.connect(url, **connect_kwargs)
+            except Exception as exc2:  # noqa: BLE001
+                logger.warning(
+                    "preview ws connect failed port=%s url=%s: %s / %s",
+                    port,
+                    url,
+                    exc,
+                    exc2,
+                )
+                try:
+                    await websocket.close(code=1011, reason=f"upstream: {exc2}"[:120])
+                except Exception:
+                    pass
+                return
+        else:
+            logger.warning("preview ws connect failed port=%s url=%s: %s", port, url, exc)
+            try:
+                await websocket.close(code=1011, reason=f"upstream: {exc}"[:120])
+            except Exception:
+                pass
+            return
 
     stop = asyncio.Event()
 

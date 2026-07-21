@@ -247,14 +247,15 @@ class SandboxAgentClient:
             path_part = f"/v1/sandboxes/{quote(name, safe='')}/proxy/{port}/{rel_enc}"
         else:
             path_part = f"/v1/sandboxes/{quote(name, safe='')}/proxy/{port}"
-        q: dict[str, str] = {"token": self._settings.sandbox_agent_token}
+        # Use agent_token — never clobber Vite HMR's ?token=
+        q: dict[str, str] = {"agent_token": self._settings.sandbox_agent_token}
         if query:
-            # merge raw query pairs without token collision handled by agent
             from urllib.parse import parse_qsl
 
             for k, v in parse_qsl(query, keep_blank_values=True):
-                if k != "token":
-                    q[k] = v
+                if k in ("agent_token",):
+                    continue
+                q[k] = v
         return f"{ws_base}{path_part}?{urlencode(q)}"
 
     async def _request(
