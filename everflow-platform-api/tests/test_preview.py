@@ -264,3 +264,75 @@ async def test_mint_preview_endpoint_and_host_proxy(
     assert missing.status_code == 404, missing.text
 
     get_settings.cache_clear()
+
+
+def test_preview_proxy_ws_url_keeps_vite_token() -> None:
+    """Agent auth uses agent_token; Vite HMR ?token= must survive."""
+    from app.services.sandbox_agent_client import SandboxAgentClient
+
+    settings = Settings(
+        sandbox_agent_url="http://sandbox-agent:8080",
+        sandbox_agent_token="agent-secret",
+    )
+    client = SandboxAgentClient(settings)
+    url = client.preview_proxy_ws_url(
+        "ef-demo",
+        port=5173,
+        path="",
+        query="token=vite-hmr-secret&foo=1",
+    )
+    assert url.startswith("ws://sandbox-agent:8080/v1/sandboxes/ef-demo/proxy/5173?")
+    assert "agent_token=agent-secret" in url
+    assert "token=vite-hmr-secret" in url
+    assert "foo=1" in url
+    # Must not replace Vite token with the agent secret
+    assert "token=agent-secret" not in url
+
+
+def test_preview_rewrite_helpers_point_hmr_at_public_host() -> None:
+    from app.services.preview_rewrite import (
+        DESKTOP_NOVNC_PORT,
+        inject_ws_patch_html,
+        rewrite_vite_client_js,
+        should_inject_preview_html,
+        should_rewrite_vite_client,
+    )
+
+    vite = (
+        b'const serverHost = "127.0.0.1:5173";\n'
+        b'const directSocketHost = "127.0.0.1:5173";\n'
+        b"const hmrPort = 5173;\n"
+    )
+    out = rewrite_vite_client_js(vite).decode()
+    assert "127.0.0.1:5173" not in out
+    assert "importMetaUrl" in out
+    assert "hmrPort = null" in out
+
+    html = b"<html><head></head><body>hi</body></html>"
+    patched = inject_ws_patch_html(html).decode()
+    assert "data-everflow-ws-patch" in patched
+    assert "WebSocket" in patched
+
+    assert should_rewrite_vite_client(guest_port=5173, path="@vite/client", status_code=200)
+    assert not should_rewrite_vite_client(
+        guest_port=DESKTOP_NOVNC_PORT, path="@vite/client", status_code=200
+    )
+
+    assert should_inject_preview_html(
+        guest_port=5173,
+        path="index.html",
+        content_type="text/html",
+        status_code=200,
+    )
+    assert not should_inject_preview_html(
+        guest_port=5173,
+        path="vnc.html",
+        content_type="application/json",
+        status_code=502,
+    )
+    assert not should_inject_preview_html(
+        guest_port=DESKTOP_NOVNC_PORT,
+        path="vnc.html",
+        content_type="text/html",
+        status_code=200,
+    )

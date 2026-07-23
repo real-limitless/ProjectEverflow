@@ -17,11 +17,13 @@ import type { ChatConversation, ChatMessage, ChatMode, PanelKey } from '@/types/
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { isDemoMode } from '@/lib/api'
 import {
+  abortSession,
   canUseOpenCode,
   createSession,
   deleteSession,
   ensureOpenCode,
   forkSession,
+  isOpenCodeSessionId,
   listAgents,
   listMessages,
   listMcp,
@@ -158,15 +160,25 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const conversations = useMemo(() => {
     if (!currentProjectId) return []
     ensureProjectChats(currentProjectId)
-    return getConversations(currentProjectId)
+    const list = getConversations(currentProjectId)
+    // Live OpenCode: hide local placeholder chats (n{ts}, c1) that 500 on /message.
+    if (useLive) return list.filter((c) => isOpenCodeSessionId(c.id))
+    return list
     // eslint-disable-next-line react-hooks/exhaustive-deps -- projectChats drives refresh
-  }, [currentProjectId, projectChats, ensureProjectChats, getConversations])
+  }, [
+    currentProjectId,
+    projectChats,
+    ensureProjectChats,
+    getConversations,
+    useLive,
+  ])
 
   const primary = conversations[0]
   const st =
     instanceState ||
     ensureInstanceState(panelKey, {
-      convId: primary?.id,
+      // Don't seed local placeholder ids into live panels — refreshSessions fills this.
+      convId: useLive && !isOpenCodeSessionId(primary?.id) ? undefined : primary?.id,
       title: primary?.title,
       messages: primary ? JSON.parse(JSON.stringify(primary.messages)) : [],
       model: DEFAULT_CHAT_MODEL,
@@ -206,6 +218,10 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     ) => {
       const allowEmpty = opts?.allowEmpty ?? false
       const force = opts?.force ?? false
+      // Persisted UI placeholders (n{timestamp}, c1, …) are not OpenCode sessions.
+      if (!isOpenCodeSessionId(sessionId)) {
+        return usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
+      }
       try {
         const bundles = await listMessages(projectId, sessionId)
         let serverMsgs = mapOcMessages(bundles, {
@@ -247,25 +263,36 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           /* optional */
         }
 
-        const local =
-          usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
         const activeId =
           usePlaygroundStore.getState().instanceState[panelKey]?.convId
+        const isActiveView = !activeId || activeId === sessionId
 
-        // Don't apply a stale hydrate to a different session
-        if (!force && activeId && activeId !== sessionId) {
-          return local
-        }
+        // Always merge against the target session's stored messages (not the
+        // currently visible panel, which may be a different chat).
+        const stored =
+          usePlaygroundStore
+            .getState()
+            .ensureProjectChats(projectId)
+            .find((c) => c.id === sessionId)?.messages || []
+        const localForSession = isActiveView
+          ? usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
+            stored
+          : stored
 
-        // Never wipe non-empty local history with an empty server snapshot
-        if (!allowEmpty && serverMsgs.length === 0 && local.length > 0) {
-          return local
+        // Never wipe non-empty history with an empty server snapshot
+        if (
+          !allowEmpty &&
+          !force &&
+          serverMsgs.length === 0 &&
+          localForSession.length > 0
+        ) {
+          return localForSession
         }
 
         // Preserve local pending question cards if server list lags;
         // also re-apply local "answered" status so hydrate does not reopen chips.
-        let msgs = mergeServerMessages(serverMsgs, local)
-        for (const m of local) {
+        let msgs = mergeServerMessages(serverMsgs, localForSession)
+        for (const m of localForSession) {
           for (const b of m.blocks || []) {
             if (b.type !== 'question' || !b.questionRequest?.id) continue
             const qid = b.questionRequest.id
@@ -314,6 +341,13 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
             .getState()
             .updateConversationMessages(projectId, sessionId, msgs, lastAsst)
         }
+
+        // Never steal focus: background hydrates (streaming poll / SSE for another
+        // session) update store only. `force` means allow empty overwrite, not activate.
+        if (!isActiveView) {
+          return msgs
+        }
+
         ensureInstanceState(panelKey, {
           convId: sessionId,
           messages: msgs,
@@ -323,7 +357,13 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         })
         return msgs
       } catch (e) {
-        setLiveError((e as Error).message)
+        const msg = (e as Error).message || 'Failed to load messages'
+        // Stale session after sandbox recreate — clear banner noise; caller remaps.
+        if (/internal server error|unknownerror|not found|404|500/i.test(msg)) {
+          setLiveError(null)
+          return usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
+        }
+        setLiveError(msg)
         return usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
       }
     },
@@ -336,9 +376,12 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       const prevList =
         usePlaygroundStore.getState().projectChats[projectId] || []
       const prevById = new Map(prevList.map((c) => [c.id, c]))
+      // Only prefer real OpenCode ids — local placeholders cause 500s on /message.
+      const safePrefer = isOpenCodeSessionId(preferId) ? preferId : undefined
 
       const mapped: ChatConversation[] = []
       for (const s of sessions) {
+        if (!isOpenCodeSessionId(s.id)) continue
         const prev = prevById.get(s.id)
         // Preserve in-memory messages + Everflow UI state for known sessions
         const base = sessionToConversation(s, prev?.messages || [])
@@ -355,12 +398,12 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         mapped.push(sessionToConversation(created, []))
       }
       // createSession can race ahead of listSessions — keep preferId in the rail.
-      if (preferId && !mapped.some((c) => c.id === preferId)) {
-        const prev = prevById.get(preferId)
+      if (safePrefer && !mapped.some((c) => c.id === safePrefer)) {
+        const prev = prevById.get(safePrefer)
         mapped.unshift(
           prev ||
             sessionToConversation(
-              { id: preferId, title: 'New chat' } as Parameters<
+              { id: safePrefer, title: 'New chat' } as Parameters<
                 typeof sessionToConversation
               >[0],
               [],
@@ -371,20 +414,41 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         projectChats: { ...state.projectChats, [projectId]: mapped },
       }))
       const pick =
-        (preferId && mapped.find((c) => c.id === preferId)) ||
+        (safePrefer && mapped.find((c) => c.id === safePrefer)) ||
         mapped[0]
       if (pick) {
         // First load of a session may legitimately be empty
         const hadLocal = (prevById.get(pick.id)?.messages.length || 0) > 0
         await hydrateSession(projectId, pick.id, {
-          allowEmpty: !hadLocal || pick.id === preferId,
+          allowEmpty: !hadLocal || pick.id === safePrefer,
           force: true,
         })
+        // Drop stale local convId (n…) so send/prompt use the real session.
+        const cur =
+          usePlaygroundStore.getState().instanceState[panelKey]?.convId
+        if (cur !== pick.id) {
+          ensureInstanceState(panelKey, {
+            convId: pick.id,
+            title: pick.title,
+          })
+        }
       }
       return mapped
     },
-    [hydrateSession],
+    [ensureInstanceState, hydrateSession, panelKey],
   )
+
+  // If a persisted panel still points at a local placeholder id, remap on live.
+  const remappedLocalConvRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!useLive || !currentProjectId) return
+    const cur = usePlaygroundStore.getState().instanceState[panelKey]?.convId
+    if (!cur || isOpenCodeSessionId(cur)) return
+    const key = `${currentProjectId}:${cur}`
+    if (remappedLocalConvRef.current === key) return
+    remappedLocalConvRef.current = key
+    void refreshSessions(currentProjectId)
+  }, [useLive, currentProjectId, panelKey, refreshSessions, st.convId])
 
   const loadCatalogs = useCallback(async (projectId: string) => {
     try {
@@ -586,10 +650,12 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         }
         if (!stillActive()) return
 
-        const prefer =
+        const preferRaw =
           usePlaygroundStore.getState().instanceState[panelKey]?.convId
+        const prefer = isOpenCodeSessionId(preferRaw) ? preferRaw : undefined
         try {
           await withTimeout(refreshSessions(currentProjectId, prefer), 25_000, 'Session list')
+          if (stillActive()) setLiveError(null)
         } catch (sessErr) {
           // Soft-fail: create a local empty slot so user can still try send
           console.warn('OpenCode session refresh failed', sessErr)
@@ -624,13 +690,31 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
               const projectId = currentProjectId
               const convId =
                 usePlaygroundStore.getState().instanceState[panelKey]?.convId
-              if (!convId) return
+              if (!convId || !isOpenCodeSessionId(convId)) return
 
               const apply = (next: ChatMessage[], last?: ChatMessage) => {
                 usePlaygroundStore
                   .getState()
                   .updateConversationMessages(projectId, convId, next, last)
                 ensureInstanceState(panelKey, { messages: next })
+              }
+
+              const patchSession =
+                'sessionId' in patch ? String(patch.sessionId || '') : ''
+              // Ignore stream events for a background session while viewing another.
+              if (
+                patchSession &&
+                patchSession !== convId &&
+                (patch.kind === 'message' ||
+                  patch.kind === 'part_delta' ||
+                  patch.kind === 'part_set' ||
+                  patch.kind === 'part_full' ||
+                  patch.kind === 'reload_messages')
+              ) {
+                if (patch.kind === 'reload_messages') {
+                  void hydrateSession(projectId, patchSession, { force: true })
+                }
+                return
               }
 
               if (patch.kind === 'message') {
@@ -816,10 +900,94 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     setProviderSkipped(false)
   }, [currentProjectId])
 
-  const sendLive = async (text: string) => {
-    if (!currentProjectId || !st.convId) return
-    const convId = st.convId
+  const finalizeInterruptedTurn = (msgs: ChatMessage[]): ChatMessage[] => {
+    const withoutPending = msgs.filter((m) => !m.id.startsWith('pending-'))
+    return withoutPending.map((m) => {
+      if (m.role !== 'assistant') return m
+      if (m.generationStatus === 'complete' || m.generationStatus === 'error') {
+        return m
+      }
+      const hasContent =
+        messageHasReplyText(m) ||
+        !!(m.thinking || '').trim() ||
+        (m.blocks?.some(
+          (b) =>
+            b.type === 'text' ||
+            b.type === 'markdown' ||
+            b.type === 'tool' ||
+            b.type === 'terminal' ||
+            b.type === 'web_search',
+        ) ??
+          false)
+      if (hasContent) {
+        return { ...m, generationStatus: 'complete' as const }
+      }
+      const stopped = 'Stopped.'
+      return {
+        ...m,
+        generationStatus: 'error' as const,
+        text: stopped,
+        blocks: [{ type: 'text', text: stopped }],
+        createdAt: m.createdAt || new Date().toISOString(),
+      }
+    })
+  }
+
+  const stopRunning = useCallback(() => {
+    if (!sendingRef.current) return
+    pollAbortRef.current += 1
+    setSending(false)
+    sendingRef.current = false
+
     const projectId = currentProjectId
+    const convId =
+      usePlaygroundStore.getState().instanceState[panelKey]?.convId
+    const cur =
+      usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
+    const next = finalizeInterruptedTurn(cur)
+    ensureInstanceState(panelKey, { messages: next })
+    if (projectId && convId) {
+      updateConversationMessages(projectId, convId, next)
+    }
+
+    if (
+      useLive &&
+      projectId &&
+      convId &&
+      isOpenCodeSessionId(convId)
+    ) {
+      void abortSession(projectId, convId).catch((e) => {
+        console.warn('OpenCode abort failed', e)
+      })
+    }
+  }, [
+    currentProjectId,
+    panelKey,
+    useLive,
+    ensureInstanceState,
+    updateConversationMessages,
+  ])
+
+  const sendLive = async (text: string) => {
+    if (!currentProjectId) return
+    let convId = st.convId
+    const projectId = currentProjectId
+    // Recover if UI still holds a local placeholder id after sandbox recreate.
+    if (!convId || !isOpenCodeSessionId(convId)) {
+      try {
+        const created = await createSession(projectId, 'New chat')
+        convId = created.id
+        ensureInstanceState(panelKey, {
+          convId,
+          messages: [],
+          title: created.title || 'New chat',
+        })
+        await refreshSessions(projectId, convId)
+      } catch (e) {
+        setLiveError((e as Error).message || 'Could not create chat session')
+        return
+      }
+    }
     setSending(true)
     sendingRef.current = true
     setLiveError(null)
@@ -903,11 +1071,23 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       }
 
       // SSE is primary (guest stream_exec → /event). Poll is a slow backup only.
+      // Stop owning the UI when the user switches to another chat mid-turn.
+      const stillOnSession = () =>
+        usePlaygroundStore.getState().instanceState[panelKey]?.convId === convId
       const deadline = Date.now() + 180_000
       const pollMs = 2000
       while (Date.now() < deadline && pollAbortRef.current === pollGen) {
         await new Promise((r) => setTimeout(r, pollMs))
         if (pollAbortRef.current !== pollGen) break
+        if (!stillOnSession()) {
+          // Keep hydrating the background session into projectChats only.
+          void hydrateSession(projectId, convId, {
+            force: true,
+            clientTtftMs,
+            streamStartedAt,
+          })
+          break
+        }
         // Prefer in-memory stream state (updated by SSE handlers)
         let msgs =
           usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
@@ -931,6 +1111,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           clientTtftMs,
           streamStartedAt,
         })
+        if (!stillOnSession()) break
         lastAsst = [...msgs]
           .reverse()
           .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
@@ -947,23 +1128,34 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         }
       }
 
-      if (pollAbortRef.current === pollGen) {
+      if (pollAbortRef.current === pollGen && stillOnSession()) {
         const finalMsgs = await hydrateSession(projectId, convId, {
           force: true,
           clientTtftMs,
           streamStartedAt,
         })
-        const lastAsst = [...finalMsgs]
-          .reverse()
-          .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
-        if (assistantTurnReady(lastAsst) || messageHasReplyText(lastAsst!)) {
-          gotReady = true
-          setLiveError(null)
-        } else if (!gotReady) {
-          setLiveError(
-            'No complete response from OpenCode yet. The answer may still appear if you refresh.',
-          )
+        if (!stillOnSession()) {
+          /* user left — don't surface turn errors on the new chat */
+        } else {
+          const lastAsst = [...finalMsgs]
+            .reverse()
+            .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
+          if (assistantTurnReady(lastAsst) || messageHasReplyText(lastAsst!)) {
+            gotReady = true
+            setLiveError(null)
+          } else if (!gotReady) {
+            setLiveError(
+              'No complete response from OpenCode yet. The answer may still appear if you refresh.',
+            )
+          }
         }
+      } else if (pollAbortRef.current === pollGen && !stillOnSession()) {
+        // Finish background session into store without touching the new view.
+        void hydrateSession(projectId, convId, {
+          force: true,
+          clientTtftMs,
+          streamStartedAt,
+        })
       }
     } catch (e) {
       setLiveError((e as Error).message)
@@ -1224,6 +1416,10 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const liveNewChat = async () => {
     if (!currentProjectId) return
     const projectId = currentProjectId
+    // Detach from any in-flight send poll on the previous session.
+    pollAbortRef.current += 1
+    setSending(false)
+    sendingRef.current = false
     const created = await createSession(projectId, 'New chat')
     // Switch the middle pane immediately (same path as liveSelect). refreshSessions
     // alone can leave convId on the previous chat when listSessions lags create.
@@ -1266,12 +1462,20 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
 
   const liveSelect = async (id: string) => {
     if (!currentProjectId) return
+    if (!isOpenCodeSessionId(id)) {
+      await refreshSessions(currentProjectId)
+      return
+    }
+    // Detach from any in-flight send poll on the previous session.
+    pollAbortRef.current += 1
+    setSending(false)
+    sendingRef.current = false
     // Switching sessions: allow empty history; restore per-conversation agent/mode
     const list = usePlaygroundStore.getState().projectChats[currentProjectId] || []
     const conv = list.find((c) => c.id === id)
     ensureInstanceState(panelKey, {
       convId: id,
-      messages: [],
+      messages: conv?.messages?.length ? [...conv.messages] : [],
       chatMode: conv?.chatMode || DEFAULT_CHAT_MODE,
       primaryAgent: conv?.primaryAgent || DEFAULT_PRIMARY_AGENT,
       title: conv?.title,
@@ -1521,6 +1725,8 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
             sending ||
             (useLive && (liveStatus === 'connecting' || liveStatus === 'error'))
           }
+          isRunning={sending}
+          onStop={stopRunning}
         />
       </div>
 

@@ -10,6 +10,7 @@ import {
 } from '@patternfly/react-core'
 import ClockIcon from '@patternfly/react-icons/dist/esm/icons/clock-icon'
 import PaperPlaneIcon from '@patternfly/react-icons/dist/esm/icons/paper-plane-icon'
+import StopIcon from '@patternfly/react-icons/dist/esm/icons/stop-icon'
 import UsersIcon from '@patternfly/react-icons/dist/esm/icons/users-icon'
 import WrenchIcon from '@patternfly/react-icons/dist/esm/icons/wrench-icon'
 import OutlinedStarIcon from '@patternfly/react-icons/dist/esm/icons/outlined-star-icon'
@@ -50,6 +51,9 @@ interface ChatComposerProps {
   mcpOptions?: CatalogItem[]
   agentOptions?: CatalogItem[]
   sendDisabled?: boolean
+  /** True while a prompt / agent turn is in flight */
+  isRunning?: boolean
+  onStop?: () => void
 }
 
 function toggle(list: string[], id: string) {
@@ -78,6 +82,8 @@ export function ChatComposer({
   mcpOptions,
   agentOptions,
   sendDisabled,
+  isRunning,
+  onStop,
 }: ChatComposerProps) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const [modelOpen, setModelOpen] = useState(false)
@@ -139,7 +145,7 @@ export function ChatComposer({
           value={draft}
           onChange={(e) => onDraftChange(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !isRunning) {
               e.preventDefault()
               onSend()
             }
@@ -290,15 +296,26 @@ export function ChatComposer({
             </SelectList>
           </Select>
 
-          <Button
-            variant="primary"
-            className="chat-composer-send"
-            aria-label="Send"
-            title="Send"
-            isDisabled={!draft.trim() || !!sendDisabled}
-            onClick={onSend}
-            icon={<PaperPlaneIcon />}
-          />
+          {isRunning ? (
+            <Button
+              variant="primary"
+              className="chat-composer-send chat-composer-stop"
+              aria-label="Stop generating"
+              title="Stop generating"
+              onClick={onStop}
+              icon={<StopIcon />}
+            />
+          ) : (
+            <Button
+              variant="primary"
+              className="chat-composer-send"
+              aria-label="Send"
+              title="Send"
+              isDisabled={!draft.trim() || !!sendDisabled}
+              onClick={onSend}
+              icon={<PaperPlaneIcon />}
+            />
+          )}
         </div>
       </div>
       <div className="chat-composer-hint">

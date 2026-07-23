@@ -111,6 +111,52 @@ async def _refresh_status(
     return meta
 
 
+async def _ensure_jobs_dir(backend: SandboxBackend, name: str) -> None:
+    mkdir_code, _, mkdir_err = await backend.exec(
+        name,
+        "mkdir",
+        ["-p", JOBS_DIR_GUEST],
+        cwd="/workspace",
+        timeout_seconds=15,
+    )
+    if mkdir_code != 0:
+        raise RuntimeError(mkdir_err or "Failed to create jobs directory")
+
+
+async def _spawn_detached(
+    backend: SandboxBackend,
+    name: str,
+    *,
+    command: str,
+    cwd: str,
+    log_path: str,
+    append_log: bool = False,
+) -> int:
+    """Spawn nohup job; return pid. append_log=True keeps prior log content on restart."""
+    quoted_cmd = shlex.quote(command)
+    quoted_cwd = shlex.quote(cwd)
+    quoted_log = shlex.quote(log_path)
+    redirect = ">>" if append_log else ">"
+    start_script = (
+        f"cd {quoted_cwd} && "
+        f"nohup sh -c {quoted_cmd} {redirect} {quoted_log} 2>&1 & echo $!"
+    )
+    code, stdout, stderr = await backend.exec(
+        name,
+        "sh",
+        ["-c", start_script],
+        cwd="/workspace",
+        timeout_seconds=20,
+    )
+    if code != 0:
+        raise RuntimeError(stderr or stdout or "Failed to start job")
+    pid_str = (stdout or "").strip().splitlines()[-1].strip() if stdout else ""
+    try:
+        return int(pid_str)
+    except ValueError as exc:
+        raise RuntimeError(f"Failed to parse job pid from: {stdout!r}") from exc
+
+
 async def start_job(
     backend: SandboxBackend,
     name: str,
@@ -123,40 +169,10 @@ async def start_job(
     job_id = str(uuid.uuid4())
     work_cwd = (cwd or "/workspace").strip() or "/workspace"
     log_path = _log_guest(job_id)
-    quoted_cmd = shlex.quote(command)
-    quoted_cwd = shlex.quote(work_cwd)
-    quoted_log = shlex.quote(log_path)
-
-    mkdir_code, _, mkdir_err = await backend.exec(
-        name,
-        "mkdir",
-        ["-p", JOBS_DIR_GUEST],
-        cwd="/workspace",
-        timeout_seconds=15,
+    await _ensure_jobs_dir(backend, name)
+    pid = await _spawn_detached(
+        backend, name, command=command, cwd=work_cwd, log_path=log_path
     )
-    if mkdir_code != 0:
-        raise RuntimeError(mkdir_err or "Failed to create jobs directory")
-
-    # nohup sh -c '<command>' > log 2>&1 & echo $!
-    start_script = (
-        f"cd {quoted_cwd} && "
-        f"nohup sh -c {quoted_cmd} > {quoted_log} 2>&1 & echo $!"
-    )
-    code, stdout, stderr = await backend.exec(
-        name,
-        "sh",
-        ["-c", start_script],
-        cwd="/workspace",
-        timeout_seconds=20,
-    )
-    if code != 0:
-        raise RuntimeError(stderr or stdout or "Failed to start job")
-
-    pid_str = (stdout or "").strip().splitlines()[-1].strip() if stdout else ""
-    try:
-        pid = int(pid_str)
-    except ValueError as exc:
-        raise RuntimeError(f"Failed to parse job pid from: {stdout!r}") from exc
 
     meta: dict[str, Any] = {
         "id": job_id,
@@ -172,6 +188,138 @@ async def start_job(
     }
     await _write_meta(backend, name, meta)
     return meta
+
+
+async def update_job(
+    backend: SandboxBackend,
+    name: str,
+    job_id: str,
+    *,
+    title: str | None = None,
+    command: str | None = None,
+    cwd: str | None = None,
+) -> dict[str, Any]:
+    """Patch job metadata. Command/cwd only when the process is not running."""
+    meta = await get_job(backend, name, job_id)
+    if meta is None:
+        raise KeyError(job_id)
+    status = str(meta.get("status") or "")
+    running = status == "running"
+    next_meta = {**meta}
+    if title is not None:
+        next_meta["title"] = title.strip() or str(meta.get("title") or "job")
+    if command is not None or cwd is not None:
+        if running:
+            raise RuntimeError("Stop the job before changing command or working directory")
+        if command is not None:
+            cmd = command.strip()
+            if not cmd:
+                raise ValueError("command must not be empty")
+            next_meta["command"] = cmd
+        if cwd is not None:
+            next_meta["cwd"] = cwd.strip() or "/workspace"
+    next_meta["updated_at"] = _utc_now()
+    await _write_meta(backend, name, next_meta)
+    return next_meta
+
+
+async def start_existing_job(
+    backend: SandboxBackend,
+    name: str,
+    job_id: str,
+) -> dict[str, Any]:
+    """Start a stopped job using its stored command/cwd (same job id)."""
+    meta = await get_job(backend, name, job_id)
+    if meta is None:
+        raise KeyError(job_id)
+    status = str(meta.get("status") or "")
+    if status == "running":
+        raise RuntimeError("Job is already running")
+    command = str(meta.get("command") or "").strip()
+    if not command:
+        raise RuntimeError("Job has no command to start")
+    work_cwd = str(meta.get("cwd") or "/workspace").strip() or "/workspace"
+    log_path = str(meta.get("log_path") or _log_guest(job_id))
+    await _ensure_jobs_dir(backend, name)
+    # Separator so restarts are visible in the same log file
+    await backend.exec(
+        name,
+        "sh",
+        [
+            "-c",
+            (
+                f"printf '\\n----- restart %s -----\\n' "
+                f"{shlex.quote(_utc_now())} >> {shlex.quote(log_path)} 2>/dev/null || true"
+            ),
+        ],
+        cwd="/workspace",
+        timeout_seconds=10,
+    )
+    pid = await _spawn_detached(
+        backend,
+        name,
+        command=command,
+        cwd=work_cwd,
+        log_path=log_path,
+        append_log=True,
+    )
+    meta = {
+        **meta,
+        "pid": pid,
+        "status": "running",
+        "exit_code": None,
+        "updated_at": _utc_now(),
+        "log_path": log_path,
+        "cwd": work_cwd,
+    }
+    await _write_meta(backend, name, meta)
+    return meta
+
+
+async def restart_job(
+    backend: SandboxBackend,
+    name: str,
+    job_id: str,
+) -> dict[str, Any]:
+    """Stop if running, then start again with the same job id."""
+    meta = await get_job(backend, name, job_id)
+    if meta is None:
+        raise KeyError(job_id)
+    if str(meta.get("status") or "") == "running":
+        await kill_job(backend, name, job_id)
+    return await start_existing_job(backend, name, job_id)
+
+
+async def delete_job(
+    backend: SandboxBackend,
+    name: str,
+    job_id: str,
+) -> dict[str, Any]:
+    """Stop if needed, then remove job metadata and log files."""
+    meta = await get_job(backend, name, job_id)
+    if meta is None:
+        raise KeyError(job_id)
+    if str(meta.get("status") or "") == "running":
+        try:
+            meta = await kill_job(backend, name, job_id)
+        except Exception:  # noqa: BLE001
+            logger.debug("kill before delete failed name=%s id=%s", name, job_id, exc_info=True)
+    log_path = str(meta.get("log_path") or _log_guest(job_id))
+    meta_rel = _meta_rel(job_id)
+    await backend.exec(
+        name,
+        "sh",
+        [
+            "-c",
+            (
+                f"rm -f {shlex.quote(meta_rel)} {shlex.quote(log_path)} "
+                f"{shlex.quote(_log_guest(job_id))} 2>/dev/null || true"
+            ),
+        ],
+        cwd="/workspace",
+        timeout_seconds=15,
+    )
+    return {**meta, "status": "deleted", "updated_at": _utc_now()}
 
 
 async def list_jobs(backend: SandboxBackend, name: str) -> list[dict[str, Any]]:

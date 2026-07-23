@@ -54,7 +54,9 @@ export function catalogReposToWorkspace(
 ): WorkspaceRepo[] {
   const repos = catalog?.length ? catalog : []
   if (repos.length === 0) {
-    return [{ id: 'main', label: 'workspace', path: '.', hasGit: false }]
+    // No attached remotes — do not invent a ghost "workspace" repo (that drove
+    // fake branch dropdowns like experiment/charts on empty API projects).
+    return []
   }
   return repos.map((r, i) => {
     // Prefer explicit localPath; fall back to URL/label basename.

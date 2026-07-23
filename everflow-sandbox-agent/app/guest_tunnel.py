@@ -11,6 +11,11 @@ Protocol (both directions over a single stream)::
     DATA  | conn_id:u32 | length:u32 | payload
     CLOSE | conn_id:u32
 
+Host→guest OPEN asks the guest to dial the app port. Guest→host OPEN is an
+ack that the dial succeeded (host must wait for it before sending DATA).
+Guest buffers early DATA until the dial completes so WebSocket handshakes
+are not dropped.
+
 On the agent host we listen on 127.0.0.1:ephemeral; each accepted TCP client
 gets a conn_id and is framed over the shared guest stream. The guest dials
 127.0.0.1:{guest_port} per OPEN and pipes bytes.
@@ -31,6 +36,7 @@ _MSG_OPEN = 1
 _MSG_DATA = 2
 _MSG_CLOSE = 3
 _MAX_FRAME = 4 * 1024 * 1024
+_OPEN_ACK_TIMEOUT_S = 20.0
 
 # Guest-side multiplexer (single process, many local TCP conns)
 _MUX_SCRIPT = r"""
@@ -41,6 +47,7 @@ MSG_OPEN, MSG_DATA, MSG_CLOSE = 1, 2, 3
 MAX = 4 * 1024 * 1024
 port = int(os.environ["EF_PORT"])
 socks = {}
+pending = defaultdict(bytearray)
 lock = threading.Lock()
 stdout_lock = threading.Lock()
 
@@ -63,6 +70,17 @@ def write_msg(kind, conn_id, payload=b""):
             sys.stdout.buffer.write(struct.pack("!BI", kind, conn_id))
         sys.stdout.buffer.flush()
 
+def flush_pending(conn_id, sock):
+    with lock:
+        buf = pending.pop(conn_id, None)
+    if not buf:
+        return True
+    try:
+        sock.sendall(bytes(buf))
+        return True
+    except Exception:
+        return False
+
 def reader_loop(conn_id, sock):
     try:
         while True:
@@ -79,6 +97,7 @@ def reader_loop(conn_id, sock):
             pass
         with lock:
             socks.pop(conn_id, None)
+            pending.pop(conn_id, None)
         try:
             write_msg(MSG_CLOSE, conn_id)
         except Exception:
@@ -95,10 +114,23 @@ try:
             except Exception as e:
                 sys.stderr.write("open fail %s: %s\n" % (conn_id, e))
                 sys.stderr.flush()
+                with lock:
+                    pending.pop(conn_id, None)
                 write_msg(MSG_CLOSE, conn_id)
                 continue
             with lock:
                 socks[conn_id] = sock
+            if not flush_pending(conn_id, sock):
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                with lock:
+                    socks.pop(conn_id, None)
+                write_msg(MSG_CLOSE, conn_id)
+                continue
+            # Ack dial success so host can safely send the WS/HTTP request body
+            write_msg(MSG_OPEN, conn_id)
             t = threading.Thread(target=reader_loop, args=(conn_id, sock), daemon=True)
             t.start()
         elif kind == MSG_DATA:
@@ -106,23 +138,33 @@ try:
             if n > MAX:
                 raise RuntimeError("frame too large")
             data = read_exact(n) if n else b""
+            if not data:
+                continue
             with lock:
                 sock = socks.get(conn_id)
-            if sock is not None and data:
+                if sock is None:
+                    # Dial still in progress (or OPEN not yet seen) — buffer
+                    pending[conn_id].extend(data)
+                    if len(pending[conn_id]) > MAX:
+                        pending.pop(conn_id, None)
+                        write_msg(MSG_CLOSE, conn_id)
+                    continue
+            try:
+                sock.sendall(data)
+            except Exception:
                 try:
-                    sock.sendall(data)
+                    sock.close()
                 except Exception:
-                    try:
-                        sock.close()
-                    except Exception:
-                        pass
-                    with lock:
-                        socks.pop(conn_id, None)
-                    write_msg(MSG_CLOSE, conn_id)
+                    pass
+                with lock:
+                    socks.pop(conn_id, None)
+                    pending.pop(conn_id, None)
+                write_msg(MSG_CLOSE, conn_id)
         elif kind == MSG_CLOSE:
             conn_id = struct.unpack("!I", read_exact(4))[0]
             with lock:
                 sock = socks.pop(conn_id, None)
+                pending.pop(conn_id, None)
             if sock is not None:
                 try:
                     sock.close()
@@ -139,6 +181,7 @@ finally:
     with lock:
         items = list(socks.items())
         socks.clear()
+        pending.clear()
     for _, sock in items:
         try:
             sock.close()
@@ -152,6 +195,8 @@ class _Conn:
     conn_id: int
     writer: asyncio.StreamWriter
     queue: asyncio.Queue[bytes | None] = field(default_factory=asyncio.Queue)
+    open_ack: asyncio.Event = field(default_factory=asyncio.Event)
+    closed: bool = False
 
 
 @dataclass
@@ -309,7 +354,18 @@ class GuestTunnelManager:
         )
         try:
             await self._send(tunnel, struct.pack("!BI", _MSG_OPEN, conn_id))
-            # Pump host → guest and guest → host (queue filled by reader loop)
+            # Wait for guest dial ack before pumping request bytes (WS handshake).
+            try:
+                await asyncio.wait_for(conn.open_ack.wait(), timeout=_OPEN_ACK_TIMEOUT_S)
+            except asyncio.TimeoutError as exc:
+                raise RuntimeError(
+                    f"guest dial ack timeout conn={conn_id} port={tunnel.guest_port}"
+                ) from exc
+            if conn.closed or not tunnel.alive:
+                raise RuntimeError(
+                    f"guest dial failed conn={conn_id} port={tunnel.guest_port}"
+                )
+
             async def host_to_guest() -> None:
                 try:
                     while tunnel.alive:
@@ -397,9 +453,15 @@ class GuestTunnelManager:
                                 break
                             (conn_id,) = struct.unpack("!I", buf[1:5])
                             buf = buf[5:]
-                            if kind == _MSG_CLOSE:
-                                conn = tunnel.conns.get(conn_id)
+                            conn = tunnel.conns.get(conn_id)
+                            if kind == _MSG_OPEN:
+                                # Guest dial succeeded — unblock host→guest pump
                                 if conn is not None:
+                                    conn.open_ack.set()
+                            elif kind == _MSG_CLOSE:
+                                if conn is not None:
+                                    conn.closed = True
+                                    conn.open_ack.set()
                                     await conn.queue.put(None)
                         else:
                             logger.warning("mux bad kind=%s", kind)
@@ -432,6 +494,8 @@ class GuestTunnelManager:
         finally:
             tunnel.alive = False
             for conn in list(tunnel.conns.values()):
+                conn.closed = True
+                conn.open_ack.set()
                 try:
                     await conn.queue.put(None)
                 except Exception:

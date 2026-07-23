@@ -276,6 +276,52 @@ class SandboxAgentClient:
             f"/v1/sandboxes/{name}/jobs/{job_id}/kill",
         )
 
+    async def stop_job(self, name: str, job_id: str) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/v1/sandboxes/{name}/jobs/{job_id}/stop",
+        )
+
+    async def start_existing_job(self, name: str, job_id: str) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/v1/sandboxes/{name}/jobs/{job_id}/start",
+        )
+
+    async def restart_job(self, name: str, job_id: str) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/v1/sandboxes/{name}/jobs/{job_id}/restart",
+        )
+
+    async def update_job(
+        self,
+        name: str,
+        job_id: str,
+        *,
+        title: str | None = None,
+        command: str | None = None,
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if title is not None:
+            payload["title"] = title
+        if command is not None:
+            payload["command"] = command
+        if cwd is not None:
+            payload["cwd"] = cwd
+        return await self._request(
+            "PATCH",
+            f"/v1/sandboxes/{name}/jobs/{job_id}",
+            json=payload,
+        )
+
+    async def delete_job(self, name: str, job_id: str) -> dict[str, Any]:
+        return await self._request(
+            "DELETE",
+            f"/v1/sandboxes/{name}/jobs/{job_id}",
+        )
+
     async def preview_proxy_stream(
         self,
         name: str,

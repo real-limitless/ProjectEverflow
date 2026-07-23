@@ -649,6 +649,14 @@ export type ApiWebSearchHit = {
   title: string
   url: string
   snippet: string
+  reader_markdown?: string | null
+}
+
+export type ApiWebReadResult = {
+  url: string
+  title: string
+  markdown: string
+  content_type: string
 }
 
 export async function searchKnowledgeWeb(
@@ -657,6 +665,17 @@ export async function searchKnowledgeWeb(
 ): Promise<ApiWebSearchHit[]> {
   const params = new URLSearchParams({ q })
   return apiFetch(`/api/v1/projects/${projectId}/knowledge/web-search?${params}`)
+}
+
+/** Fetch a public page and extract clean Markdown for Reader mode. */
+export async function fetchKnowledgeWebRead(
+  projectId: string,
+  url: string,
+): Promise<ApiWebReadResult> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/web-read`, {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  })
 }
 
 export async function listProjectAgents(projectId: string): Promise<ApiProjectAgent[]> {

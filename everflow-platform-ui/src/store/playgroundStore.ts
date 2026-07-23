@@ -802,35 +802,49 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         return harnessesFromIds([...DEFAULT_AGENT_HARNESS_IDS])
       })(),
       repos: (() => {
-        const fromApi = apiProject.repos?.length
-          ? apiProject.repos.map((r, i) => ({
-              id: r.id || `repo-${i}`,
-              label: r.label || r.id || `repo-${i}`,
-              active: Boolean(r.active),
-              url: r.url || undefined,
-              branch: r.branch || 'main',
-              provider: (r.provider as import('@/types/project').RepoProvider) || 'github',
-              localPath: r.local_path || undefined,
-              cloneStatus: r.clone_status || undefined,
-              cloneError: r.clone_error || undefined,
-            }))
-          : null
-        if (fromApi?.length) {
-          if (!fromApi.some((r) => r.active)) fromApi[0].active = true
-          return fromApi
+        const mapped = (apiProject.repos || [])
+          .map((r, i) => ({
+            id: r.id || `repo-${i}`,
+            label: r.label || r.id || `repo-${i}`,
+            active: Boolean(r.active),
+            url: r.url || undefined,
+            branch: r.branch || 'main',
+            provider: (r.provider as import('@/types/project').RepoProvider) || 'github',
+            localPath: r.local_path || undefined,
+            cloneStatus: r.clone_status || undefined,
+            cloneError: r.clone_error || undefined,
+          }))
+          // Drop catalog placeholders (no remote) — they are not attached repos.
+          .filter(
+            (r) =>
+              Boolean(r.url?.trim()) ||
+              (r.provider && r.provider !== 'none') ||
+              Boolean(r.localPath && r.localPath !== '.'),
+          )
+        if (mapped.length) {
+          if (!mapped.some((r) => r.active)) mapped[0].active = true
+          return mapped
         }
-        return (
-          existing?.repos ||
-          seed?.repos || [
-            {
-              id: 'main',
-              label: `${apiProject.slug}/app`,
-              active: true,
-              branch: 'main',
-              provider: 'none' as const,
-            },
-          ]
-        )
+        // Prefer clearing stale local placeholders when the API has no remotes.
+        if (existing?.repos?.length) {
+          const kept = existing.repos.filter(
+            (r) =>
+              Boolean(r.url?.trim()) ||
+              (r.provider && r.provider !== 'none') ||
+              Boolean(r.localPath && r.localPath !== '.'),
+          )
+          if (kept.length) return kept
+        }
+        if (seed?.repos?.length) {
+          const kept = seed.repos.filter(
+            (r) =>
+              Boolean(r.url?.trim()) ||
+              (r.provider && r.provider !== 'none') ||
+              Boolean(r.localPath && r.localPath !== '.'),
+          )
+          if (kept.length) return kept
+        }
+        return []
       })(),
       convs: existing?.convs || seed?.convs || [{ id: 'c1', title: 'New chat', meta: 'Just now' }],
       messages: existing?.messages || seed?.messages || [],

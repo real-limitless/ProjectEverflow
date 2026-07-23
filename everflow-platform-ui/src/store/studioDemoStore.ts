@@ -312,82 +312,86 @@ function seedProject(projectId: string): ProjectStudioState {
   ]
     : []
 
-  const commits = [
-    {
-      id: 'c-a91',
-      hash: 'a91f3c2b8e4d',
-      shortHash: 'a91f3c2',
-      message: 'Fix MetricCard warning threshold',
-      author: 'you',
-      when: '2m ago',
-      parents: ['c-b02'],
-      branchLabels: ['fix/metric-threshold', 'HEAD'],
-      files: ['src/MetricCard.tsx', 'src/MetricCard.test.tsx'],
-      isHead: true,
-      repoId: primaryRepoId,
-    },
-    {
-      id: 'c-b02',
-      hash: 'b02e881c1a90',
-      shortHash: 'b02e881',
-      message: 'Wire nginx health checks',
-      author: 'you',
-      when: 'yesterday',
-      parents: ['c-c11'],
-      branchLabels: ['main'],
-      files: ['deploy/nginx.conf'],
-      repoId: primaryRepoId,
-    },
-    {
-      id: 'c-c11',
-      hash: 'c11d404a77fe',
-      shortHash: 'c11d404',
-      message: 'Add metrics scrape workflow',
-      author: 'rafi',
-      when: '3d ago',
-      parents: ['c-d20'],
-      branchLabels: [],
-      files: ['workflows/scrape.json'],
-      repoId: primaryRepoId,
-    },
-    {
-      id: 'c-d20',
-      hash: 'd20f991e55aa',
-      shortHash: 'd20f991',
-      message: 'Initial studio layout',
-      author: 'ayu',
-      when: '1w ago',
-      parents: [],
-      branchLabels: [],
-      files: ['src/App.tsx'],
-      repoId: primaryRepoId,
-    },
-    {
-      id: 'c-e33',
-      hash: 'e33a102bb901',
-      shortHash: 'e33a102',
-      message: 'Experiment: dark chart tokens',
-      author: 'you',
-      when: '4d ago',
-      parents: ['c-c11'],
-      branchLabels: ['experiment/charts'],
-      files: ['src/styles/charts.css'],
-      repoId: primaryRepoId,
-    },
-    ...secondaryRepos.slice(0, 2).map((r, i) => ({
-      id: `c-sec-${r.id}`,
-      hash: `sec${i}0000000`,
-      shortHash: `sec${i}000`,
-      message: `Bootstrap ${r.label}`,
-      author: 'you',
-      when: `${i + 2}d ago`,
-      parents: [] as string[],
-      branchLabels: ['main', ...(i === 0 ? ['HEAD'] : [])],
-      files: ['README.md'],
-      isHead: i === 0,
-      repoId: r.id,
-    })),
-  ]
+  // Same gate as issues/PRs — API projects must not get showcase commit/branch labels
+  // (those fed the Repository branch dropdown: fix/metric-threshold, experiment/charts, …).
+  const commits = useDemoCatalog
+    ? [
+        {
+          id: 'c-a91',
+          hash: 'a91f3c2b8e4d',
+          shortHash: 'a91f3c2',
+          message: 'Fix MetricCard warning threshold',
+          author: 'you',
+          when: '2m ago',
+          parents: ['c-b02'],
+          branchLabels: ['fix/metric-threshold', 'HEAD'],
+          files: ['src/MetricCard.tsx', 'src/MetricCard.test.tsx'],
+          isHead: true,
+          repoId: primaryRepoId,
+        },
+        {
+          id: 'c-b02',
+          hash: 'b02e881c1a90',
+          shortHash: 'b02e881',
+          message: 'Wire nginx health checks',
+          author: 'you',
+          when: 'yesterday',
+          parents: ['c-c11'],
+          branchLabels: ['main'],
+          files: ['deploy/nginx.conf'],
+          repoId: primaryRepoId,
+        },
+        {
+          id: 'c-c11',
+          hash: 'c11d404a77fe',
+          shortHash: 'c11d404',
+          message: 'Add metrics scrape workflow',
+          author: 'rafi',
+          when: '3d ago',
+          parents: ['c-d20'],
+          branchLabels: [],
+          files: ['workflows/scrape.json'],
+          repoId: primaryRepoId,
+        },
+        {
+          id: 'c-d20',
+          hash: 'd20f991e55aa',
+          shortHash: 'd20f991',
+          message: 'Initial studio layout',
+          author: 'ayu',
+          when: '1w ago',
+          parents: [],
+          branchLabels: [],
+          files: ['src/App.tsx'],
+          repoId: primaryRepoId,
+        },
+        {
+          id: 'c-e33',
+          hash: 'e33a102bb901',
+          shortHash: 'e33a102',
+          message: 'Experiment: dark chart tokens',
+          author: 'you',
+          when: '4d ago',
+          parents: ['c-c11'],
+          branchLabels: ['experiment/charts'],
+          files: ['src/styles/charts.css'],
+          repoId: primaryRepoId,
+        },
+        ...secondaryRepos.slice(0, 2).map((r, i) => ({
+          id: `c-sec-${r.id}`,
+          hash: `sec${i}0000000`,
+          shortHash: `sec${i}000`,
+          message: `Bootstrap ${r.label}`,
+          author: 'you',
+          when: `${i + 2}d ago`,
+          parents: [] as string[],
+          branchLabels: ['main', ...(i === 0 ? ['HEAD'] : [])],
+          files: ['README.md'],
+          isHead: i === 0,
+          repoId: r.id,
+        })),
+      ]
+    : []
 
   const workflows: WorkflowDef[] = d.workflows.map((w, i) => ({
     id: `wf-${i}`,
@@ -815,6 +819,14 @@ interface StudioDemoState {
   // Jobs
   createJob: (projectId: string, data: { title: string; type: string; schedule?: string }) => void
   killJob: (projectId: string, id: string) => void
+  updateJob: (
+    projectId: string,
+    id: string,
+    patch: Partial<Pick<BackgroundJob, 'title' | 'type' | 'schedule' | 'command' | 'cwd'>>,
+  ) => void
+  deleteJob: (projectId: string, id: string) => void
+  startJob: (projectId: string, id: string) => void
+  restartJob: (projectId: string, id: string) => void
 
   // Agents
   createAgent: (projectId: string, data: Omit<AgentDefinition, 'id'>) => void
@@ -1022,8 +1034,42 @@ export const useStudioDemoStore = create<StudioDemoState>((set, get) => ({
       ...s,
       jobs: s.jobs.map((j) =>
         j.id === id && (j.status === 'run' || j.status === 'queued')
-          ? { ...j, status: 'cancelled', progress: 'killed (demo)' }
+          ? { ...j, status: 'cancelled', progress: 'stopped (demo)' }
           : j,
+      ),
+    }))
+  },
+
+  updateJob: (projectId, id, patch) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      jobs: s.jobs.map((j) => (j.id === id ? { ...j, ...patch } : j)),
+    }))
+  },
+
+  deleteJob: (projectId, id) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      jobs: s.jobs.filter((j) => j.id !== id),
+    }))
+  },
+
+  startJob: (projectId, id) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      jobs: s.jobs.map((j) =>
+        j.id === id && j.status !== 'run'
+          ? { ...j, status: 'run', progress: 'step 1/3' }
+          : j,
+      ),
+    }))
+  },
+
+  restartJob: (projectId, id) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      jobs: s.jobs.map((j) =>
+        j.id === id ? { ...j, status: 'run', progress: 'restarted (demo)' } : j,
       ),
     }))
   },

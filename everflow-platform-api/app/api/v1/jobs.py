@@ -24,6 +24,12 @@ class JobCreateBody(BaseModel):
     cwd: str | None = Field(default=None, max_length=1024)
 
 
+class JobUpdateBody(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    command: str | None = Field(default=None, min_length=1, max_length=4000)
+    cwd: str | None = Field(default=None, max_length=1024)
+
+
 class JobRead(BaseModel):
     id: str
     title: str
@@ -173,20 +179,32 @@ async def get_project_job_logs(
     )
 
 
-@router.post(
-    "/projects/{project_id}/jobs/{job_id}/kill",
-    response_model=JobRead,
-)
-async def kill_project_job(
+async def _job_action(
+    *,
+    project: Project,
+    session: AsyncSession,
+    settings: Settings,
     job_id: str,
-    project: Project = Depends(get_project_for_member),
-    session: AsyncSession = Depends(get_async_session),
-    settings: Settings = Depends(get_settings),
+    action: str,
 ) -> JobRead:
     name = _require_running_sandbox(project)
     client = SandboxAgentClient(settings)
     try:
-        data = await client.kill_job(name, job_id)
+        if action == "kill":
+            data = await client.kill_job(name, job_id)
+        elif action == "stop":
+            data = await client.stop_job(name, job_id)
+        elif action == "start":
+            data = await client.start_existing_job(name, job_id)
+        elif action == "restart":
+            data = await client.restart_job(name, job_id)
+        elif action == "delete":
+            data = await client.delete_job(name, job_id)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unknown job action: {action}",
+            )
     except SandboxAgentError as exc:
         if exc.status_code == 404:
             detail = str(exc).lower()
@@ -199,3 +217,138 @@ async def kill_project_job(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from exc
         raise _agent_http_error(exc) from exc
     return _job_read(data)
+
+
+@router.post(
+    "/projects/{project_id}/jobs/{job_id}/kill",
+    response_model=JobRead,
+)
+async def kill_project_job(
+    job_id: str,
+    project: Project = Depends(get_project_for_member),
+    session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
+) -> JobRead:
+    return await _job_action(
+        project=project,
+        session=session,
+        settings=settings,
+        job_id=job_id,
+        action="kill",
+    )
+
+
+@router.post(
+    "/projects/{project_id}/jobs/{job_id}/stop",
+    response_model=JobRead,
+)
+async def stop_project_job(
+    job_id: str,
+    project: Project = Depends(get_project_for_member),
+    session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
+) -> JobRead:
+    return await _job_action(
+        project=project,
+        session=session,
+        settings=settings,
+        job_id=job_id,
+        action="stop",
+    )
+
+
+@router.post(
+    "/projects/{project_id}/jobs/{job_id}/start",
+    response_model=JobRead,
+)
+async def start_project_job(
+    job_id: str,
+    project: Project = Depends(get_project_for_member),
+    session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
+) -> JobRead:
+    return await _job_action(
+        project=project,
+        session=session,
+        settings=settings,
+        job_id=job_id,
+        action="start",
+    )
+
+
+@router.post(
+    "/projects/{project_id}/jobs/{job_id}/restart",
+    response_model=JobRead,
+)
+async def restart_project_job(
+    job_id: str,
+    project: Project = Depends(get_project_for_member),
+    session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
+) -> JobRead:
+    return await _job_action(
+        project=project,
+        session=session,
+        settings=settings,
+        job_id=job_id,
+        action="restart",
+    )
+
+
+@router.patch(
+    "/projects/{project_id}/jobs/{job_id}",
+    response_model=JobRead,
+)
+async def update_project_job(
+    job_id: str,
+    body: JobUpdateBody,
+    project: Project = Depends(get_project_for_member),
+    session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
+) -> JobRead:
+    if body.title is None and body.command is None and body.cwd is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide at least one of title, command, cwd",
+        )
+    name = _require_running_sandbox(project)
+    client = SandboxAgentClient(settings)
+    try:
+        data = await client.update_job(
+            name,
+            job_id,
+            title=body.title,
+            command=body.command,
+            cwd=body.cwd,
+        )
+    except SandboxAgentError as exc:
+        if exc.status_code == 404:
+            detail = str(exc).lower()
+            if "sandbox" in detail:
+                await mark_sandbox_missing(session, project)
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Sandbox missing on agent; recreate the sandbox",
+                ) from exc
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from exc
+        raise _agent_http_error(exc) from exc
+    return _job_read(data)
+
+
+@router.delete(
+    "/projects/{project_id}/jobs/{job_id}",
+    response_model=JobRead,
+)
+async def delete_project_job(
+    job_id: str,
+    project: Project = Depends(get_project_for_member),
+    session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
+) -> JobRead:
+    return await _job_action(
+        project=project,
+        session=session,
+        settings=settings,
+        job_id=job_id,
+        action="delete",
+    )

@@ -63,19 +63,9 @@ export function createProjectFromDraft(
     ? apiReposToProjectRepos(opts.apiProject.repos)
     : null
 
+  // Empty means no remotes attached — do not invent a provider:none "main" placeholder.
   const draftRepos =
-    draft.repos.length > 0
-      ? normalizeReposForCreate(draft.repos)
-      : [
-          {
-            id: 'main',
-            label: `${baseSlug}/app`,
-            active: true,
-            branch: 'main',
-            provider: 'none' as const,
-            cloneStatus: 'skipped' as const,
-          },
-        ]
+    draft.repos.length > 0 ? normalizeReposForCreate(draft.repos) : []
 
   const normalizedRepos: ProjectRepo[] = apiRepos?.length
     ? normalizeReposForCreate(

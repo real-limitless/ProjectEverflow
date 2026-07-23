@@ -84,3 +84,15 @@ class WebSearchHit(BaseModel):
     title: str
     url: str
     snippet: str
+    reader_markdown: str | None = None
+
+
+class WebReadRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+
+class WebReadResult(BaseModel):
+    url: str
+    title: str
+    markdown: str
+    content_type: str = "text/html"

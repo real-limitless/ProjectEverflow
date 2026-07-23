@@ -24,6 +24,12 @@ export interface ApiJobLogs {
   content: string
 }
 
+export type JobUpdateBody = {
+  title?: string
+  command?: string
+  cwd?: string
+}
+
 export function listJobs(projectId: string) {
   return apiFetch<ApiJob[]>(`/api/v1/projects/${projectId}/jobs`)
 }
@@ -38,6 +44,19 @@ export function createJob(
   })
 }
 
+export function updateJob(projectId: string, jobId: string, body: JobUpdateBody) {
+  return apiFetch<ApiJob>(`/api/v1/projects/${projectId}/jobs/${jobId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export function deleteJob(projectId: string, jobId: string) {
+  return apiFetch<ApiJob>(`/api/v1/projects/${projectId}/jobs/${jobId}`, {
+    method: 'DELETE',
+  })
+}
+
 export function getJobLogs(projectId: string, jobId: string, tail = 200) {
   const q = new URLSearchParams({ tail: String(tail) })
   return apiFetch<ApiJobLogs>(`/api/v1/projects/${projectId}/jobs/${jobId}/logs?${q}`)
@@ -45,6 +64,24 @@ export function getJobLogs(projectId: string, jobId: string, tail = 200) {
 
 export function killJob(projectId: string, jobId: string) {
   return apiFetch<ApiJob>(`/api/v1/projects/${projectId}/jobs/${jobId}/kill`, {
+    method: 'POST',
+  })
+}
+
+export function stopJob(projectId: string, jobId: string) {
+  return apiFetch<ApiJob>(`/api/v1/projects/${projectId}/jobs/${jobId}/stop`, {
+    method: 'POST',
+  })
+}
+
+export function startJob(projectId: string, jobId: string) {
+  return apiFetch<ApiJob>(`/api/v1/projects/${projectId}/jobs/${jobId}/start`, {
+    method: 'POST',
+  })
+}
+
+export function restartJob(projectId: string, jobId: string) {
+  return apiFetch<ApiJob>(`/api/v1/projects/${projectId}/jobs/${jobId}/restart`, {
     method: 'POST',
   })
 }

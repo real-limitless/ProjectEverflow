@@ -1424,6 +1424,21 @@ body,
 .pf-v6-c-page.pg-shell .pf-v6-c-masthead__brand {
   min-width: 0;
   flex-shrink: 1;
+  align-self: center;
+  align-items: center;
+}
+
+/* Text-only brand: center with hamburger column; drop PF logo image box sizing */
+.pf-v6-c-page.pg-shell .pf-v6-c-masthead__logo.masthead-brand-text {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  min-height: var(--pg-sidebar-icon-tile);
+  --pf-v6-c-masthead__logo--Width: auto;
+  --pf-v6-c-masthead__logo--MaxHeight: none;
 }
 
 .pf-v6-c-page.pg-shell .pf-v6-c-masthead__content {

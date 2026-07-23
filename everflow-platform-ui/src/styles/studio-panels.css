@@ -1108,6 +1108,59 @@
   background: var(--pf-t--global--background--color--secondary--default);
 }
 
+.reader-mode-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem 0;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.reader-mode-error {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid var(--pf-t--global--border--color--status--danger--default);
+  background: var(--pf-t--global--background--color--secondary--default);
+  font-size: var(--pf-t--global--font--size--sm);
+}
+
+.reader-mode-website {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.reader-mode-website-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.reader-mode-iframe {
+  flex: 1;
+  width: 100%;
+  min-height: 420px;
+  height: min(70vh, 720px);
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 8px;
+  background: var(--pf-t--global--background--color--primary--default);
+}
+
+.reader-mode-iframe-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 1.25rem;
+  border: 1px dashed var(--pf-t--global--border--color--default);
+  border-radius: 8px;
+}
+
 .research-chat {
   border: 1px solid var(--pf-t--global--border--color--default);
   border-radius: 8px;

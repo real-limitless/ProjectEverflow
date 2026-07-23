@@ -14,15 +14,19 @@ import { getProject } from '@/data/projects'
 import { isDemoMode } from '@/lib/api'
 import {
   createJob as createApiJob,
+  deleteJob as deleteApiJob,
   getJobLogs,
-  killJob as killApiJob,
   listJobs,
+  restartJob as restartApiJob,
+  startJob as startApiJob,
+  stopJob as stopApiJob,
+  updateJob as updateApiJob,
   type ApiJob,
 } from '@/lib/jobsApi'
 import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { useProjectStudio, useStudioDemoStore } from '@/store/studioDemoStore'
-import type { JobStatus } from '@/types/studio'
+import type { BackgroundJob, JobStatus } from '@/types/studio'
 import { StatusLabel } from './statusLabel'
 
 const LIST_POLL_MS = 4000
@@ -51,9 +55,24 @@ function mapApiStatus(status: string): JobStatus {
 function statusLabel(status: string): string {
   if (status === 'running' || status === 'run') return 'running'
   if (status === 'exited' || status === 'ok') return 'exited'
-  if (status === 'killed' || status === 'cancelled') return 'killed'
+  if (status === 'killed' || status === 'cancelled') return 'stopped'
   if (status === 'error' || status === 'err') return 'error'
   return status
+}
+
+function isRunningStatus(status: string): boolean {
+  return status === 'running' || status === 'run' || status === 'queued'
+}
+
+function isStoppedStatus(status: string): boolean {
+  return (
+    status === 'exited' ||
+    status === 'ok' ||
+    status === 'killed' ||
+    status === 'cancelled' ||
+    status === 'error' ||
+    status === 'err'
+  )
 }
 
 export function JobsPanel() {
@@ -68,13 +87,19 @@ export function JobsPanel() {
   const demoJobs = useProjectStudio(projectId).jobs
   const createDemoJob = useStudioDemoStore((s) => s.createJob)
   const killDemoJob = useStudioDemoStore((s) => s.killJob)
+  const updateDemoJob = useStudioDemoStore((s) => s.updateJob)
+  const deleteDemoJob = useStudioDemoStore((s) => s.deleteJob)
+  const startDemoJob = useStudioDemoStore((s) => s.startJob)
+  const restartDemoJob = useStudioDemoStore((s) => s.restartJob)
 
   const [apiJobs, setApiJobs] = useState<ApiJob[]>([])
   const [loading, setLoading] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [logsById, setLogsById] = useState<Record<string, string>>({})
+  const [busyId, setBusyId] = useState<string | null>(null)
 
   const [open, setOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [command, setCommand] = useState('npm run dev')
   const [cwd, setCwd] = useState('')
@@ -126,6 +151,7 @@ export function JobsPanel() {
   }, [useApi, projectId, expandedId, sandboxRunning])
 
   const resetForm = () => {
+    setEditingId(null)
     setTitle('')
     setCommand('npm run dev')
     setCwd('')
@@ -133,31 +159,71 @@ export function JobsPanel() {
     setSchedule('')
   }
 
+  const openCreate = () => {
+    resetForm()
+    setOpen(true)
+  }
+
+  const openEditApi = (job: ApiJob) => {
+    setEditingId(job.id)
+    setTitle(job.title)
+    setCommand(job.command)
+    setCwd(job.cwd || '')
+    setOpen(true)
+  }
+
+  const openEditDemo = (job: BackgroundJob) => {
+    setEditingId(job.id)
+    setTitle(job.title)
+    setType(job.type)
+    setSchedule(job.schedule || '')
+    setCommand(job.command || 'npm run dev')
+    setCwd(job.cwd || '')
+    setOpen(true)
+  }
+
   const submit = async () => {
     if (!title.trim()) return
     if (useApi) {
       if (!sandboxRunning) {
-        pushToast('Sandbox must be running to create a job', { kind: 'warning' })
+        pushToast('Sandbox must be running to manage jobs', { kind: 'warning' })
         return
       }
       if (!command.trim()) return
       setSubmitting(true)
       try {
-        const job = await createApiJob(projectId, {
-          title: title.trim(),
-          command: command.trim(),
-          ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
-        })
-        setApiJobs((prev) => [job, ...prev.filter((j) => j.id !== job.id)])
-        pushToast('Job started', {
-          description: `${job.title} · pid ${job.pid ?? '?'}`,
-          kind: 'success',
-        })
+        if (editingId) {
+          const running = apiJobs.some((j) => j.id === editingId && j.status === 'running')
+          const job = await updateApiJob(
+            projectId,
+            editingId,
+            running
+              ? { title: title.trim() }
+              : {
+                  title: title.trim(),
+                  command: command.trim(),
+                  cwd: cwd.trim() || '/workspace',
+                },
+          )
+          setApiJobs((prev) => prev.map((j) => (j.id === job.id ? job : j)))
+          pushToast('Job updated', { description: job.title, kind: 'success' })
+        } else {
+          const job = await createApiJob(projectId, {
+            title: title.trim(),
+            command: command.trim(),
+            ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
+          })
+          setApiJobs((prev) => [job, ...prev.filter((j) => j.id !== job.id)])
+          pushToast('Job started', {
+            description: `${job.title} · pid ${job.pid ?? '?'}`,
+            kind: 'success',
+          })
+          setExpandedId(job.id)
+        }
         resetForm()
         setOpen(false)
-        setExpandedId(job.id)
       } catch (err) {
-        pushToast('Failed to start job', {
+        pushToast(editingId ? 'Failed to update job' : 'Failed to start job', {
           description: err instanceof Error ? err.message : 'Unknown error',
           kind: 'danger',
         })
@@ -167,34 +233,73 @@ export function JobsPanel() {
       return
     }
 
-    createDemoJob(projectId, {
-      title: title.trim(),
-      type,
-      schedule: schedule || undefined,
-    })
-    pushToast('Job created', { description: `${title.trim()} queued`, kind: 'success' })
+    if (editingId) {
+      updateDemoJob(projectId, editingId, {
+        title: title.trim(),
+        type,
+        schedule: schedule || undefined,
+      })
+      pushToast('Job updated', { description: title.trim(), kind: 'success' })
+    } else {
+      createDemoJob(projectId, {
+        title: title.trim(),
+        type,
+        schedule: schedule || undefined,
+      })
+      pushToast('Job created', { description: `${title.trim()} queued`, kind: 'success' })
+    }
     resetForm()
     setOpen(false)
   }
 
-  const onKillApi = async (job: ApiJob) => {
+  const runApiAction = async (
+    job: ApiJob,
+    action: 'stop' | 'start' | 'restart' | 'remove',
+  ) => {
+    setBusyId(job.id)
     try {
-      const updated = await killApiJob(projectId, job.id)
-      setApiJobs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)))
-      pushToast('Kill signal sent', {
-        description: `Stopped ${job.title}`,
-        kind: 'warning',
-      })
+      if (action === 'stop') {
+        const updated = await stopApiJob(projectId, job.id)
+        setApiJobs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)))
+        pushToast('Job stopped', { description: job.title, kind: 'warning' })
+      } else if (action === 'start') {
+        const updated = await startApiJob(projectId, job.id)
+        setApiJobs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)))
+        pushToast('Job started', {
+          description: `${job.title} · pid ${updated.pid ?? '?'}`,
+          kind: 'success',
+        })
+        setExpandedId(job.id)
+      } else if (action === 'restart') {
+        const updated = await restartApiJob(projectId, job.id)
+        setApiJobs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)))
+        pushToast('Job restarted', {
+          description: `${job.title} · pid ${updated.pid ?? '?'}`,
+          kind: 'success',
+        })
+        setExpandedId(job.id)
+      } else {
+        await deleteApiJob(projectId, job.id)
+        setApiJobs((prev) => prev.filter((j) => j.id !== job.id))
+        if (expandedId === job.id) setExpandedId(null)
+        pushToast('Job removed', { description: job.title, kind: 'warning' })
+      }
     } catch (err) {
-      pushToast('Failed to kill job', {
+      pushToast(`Failed to ${action} job`, {
         description: err instanceof Error ? err.message : 'Unknown error',
         kind: 'danger',
       })
+    } finally {
+      setBusyId(null)
     }
   }
 
   const jobs = useApi ? apiJobs : demoJobs
   const canCreate = useApi ? sandboxRunning : true
+  const editingRunning =
+    useApi &&
+    Boolean(editingId) &&
+    apiJobs.some((j) => j.id === editingId && j.status === 'running')
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -202,12 +307,7 @@ export function JobsPanel() {
         <span className="section-label" style={{ margin: 0 }}>
           Background jobs
         </span>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => setOpen(true)}
-          isDisabled={!canCreate}
-        >
+        <Button variant="primary" size="sm" onClick={openCreate} isDisabled={!canCreate}>
           Create job
         </Button>
       </div>
@@ -226,13 +326,15 @@ export function JobsPanel() {
             title="No background jobs"
             body="Create a job to run a long-lived command in the sandbox (for example npm run dev)."
             primaryLabel={canCreate ? 'Create job' : undefined}
-            onPrimary={canCreate ? () => setOpen(true) : undefined}
+            onPrimary={canCreate ? openCreate : undefined}
           />
         ) : useApi ? (
           apiJobs.map((j) => {
             const uiStatus = mapApiStatus(j.status)
             const isExpanded = expandedId === j.id
-            const canKill = j.status === 'running'
+            const running = isRunningStatus(j.status)
+            const stopped = isStoppedStatus(j.status)
+            const busy = busyId === j.id
             return (
               <div className="list-card" key={j.id}>
                 <div className="lc-row">
@@ -242,15 +344,61 @@ export function JobsPanel() {
                 <div className="lc-meta">
                   <code style={{ fontSize: 12 }}>{j.command}</code>
                   {j.cwd ? ` · ${j.cwd}` : ''}
-                  {j.pid != null ? ` · pid ${j.pid}` : ''}
+                  {j.pid != null && running ? ` · pid ${j.pid}` : ''}
                 </div>
-                {canKill && (
-                  <div style={{ marginTop: 8 }}>
-                    <Button variant="secondary" size="sm" onClick={() => void onKillApi(j)}>
-                      Kill
+                <div
+                  style={{
+                    marginTop: 8,
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 8,
+                  }}
+                >
+                  {running && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      isDisabled={busy}
+                      onClick={() => void runApiAction(j, 'stop')}
+                    >
+                      Stop
                     </Button>
-                  </div>
-                )}
+                  )}
+                  {stopped && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      isDisabled={busy}
+                      onClick={() => void runApiAction(j, 'start')}
+                    >
+                      Start
+                    </Button>
+                  )}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    isDisabled={busy}
+                    onClick={() => void runApiAction(j, 'restart')}
+                  >
+                    Restart
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    isDisabled={busy}
+                    onClick={() => openEditApi(j)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    isDisabled={busy}
+                    onClick={() => void runApiAction(j, 'remove')}
+                  >
+                    Remove
+                  </Button>
+                </div>
                 <div style={{ marginTop: 8 }}>
                   <ExpandableSection
                     toggleText={isExpanded ? 'Hide logs' : 'Show logs'}
@@ -275,42 +423,101 @@ export function JobsPanel() {
             )
           })
         ) : (
-          demoJobs.map((j) => (
-            <div className="list-card" key={j.id}>
-              <div className="lc-row">
-                <div className="lc-title">{j.title}</div>
-                <StatusLabel status={j.status} />
-              </div>
-              <div className="lc-meta">
-                {j.type}
-                {j.schedule ? ` · ${j.schedule}` : ''} · {j.progress}
-              </div>
-              {(j.status === 'run' || j.status === 'queued') && (
-                <div style={{ marginTop: 8 }}>
+          demoJobs.map((j) => {
+            const running = isRunningStatus(j.status)
+            const stopped = isStoppedStatus(j.status)
+            return (
+              <div className="list-card" key={j.id}>
+                <div className="lc-row">
+                  <div className="lc-title">{j.title}</div>
+                  <StatusLabel status={j.status} />
+                </div>
+                <div className="lc-meta">
+                  {j.type}
+                  {j.schedule ? ` · ${j.schedule}` : ''} · {j.progress}
+                </div>
+                <div
+                  style={{
+                    marginTop: 8,
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 8,
+                  }}
+                >
+                  {running && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        killDemoJob(projectId, j.id)
+                        pushToast('Job stopped', {
+                          description: j.title,
+                          kind: 'warning',
+                        })
+                      }}
+                    >
+                      Stop
+                    </Button>
+                  )}
+                  {stopped && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        startDemoJob(projectId, j.id)
+                        pushToast('Job started', {
+                          description: j.title,
+                          kind: 'success',
+                        })
+                      }}
+                    >
+                      Start
+                    </Button>
+                  )}
                   <Button
                     variant="secondary"
                     size="sm"
                     onClick={() => {
-                      killDemoJob(projectId, j.id)
-                      pushToast('Kill signal sent', {
-                        description: 'Stop signal sent to the sandbox task.',
+                      restartDemoJob(projectId, j.id)
+                      pushToast('Job restarted', {
+                        description: j.title,
+                        kind: 'success',
+                      })
+                    }}
+                  >
+                    Restart
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => openEditDemo(j)}>
+                    Edit
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => {
+                      deleteDemoJob(projectId, j.id)
+                      pushToast('Job removed', {
+                        description: j.title,
                         kind: 'warning',
                       })
                     }}
                   >
-                    Kill
+                    Remove
                   </Button>
                 </div>
-              )}
-            </div>
-          ))
+              </div>
+            )
+          })
         )}
       </div>
 
       <CreateResourceModal
         isOpen={open}
-        title="Create background job"
-        onClose={() => setOpen(false)}
+        title={editingId ? 'Edit background job' : 'Create background job'}
+        submitLabel={editingId ? 'Save' : 'Create'}
+        onClose={() => {
+          setOpen(false)
+          resetForm()
+        }}
         onSubmit={() => void submit()}
         isSubmitDisabled={
           submitting ||
@@ -330,6 +537,7 @@ export function JobsPanel() {
                 value={command}
                 onChange={(_e, v) => setCommand(v)}
                 placeholder="npm run dev"
+                isDisabled={Boolean(editingRunning)}
               />
             </FormGroup>
             <FormGroup label="Working directory (optional)" fieldId="job-cwd">
@@ -338,8 +546,14 @@ export function JobsPanel() {
                 value={cwd}
                 onChange={(_e, v) => setCwd(v)}
                 placeholder="/workspace"
+                isDisabled={Boolean(editingRunning)}
               />
             </FormGroup>
+            {editingRunning ? (
+              <p className="pf-v6-c-helper-text" style={{ marginTop: 8 }}>
+                Stop the job to change command or working directory. Title can still be updated.
+              </p>
+            ) : null}
           </>
         ) : (
           <>

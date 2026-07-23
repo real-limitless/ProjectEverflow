@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import re
 
+# Desktop panel (noVNC / websockify) — never apply Preview HMR rewrites.
+DESKTOP_NOVNC_PORT = 6080
+
 _WS_PATCH_SCRIPT = (
     "<script data-everflow-ws-patch>"
     "(function(){"
@@ -62,6 +65,47 @@ _NAV_BRIDGE_SCRIPT = (
     "})();"
     "</script>"
 )
+
+
+def should_rewrite_vite_client(
+    *,
+    guest_port: int,
+    path: str,
+    status_code: int = 200,
+) -> bool:
+    """True when this response is a Vite dev client module (Preview tab only)."""
+    if guest_port == DESKTOP_NOVNC_PORT:
+        return False
+    if status_code < 200 or status_code >= 300:
+        return False
+    path_l = (path or "").lstrip("/")
+    return (
+        path_l.endswith("@vite/client")
+        or path_l == "@vite/client"
+        or "/@vite/client" in f"/{path_l}"
+        or "vite/dist/client" in path_l
+    )
+
+
+def should_inject_preview_html(
+    *,
+    guest_port: int,
+    path: str,
+    content_type: str = "",
+    status_code: int = 200,
+) -> bool:
+    """True when HTML should get WS/nav patches (Preview tab only, not errors)."""
+    if guest_port == DESKTOP_NOVNC_PORT:
+        return False
+    if status_code < 200 or status_code >= 300:
+        return False
+    media_l = (content_type or "").lower()
+    if "application/json" in media_l:
+        return False
+    if "text/html" in media_l:
+        return True
+    path_l = (path or "").lstrip("/")
+    return path_l == "" or path_l.endswith(".html")
 
 
 def rewrite_vite_client_js(content: bytes) -> bytes:

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, FormGroup, TextInput } from '@patternfly/react-core'
+import { Button, FormGroup, TextInput, ToggleGroup, ToggleGroupItem } from '@patternfly/react-core'
 import PencilAltIcon from '@patternfly/react-icons/dist/esm/icons/pencil-alt-icon'
 import { CreateResourceModal } from '@/components/studio/CreateResourceModal'
 import { EmptySplash } from '@/components/studio/EmptySplash'
@@ -8,7 +8,7 @@ import { useStudioDemoStore } from '@/store/studioDemoStore'
 import type { MindMap } from '@/types/studio'
 import { MermaidView } from './MermaidView'
 
-type ViewMode = 'diagram' | 'source'
+type ViewMode = 'edit' | 'preview'
 
 interface MindMapsTabProps {
   projectId: string
@@ -23,7 +23,7 @@ export function MindMapsTab({ projectId, mindMaps }: MindMapsTabProps) {
   const [activeId, setActiveId] = useState(mindMaps[0]?.id ?? '')
   const [mapOpen, setMapOpen] = useState(false)
   const [mapName, setMapName] = useState('')
-  const [mode, setMode] = useState<ViewMode>('diagram')
+  const [mode, setMode] = useState<ViewMode>('preview')
   const [draftName, setDraftName] = useState('')
   const [draftMermaid, setDraftMermaid] = useState('')
   const [baselineName, setBaselineName] = useState('')
@@ -64,7 +64,7 @@ export function MindMapsTab({ projectId, mindMaps }: MindMapsTabProps) {
     setBaselineMermaid(src)
     setSaveState('idle')
     setRenaming(false)
-    setMode('diagram')
+    setMode('preview')
   }, [])
 
   const saveMap = useCallback(
@@ -191,7 +191,7 @@ export function MindMapsTab({ projectId, mindMaps }: MindMapsTabProps) {
         setMapName('')
         setMapOpen(false)
         setActiveId(id)
-        setMode('diagram')
+        setMode('preview')
         pushToast('Mind map created', { kind: 'success' })
       }}
       isSubmitDisabled={!mapName.trim()}
@@ -332,44 +332,44 @@ export function MindMapsTab({ projectId, mindMaps }: MindMapsTabProps) {
               </div>
 
               <div className="canvas-doc-actions">
-                <div className="canvas-mode-toggle" role="group" aria-label="Mind map view mode">
-                  <button
-                    type="button"
-                    className={`editor-ctrl-btn${mode === 'diagram' ? ' active' : ''}`}
-                    onClick={() => setMode('diagram')}
+                <ToggleGroup className="canvas-mode-toggle" aria-label="Editor mode">
+                  <ToggleGroupItem
+                    text="Edit"
+                    buttonId="mm-mode-edit"
+                    isSelected={mode === 'edit'}
+                    onChange={() => setMode('edit')}
+                  />
+                  <ToggleGroupItem
+                    text="Preview"
+                    buttonId="mm-mode-preview"
+                    isSelected={mode === 'preview'}
+                    onChange={() => setMode('preview')}
+                  />
+                </ToggleGroup>
+                <div className="canvas-doc-action-group">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    isDisabled={!dirty}
+                    onClick={() => saveMap()}
+                    title="Save diagram (Ctrl/⌘+S)"
                   >
-                    Diagram
-                  </button>
-                  <button
-                    type="button"
-                    className={`editor-ctrl-btn${mode === 'source' ? ' active' : ''}`}
-                    onClick={() => setMode('source')}
+                    Save
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    onClick={() => {
+                      const id = mind.id
+                      deleteMindMap(projectId, id)
+                      const remaining = mindMaps.filter((m) => m.id !== id)
+                      setActiveId(remaining[0]?.id ?? '')
+                      pushToast('Mind map deleted', { kind: 'info' })
+                    }}
                   >
-                    Source
-                  </button>
+                    Delete
+                  </Button>
                 </div>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  isDisabled={!dirty}
-                  onClick={() => saveMap()}
-                  title="Save diagram (Ctrl/⌘+S)"
-                >
-                  Save
-                </Button>
-                <Button
-                  size="sm"
-                  variant="danger"
-                  onClick={() => {
-                    const id = mind.id
-                    deleteMindMap(projectId, id)
-                    const remaining = mindMaps.filter((m) => m.id !== id)
-                    setActiveId(remaining[0]?.id ?? '')
-                    pushToast('Mind map deleted', { kind: 'info' })
-                  }}
-                >
-                  Delete
-                </Button>
               </div>
 
               <div className="canvas-doc-sub">
@@ -378,7 +378,7 @@ export function MindMapsTab({ projectId, mindMaps }: MindMapsTabProps) {
             </header>
 
             <div className="canvas-doc-body mm-doc-body">
-              {mode === 'source' ? (
+              {mode === 'edit' ? (
                 <textarea
                   className="canvas-md-source"
                   value={draftMermaid}

@@ -332,11 +332,22 @@ async def handle_preview_http(request: Request) -> Response:
             inject_ws_patch_html,
             preview_cache_headers,
             rewrite_vite_client_js,
+            should_inject_preview_html,
+            should_rewrite_vite_client,
         )
 
-        if "@vite/client" in path_l or "vite/dist/client" in path_l:
+        if should_rewrite_vite_client(
+            guest_port=endpoint.port,
+            path=path_l,
+            status_code=upstream.status_code,
+        ):
             content = rewrite_vite_client_js(content)
-        if "text/html" in (media or "").lower() or path_l == "" or path_l.endswith(".html"):
+        if should_inject_preview_html(
+            guest_port=endpoint.port,
+            path=path_l,
+            content_type=media or "",
+            status_code=upstream.status_code,
+        ):
             content = inject_ws_patch_html(content)
     except Exception as exc:  # noqa: BLE001
         logger.debug("preview rewrite skipped: %s", exc)
@@ -398,6 +409,16 @@ class PreviewHostMiddleware:
         await self.app(scope, receive, send)
 
 
+async def _reject_preview_websocket(websocket: Any, code: int = 1011) -> None:
+    try:
+        if websocket.client_state == WebSocketState.CONNECTING:
+            await websocket.close(code=code)
+        elif websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.close(code=code)
+    except Exception:
+        pass
+
+
 async def _handle_preview_websocket(
     scope: Scope,
     receive: Receive,
@@ -409,20 +430,19 @@ async def _handle_preview_websocket(
 
     websocket = WebSocket(scope, receive, send)
 
-    # Vite HMR requires Sec-WebSocket-Protocol: vite-hmr — accept it or the browser aborts.
+    # Vite HMR requires Sec-WebSocket-Protocol: vite-hmr — accept only after agent is up.
     subprotocols = list(scope.get("subprotocols") or [])
     accept_sub = "vite-hmr" if "vite-hmr" in subprotocols else (subprotocols[0] if subprotocols else None)
-    await websocket.accept(subprotocol=accept_sub)
 
     endpoint = await _load_endpoint(endpoint_id)
     if endpoint is None:
-        await websocket.close(code=4404)
+        await _reject_preview_websocket(websocket, 4404)
         return
 
     headers_map = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
     ok, _, fail = await _authorize_preview(scope, headers_map, endpoint, settings)
     if not ok:
-        await websocket.close(code=4400 + (fail % 100))
+        await _reject_preview_websocket(websocket, 4400 + (fail % 100))
         return
 
     path = scope.get("path", "/") or "/"
@@ -454,7 +474,7 @@ async def _handle_preview_websocket(
         import websockets
         from websockets.exceptions import ConnectionClosed
     except ImportError:
-        await websocket.close(code=1011)
+        await _reject_preview_websocket(websocket, 1011)
         return
 
     connect_kwargs: dict[str, Any] = {
@@ -476,7 +496,7 @@ async def _handle_preview_websocket(
             upstream = await websockets.connect(agent_url, **connect_kwargs)
         except Exception as exc:  # noqa: BLE001
             logger.warning("preview edge ws agent connect failed url=%s: %s", agent_url, exc)
-            await websocket.close(code=1011)
+            await _reject_preview_websocket(websocket, 1011)
             return
     except Exception as exc:  # noqa: BLE001
         # Retry without subprotocol
@@ -491,12 +511,23 @@ async def _handle_preview_websocket(
                     exc,
                     exc2,
                 )
-                await websocket.close(code=1011)
+                await _reject_preview_websocket(websocket, 1011)
                 return
         else:
             logger.warning("preview edge ws agent connect failed url=%s: %s", agent_url, exc)
-            await websocket.close(code=1011)
+            await _reject_preview_websocket(websocket, 1011)
             return
+
+    # Agent hop ready — accept browser (vite-hmr or requested subprotocol)
+    try:
+        await websocket.accept(subprotocol=accept_sub)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("preview edge ws accept failed: %s", exc)
+        try:
+            await upstream.close()
+        except Exception:
+            pass
+        return
 
     stop = asyncio.Event()
 

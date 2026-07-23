@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Button, TextInput } from '@patternfly/react-core'
 import { EmptySplash } from '@/components/studio/EmptySplash'
 import { ApiError, searchKnowledgeWeb } from '@/lib/api'
@@ -36,7 +36,15 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
     setReaderId(null)
     try {
       const results = await searchKnowledgeWeb(projectId, q)
-      setHits(results)
+      setHits(
+        results.map((r) => ({
+          id: r.id,
+          title: r.title,
+          url: r.url,
+          snippet: r.snippet,
+          readerMarkdown: r.reader_markdown || undefined,
+        })),
+      )
     } catch (e) {
       setHits([])
       setError(
@@ -50,6 +58,20 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
       setLoading(false)
     }
   }
+
+  const onContentLoaded = useCallback((hitId: string, markdown: string, title?: string) => {
+    setHits((prev) =>
+      prev.map((h) =>
+        h.id === hitId
+          ? {
+              ...h,
+              readerMarkdown: markdown,
+              ...(title ? { title } : {}),
+            }
+          : h,
+      ),
+    )
+  }, [])
 
   const addToKnowledge = (hit: WebSearchHit) => {
     const md =
@@ -79,8 +101,10 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
     return (
       <ReaderMode
         hit={reader}
+        projectId={projectId}
         onBack={() => setReaderId(null)}
         onAddToKnowledge={addToKnowledge}
+        onContentLoaded={onContentLoaded}
       />
     )
   }
@@ -103,14 +127,21 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
         </Button>
       </div>
       {error ? (
-        <div className="lc-meta" role="alert" style={{ marginBottom: 12, color: 'var(--pf-t--global--text--color--status--danger--default, #c9190b)' }}>
+        <div
+          className="lc-meta"
+          role="alert"
+          style={{
+            marginBottom: 12,
+            color: 'var(--pf-t--global--text--color--status--danger--default, #c9190b)',
+          }}
+        >
           {error}
         </div>
       ) : null}
       {!loading && hits.length === 0 && !error ? (
         <EmptySplash
           title="Web search"
-          body="Run a query, open a hit in Reader mode (clean Markdown, no ads), then summarize, research, or pin it to Knowledge for the main chatbot."
+          body="Run a query, open a hit to read the full article (extracted text) or view the live website, then pin it to Knowledge."
         />
       ) : null}
       {loading ? <div className="lc-meta">Searching…</div> : null}
@@ -124,7 +155,7 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
               <Button size="sm" variant="primary" onClick={() => setReaderId(h.id)}>
-                Open in Reader
+                Open
               </Button>
               <Button
                 size="sm"

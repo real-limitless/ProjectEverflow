@@ -156,6 +156,12 @@ class JobCreateRequest(BaseModel):
     cwd: str | None = Field(default=None, max_length=1024)
 
 
+class JobUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    command: str | None = Field(default=None, min_length=1, max_length=4000)
+    cwd: str | None = Field(default=None, max_length=1024)
+
+
 class JobInfo(BaseModel):
     id: str
     title: str

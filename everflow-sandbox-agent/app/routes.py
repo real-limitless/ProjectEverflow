@@ -24,7 +24,16 @@ from app.opencode_harness import (
     read_pack_from_workspace,
     read_pack_via_backend,
 )
-from app.jobs import get_job_logs, kill_job, list_jobs, start_job
+from app.jobs import (
+    delete_job,
+    get_job_logs,
+    kill_job,
+    list_jobs,
+    restart_job,
+    start_existing_job,
+    start_job,
+    update_job,
+)
 from app.schemas import (
     BootstrapRequest,
     ExecRequest,
@@ -35,6 +44,7 @@ from app.schemas import (
     JobCreateRequest,
     JobInfo,
     JobLogsResponse,
+    JobUpdateRequest,
     ListeningPortInfo,
     OpenCodeEnsureRequest,
     OpenCodeEnsureResponse,
@@ -347,6 +357,115 @@ async def kill_sandbox_job(
     await _require_running_sandbox(name, backend)
     try:
         meta = await kill_job(backend, name, job_id)
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _job_info(meta)
+
+
+@router.post(
+    "/v1/sandboxes/{name}/jobs/{job_id}/stop",
+    response_model=JobInfo,
+    dependencies=[Depends(require_agent_token)],
+)
+async def stop_sandbox_job(
+    name: str,
+    job_id: str,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> JobInfo:
+    """Alias of kill — stop a running background job."""
+    return await kill_sandbox_job(name, job_id, backend)
+
+
+@router.post(
+    "/v1/sandboxes/{name}/jobs/{job_id}/start",
+    response_model=JobInfo,
+    dependencies=[Depends(require_agent_token)],
+)
+async def start_sandbox_job(
+    name: str,
+    job_id: str,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> JobInfo:
+    await _require_running_sandbox(name, backend)
+    try:
+        meta = await start_existing_job(backend, name, job_id)
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _job_info(meta)
+
+
+@router.post(
+    "/v1/sandboxes/{name}/jobs/{job_id}/restart",
+    response_model=JobInfo,
+    dependencies=[Depends(require_agent_token)],
+)
+async def restart_sandbox_job(
+    name: str,
+    job_id: str,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> JobInfo:
+    await _require_running_sandbox(name, backend)
+    try:
+        meta = await restart_job(backend, name, job_id)
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _job_info(meta)
+
+
+@router.patch(
+    "/v1/sandboxes/{name}/jobs/{job_id}",
+    response_model=JobInfo,
+    dependencies=[Depends(require_agent_token)],
+)
+async def patch_sandbox_job(
+    name: str,
+    job_id: str,
+    body: JobUpdateRequest,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> JobInfo:
+    await _require_running_sandbox(name, backend)
+    if body.title is None and body.command is None and body.cwd is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide at least one of title, command, cwd",
+        )
+    try:
+        meta = await update_job(
+            backend,
+            name,
+            job_id,
+            title=body.title,
+            command=body.command,
+            cwd=body.cwd,
+        )
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _job_info(meta)
+
+
+@router.delete(
+    "/v1/sandboxes/{name}/jobs/{job_id}",
+    response_model=JobInfo,
+    dependencies=[Depends(require_agent_token)],
+)
+async def delete_sandbox_job(
+    name: str,
+    job_id: str,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> JobInfo:
+    await _require_running_sandbox(name, backend)
+    try:
+        meta = await delete_job(backend, name, job_id)
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
     except RuntimeError as exc:
@@ -936,15 +1055,16 @@ async def sandbox_port_proxy(
         logger.warning("resolve dial target failed name=%s port=%s: %s", name, port, exc)
         dial_host, dial_port, mode = "127.0.0.1", port, "unreachable"
 
-    # Prefer real TCP (host or tunnel). Guest-exec HTTP only if still unreachable.
+    # Prefer real TCP (host or tunnel). Fall back to guest-exec HTTP when dial fails.
     return await proxy_http_to_port(
         request,
         port=dial_port,
         path=path or "",
         host=dial_host,
         host_header=f"127.0.0.1:{port}",
-        exec_fn=backend.exec if mode == "unreachable" else None,
-        sandbox_name=name if mode == "unreachable" else None,
+        guest_port=port,
+        exec_fn=backend.exec,
+        sandbox_name=name,
     )
 
 
@@ -965,8 +1085,18 @@ async def sandbox_port_proxy_ws(
     sub = ws_requested_subprotocol(websocket)
 
     async def _reject(code: int) -> None:
-        await websocket.accept(subprotocol=sub)
-        await websocket.close(code=code)
+        # Reject without accept so the edge hop fails cleanly (no half-open HMR).
+        logger.debug(
+            "preview ws reject name=%s port=%s code=%s sub=%s",
+            name,
+            port,
+            code,
+            sub,
+        )
+        try:
+            await websocket.close(code=code)
+        except Exception:
+            pass
 
     if auth != settings.sandbox_agent_token:
         await _reject(4403)

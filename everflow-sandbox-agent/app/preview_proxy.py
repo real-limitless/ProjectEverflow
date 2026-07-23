@@ -28,6 +28,9 @@ from starlette.websockets import WebSocketState
 
 logger = logging.getLogger(__name__)
 
+# Desktop panel (noVNC / websockify) — never apply Preview HMR rewrites.
+DESKTOP_NOVNC_PORT = 6080
+
 ExecFn = Callable[..., Awaitable[tuple[int, str, str]]]
 
 HOP_BY_HOP = {
@@ -56,6 +59,45 @@ def resolve_upstream_base(port: int, *, host: str = "127.0.0.1") -> str:
     if port < 1 or port > 65535:
         raise ValueError(f"invalid port: {port}")
     return f"http://{host}:{port}"
+
+
+def should_rewrite_vite_client(
+    *,
+    guest_port: int | None,
+    path: str,
+    status_code: int = 200,
+) -> bool:
+    if guest_port == DESKTOP_NOVNC_PORT:
+        return False
+    if status_code < 200 or status_code >= 300:
+        return False
+    path_l = (path or "").lstrip("/")
+    return (
+        path_l.endswith("@vite/client")
+        or path_l == "@vite/client"
+        or "/@vite/client" in f"/{path_l}"
+        or "vite/dist/client" in path_l
+    )
+
+
+def should_inject_preview_html(
+    *,
+    guest_port: int | None,
+    path: str,
+    content_type: str = "",
+    status_code: int = 200,
+) -> bool:
+    if guest_port == DESKTOP_NOVNC_PORT:
+        return False
+    if status_code < 200 or status_code >= 300:
+        return False
+    media_l = (content_type or "").lower()
+    if "application/json" in media_l:
+        return False
+    if "text/html" in media_l:
+        return True
+    path_l = (path or "").lstrip("/")
+    return path_l == "" or path_l.endswith(".html")
 
 
 def rewrite_vite_client_js(content: bytes) -> bytes:
@@ -214,12 +256,17 @@ async def proxy_http_to_port(
     exec_fn: ExecFn | None = None,
     sandbox_name: str | None = None,
     host_header: str | None = None,
+    guest_port: int | None = None,
 ) -> Response:
     """Forward an HTTP request to host:{port}/{path}, with optional guest exec fallback.
 
     host_header: value for the Host header sent upstream (defaults to host:port).
     For tunnels, pass the guest's 127.0.0.1:{guest_port} so Vite host checks pass.
+
+    guest_port: sandbox listen port (6080, 5173, …). When set, used for HMR rewrite
+    gating and clearer upstream error messages (dial port may be an ephemeral tunnel).
     """
+    app_port = guest_port if guest_port is not None else port
     base = resolve_upstream_base(port, host=host)
     rel = path.lstrip("/") if path else ""
     url = urljoin(base.rstrip("/") + "/", rel) if rel else base.rstrip("/") + "/"
@@ -251,7 +298,8 @@ async def proxy_http_to_port(
         await client.aclose()
         if exec_fn is not None and sandbox_name:
             logger.info(
-                "host dial failed port=%s (%s); trying guest exec proxy name=%s",
+                "dial failed app_port=%s dial_port=%s (%s); trying guest exec proxy name=%s",
+                app_port,
                 port,
                 exc,
                 sandbox_name,
@@ -260,14 +308,21 @@ async def proxy_http_to_port(
                 request,
                 exec_fn=exec_fn,
                 sandbox_name=sandbox_name,
-                port=port,
+                port=app_port,
                 path=path,
                 body=body,
                 method=method,
+                guest_port=guest_port,
             )
-        logger.warning("preview proxy error port=%s url=%s: %s", port, url, exc)
+        logger.warning(
+            "preview proxy error dial_port=%s app_port=%s url=%s: %s",
+            port,
+            app_port,
+            url,
+            exc,
+        )
         return Response(
-            content=f'{{"detail":"Upstream unreachable on port {port}: {exc}"}}',
+            content=f'{{"detail":"Upstream unreachable on port {app_port}: {exc}"}}',
             status_code=502,
             media_type="application/json",
         )
@@ -304,15 +359,18 @@ async def proxy_http_to_port(
 
     # Rewrite Vite client + inject HTML WebSocket patch for HMR through preview host
     path_l = (path or "").lstrip("/")
-    if (
-        path_l.endswith("@vite/client")
-        or path_l == "@vite/client"
-        or "/@vite/client" in f"/{path_l}"
-        or "vite/dist/client" in path_l
+    if should_rewrite_vite_client(
+        guest_port=guest_port,
+        path=path_l,
+        status_code=upstream.status_code,
     ):
         content = rewrite_vite_client_js(content)
-    media_l = (media or "").lower()
-    if "text/html" in media_l or path_l == "" or path_l.endswith(".html"):
+    if should_inject_preview_html(
+        guest_port=guest_port,
+        path=path_l,
+        content_type=media or "",
+        status_code=upstream.status_code,
+    ):
         content = inject_ws_patch_html(content)
 
     headers = _filter_response_headers(upstream.headers, strip_encoding=True)
@@ -340,6 +398,7 @@ async def proxy_http_via_guest_exec(
     path: str,
     body: bytes,
     method: str,
+    guest_port: int | None = None,
 ) -> Response:
     """One-shot HTTP proxy via in-guest python3 urllib (no WebSocket / SSE)."""
     rel = path.lstrip("/") if path else ""
@@ -433,12 +492,45 @@ async def proxy_http_via_guest_exec(
             media_type="application/json",
         )
 
+    # Same Vite HMR rewrites as the host-dial path so WS targets the preview host
+    # even when we could only fetch HTML/JS via guest-exec (WS still needs tunnel).
+    app_port = guest_port if guest_port is not None else port
+    path_l = (path or "").lstrip("/")
+    if should_rewrite_vite_client(
+        guest_port=app_port,
+        path=path_l,
+        status_code=status,
+    ):
+        content = rewrite_vite_client_js(content)
+    if should_inject_preview_html(
+        guest_port=app_port,
+        path=path_l,
+        content_type=ctype or "",
+        status_code=status,
+    ):
+        content = inject_ws_patch_html(content)
+    headers = preview_cache_headers(
+        path_l,
+        {"X-Everflow-Preview-Via": "guest-exec"},
+    )
+
     return Response(
         content=content,
         status_code=status,
         media_type=ctype or None,
-        headers={"X-Everflow-Preview-Via": "guest-exec"},
+        headers=headers,
     )
+
+
+async def _reject_websocket(websocket: WebSocket, code: int = 1011) -> None:
+    """Reject or close a client WebSocket without leaving a half-open HMR socket."""
+    try:
+        if websocket.client_state == WebSocketState.CONNECTING:
+            await websocket.close(code=code)
+        elif websocket.client_state == WebSocketState.CONNECTED:
+            await websocket.close(code=code)
+    except Exception:
+        pass
 
 
 async def proxy_websocket_to_port(
@@ -452,13 +544,13 @@ async def proxy_websocket_to_port(
 ) -> None:
     """Bridge browser WebSocket to ws://host:port/path (Vite HMR safe).
 
+    Connects to upstream Vite first, then accepts the client — so failed dials
+    reject cleanly instead of accepting then closing 1011.
+
     guest_port: original sandbox listen port for Host/Origin headers when
     ``port`` is a local tunnel port (not the app's real port).
     """
     sub = ws_requested_subprotocol(websocket)
-    # Vite always uses "vite-hmr"; accept it when the browser asks.
-    if websocket.client_state == WebSocketState.CONNECTING:
-        await websocket.accept(subprotocol=sub)
 
     rel = path.lstrip("/") if path else ""
     qs = f"?{query}" if query else ""
@@ -472,8 +564,7 @@ async def proxy_websocket_to_port(
         import websockets
         from websockets.exceptions import ConnectionClosed
     except ImportError:
-        await websocket.send_text('{"detail":"websockets package not installed"}')
-        await websocket.close(code=1011)
+        await _reject_websocket(websocket, 1011)
         return
 
     # Vite validates Host / Origin against the dev server port, not the tunnel port.
@@ -510,10 +601,7 @@ async def proxy_websocket_to_port(
             upstream = await websockets.connect(url, **connect_kwargs)
         except Exception as exc:  # noqa: BLE001
             logger.warning("preview ws connect failed port=%s url=%s: %s", port, url, exc)
-            try:
-                await websocket.close(code=1011, reason=f"upstream: {exc}"[:120])
-            except Exception:
-                pass
+            await _reject_websocket(websocket, 1011)
             return
     except Exception as exc:  # noqa: BLE001
         # Retry without subprotocol for non-Vite apps
@@ -529,15 +617,21 @@ async def proxy_websocket_to_port(
                     exc,
                     exc2,
                 )
-                try:
-                    await websocket.close(code=1011, reason=f"upstream: {exc2}"[:120])
-                except Exception:
-                    pass
+                await _reject_websocket(websocket, 1011)
                 return
         else:
             logger.warning("preview ws connect failed port=%s url=%s: %s", port, url, exc)
+            await _reject_websocket(websocket, 1011)
+            return
+
+    # Upstream ready — accept browser with vite-hmr (or requested) subprotocol
+    if websocket.client_state == WebSocketState.CONNECTING:
+        try:
+            await websocket.accept(subprotocol=sub)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("preview ws accept failed port=%s: %s", port, exc)
             try:
-                await websocket.close(code=1011, reason=f"upstream: {exc}"[:120])
+                await upstream.close()
             except Exception:
                 pass
             return

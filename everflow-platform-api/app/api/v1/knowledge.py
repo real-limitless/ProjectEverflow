@@ -20,8 +20,11 @@ from app.schemas.knowledge import (
     KnowledgeCanvasRead,
     KnowledgeCanvasSummary,
     KnowledgeCanvasUpdate,
+    WebReadRequest,
+    WebReadResult,
     WebSearchHit,
 )
+from app.services.web_read import WebReadError, fetch_reader_content
 
 router = APIRouter(tags=["knowledge"])
 
@@ -116,6 +119,24 @@ async def knowledge_web_search(
     """Proxy web search via SearXNG for the knowledge panel."""
     principal.require_scope("knowledge:read")
     return await _searxng_web_search(settings.searxng_url, q.strip())
+
+
+@router.post(
+    "/projects/{project_id}/knowledge/web-read",
+    response_model=WebReadResult,
+)
+async def knowledge_web_read(
+    body: WebReadRequest,
+    _project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
+) -> WebReadResult:
+    """Fetch a public page and extract clean Markdown for Reader mode."""
+    principal.require_scope("knowledge:read")
+    try:
+        data = await fetch_reader_content(body.url)
+    except WebReadError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return WebReadResult(**data)
 
 
 @router.get(

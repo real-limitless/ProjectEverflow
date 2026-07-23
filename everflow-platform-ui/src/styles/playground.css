@@ -1474,7 +1474,10 @@
       text-decoration: none;
       white-space: nowrap;
     }
-    .masthead-brand-text span { color: var(--pf-t--global--text--color--brand--default); }
+    .masthead-brand-text span {
+      color: var(--pf-t--global--text--color--brand--default);
+      line-height: inherit;
+    }
 
     /* Masthead toolbar: keep actions compact and right-aligned */
     #page-toolbar.pf-v6-c-toolbar {

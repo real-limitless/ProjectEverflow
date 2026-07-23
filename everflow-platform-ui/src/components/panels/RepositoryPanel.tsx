@@ -83,11 +83,21 @@ export function RepositoryPanel() {
 
   const projectId = currentProjectId || 'default'
   const p = getProject(currentProjectId)
-  const catalogRepos = p?.repos || []
+  const fromApi = Boolean(p?.fromApi)
+  const catalogRepos = useMemo(() => {
+    const all = p?.repos || []
+    if (!fromApi) return all
+    // Hide provider:none placeholders left over from older creates / local cache
+    return all.filter(
+      (r) =>
+        Boolean(r.url?.trim()) ||
+        (r.provider && r.provider !== 'none') ||
+        Boolean(r.localPath && r.localPath !== '.'),
+    )
+  }, [p?.repos, fromApi])
   const activeRepoId = getActiveRepoId(currentProjectId)
   const primaryRepoId = catalogRepos.find((r) => r.active)?.id || catalogRepos[0]?.id || activeRepoId
 
-  const fromApi = Boolean(p?.fromApi)
   const sandboxRunning = p?.sandboxStatus === 'running'
   const liveMode = fromApi && sandboxRunning
 
@@ -135,12 +145,17 @@ export function RepositoryPanel() {
   const repoOptions: WorkspaceRepo[] = useMemo(() => {
     if (liveMode && workspaceRepos.length) {
       const withGit = workspaceRepos.filter((r) => r.hasGit)
-      return withGit.length > 0 ? withGit : workspaceRepos.slice(0, 1)
+      // Live discovery with no git roots: still empty for API projects with no catalog remotes
+      if (withGit.length > 0) return withGit
+      if (fromApi && catalogRepos.length === 0) return []
+      return workspaceRepos.slice(0, 1)
     }
     return catalogReposToWorkspace(catalogRepos)
     // catalogVersion tracks catalog.repos mutations
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveMode, workspaceRepos, catalogVersion, currentProjectId])
+  }, [liveMode, fromApi, workspaceRepos, catalogRepos, catalogVersion, currentProjectId])
+
+  const hasAttachedRepo = repoOptions.length > 0
 
   const selectedRepo: WorkspaceRepo = useMemo(() => {
     return (
@@ -148,12 +163,12 @@ export function RepositoryPanel() {
       repoOptions.find((r) => r.path === activeRepoId) ||
       repoOptions[0] || {
         id: 'main',
-        label: 'workspace',
+        label: fromApi ? 'No repository' : 'workspace',
         path: '.',
         hasGit: false,
       }
     )
-  }, [repoOptions, activeRepoId])
+  }, [repoOptions, activeRepoId, fromApi])
 
   // Keep store selection valid when options change
   useEffect(() => {
@@ -276,6 +291,14 @@ export function RepositoryPanel() {
       }
       return
     }
+    // API projects: never invent demo branches (fix/metric-threshold, …).
+    if (fromApi) {
+      const catalogBranch =
+        catalogRepos.find((r) => r.id === selectedRepo.id)?.branch ||
+        selectedRepo.branch
+      setBranches(catalogBranch ? [{ name: catalogBranch }] : [])
+      return
+    }
     // Demo: branches from commit labels + catalog
     const names = new Set<string>()
     const catalogBranch =
@@ -294,6 +317,7 @@ export function RepositoryPanel() {
     setBranches([...names].filter(Boolean).sort().map((name) => ({ name })))
   }, [
     liveMode,
+    fromApi,
     currentProjectId,
     selectedRepo.hasGit,
     selectedRepo.path,
@@ -310,6 +334,7 @@ export function RepositoryPanel() {
 
   // Demo / fallback data scoped by repo
   const seedChanges = useMemo(() => {
+    if (fromApi) return []
     const all = p?.gitChanges || []
     if (catalogRepos.length <= 1) return all
     const hint = selectedRepo.path === '.' ? '' : selectedRepo.path
@@ -318,18 +343,19 @@ export function RepositoryPanel() {
       (c) => c.path === hint || c.path.startsWith(`${hint}/`) || c.path.startsWith(`${selectedRepo.id}/`),
     )
     return filtered.length ? filtered : all
-  }, [p?.gitChanges, catalogRepos.length, selectedRepo.path, selectedRepo.id])
+  }, [fromApi, p?.gitChanges, catalogRepos.length, selectedRepo.path, selectedRepo.id])
 
   const changes: GitFileChange[] = liveMode && liveChanges !== null ? liveChanges : seedChanges
 
   const branchLabel =
     liveBranch ||
-    demoBranch ||
+    (!fromApi ? demoBranch : null) ||
     selectedRepo.branch ||
     catalogRepos.find((r) => r.id === selectedRepo.id)?.branch ||
-    'main'
+    (fromApi ? (liveBranch || '—') : 'main')
 
   const demoCommits = useMemo(() => {
+    if (fromApi) return []
     const scoped = studio.commits.filter((c) =>
       matchesRepoId(c.repoId, selectedRepo.id, primaryRepoId || selectedRepo.id),
     )
@@ -341,9 +367,9 @@ export function RepositoryPanel() {
     )
     // Keep graph useful: if filter empties, fall back to all scoped
     return filtered.length ? filtered : scoped
-  }, [studio.commits, selectedRepo.id, primaryRepoId, demoBranch])
+  }, [fromApi, studio.commits, selectedRepo.id, primaryRepoId, demoBranch])
   const commits: GitCommit[] =
-    liveMode && liveCommits !== null ? liveCommits : demoCommits
+    liveMode && liveCommits !== null ? liveCommits : fromApi ? liveCommits || [] : demoCommits
 
   // Live API projects must not show showcase seed issues/PRs (those exist only for demo mode).
   const issues = useMemo(() => {
@@ -512,7 +538,11 @@ export function RepositoryPanel() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div className="repo-toolbar">
         <div className="repo-toolbar-left">
-          {repoOptions.length > 1 ? (
+          {!hasAttachedRepo ? (
+            <span className="repo-toolbar-label" title="No repository attached">
+              No repository
+            </span>
+          ) : repoOptions.length > 1 ? (
             <FormSelect
               id="repo-select"
               className="repo-select"
@@ -537,11 +567,12 @@ export function RepositoryPanel() {
           <Select
             id="repo-branch-select"
             isOpen={branchOpen}
-            selected={branchLabel}
+            selected={hasAttachedRepo ? branchLabel : '—'}
             onSelect={(_e, value) => {
               void onBranchSelect(String(value))
             }}
             onOpenChange={(open) => {
+              if (!hasAttachedRepo) return
               setBranchOpen(open)
               if (open) void loadBranchList()
             }}
@@ -549,13 +580,22 @@ export function RepositoryPanel() {
               <MenuToggle
                 ref={toggleRef}
                 className="repo-branch-toggle"
-                onClick={() => setBranchOpen(!branchOpen)}
+                onClick={() => {
+                  if (!hasAttachedRepo) return
+                  setBranchOpen(!branchOpen)
+                }}
                 isExpanded={branchOpen}
-                isDisabled={branchSwitching || (liveMode && !selectedRepo.hasGit && branches.length === 0)}
+                isDisabled={
+                  !hasAttachedRepo ||
+                  branchSwitching ||
+                  (liveMode && !selectedRepo.hasGit && branches.length === 0)
+                }
                 icon={<CodeBranchIcon />}
-                aria-label={`Branch ${branchLabel}`}
+                aria-label={hasAttachedRepo ? `Branch ${branchLabel}` : 'No branch'}
               >
-                <span className="repo-branch-toggle-text">{branchLabel || '—'}</span>
+                <span className="repo-branch-toggle-text">
+                  {hasAttachedRepo ? branchLabel || '—' : '—'}
+                </span>
               </MenuToggle>
             )}
           >
