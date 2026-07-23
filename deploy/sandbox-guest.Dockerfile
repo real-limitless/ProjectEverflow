@@ -65,6 +65,13 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && test -x "$(command -v node)" \
     && cat /etc/everflow/prebaked
 
+# Everflow MCP (stdio) — OpenCode registers this on ensure with project-scoped token
+COPY everflow-mcp /opt/everflow-mcp
+RUN pip install --no-cache-dir /opt/everflow-mcp \
+    && everflow-mcp --version 2>/dev/null || python -c "import everflow_mcp; print(everflow_mcp.__version__)" \
+    && command -v everflow-mcp \
+    && printf 'everflow_mcp=%s\n' "$(command -v everflow-mcp)" >> /etc/everflow/prebaked
+
 WORKDIR /workspace
 
 # Microsandbox supplies the guest process model; keep a harmless default.

@@ -25,9 +25,11 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1 \
 
 COPY everflow-sandbox-agent/pyproject.toml everflow-sandbox-agent/README.md ./
 COPY everflow-sandbox-agent/app ./app
+COPY everflow-mcp /opt/everflow-mcp
 
 RUN pip3 install --no-cache-dir -e . \
-    && pip3 install --no-cache-dir 'microsandbox'
+    && pip3 install --no-cache-dir 'microsandbox' \
+    && pip3 install --no-cache-dir /opt/everflow-mcp
 
 # Real sandboxes only — do not default to mock in this image
 ENV SANDBOX_MOCK=false \
