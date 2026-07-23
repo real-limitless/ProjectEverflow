@@ -95,6 +95,11 @@ export async function listSessions(projectId: string): Promise<OcSession[]> {
   return Array.isArray(data) ? data : []
 }
 
+/** True for real OpenCode session ids (`ses_…`). Local UI placeholders are `n{ts}`, `c1`, etc. */
+export function isOpenCodeSessionId(id: string | null | undefined): boolean {
+  return Boolean(id && typeof id === 'string' && id.startsWith('ses_'))
+}
+
 export async function createSession(
   projectId: string,
   title?: string,

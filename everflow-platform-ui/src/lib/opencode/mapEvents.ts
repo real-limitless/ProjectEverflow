@@ -7,10 +7,22 @@ import {
 import type { OcEvent, OcMessageBundle, OcPart, OcQuestionRequest } from './types'
 
 export type StreamPatch =
-  | { kind: 'message'; message: ChatMessage }
-  | { kind: 'part_delta'; messageId: string; partType: string; text: string }
-  | { kind: 'part_set'; messageId: string; partType: string; text: string }
-  | { kind: 'part_full'; messageId: string; part: OcPart }
+  | { kind: 'message'; sessionId?: string; message: ChatMessage }
+  | {
+      kind: 'part_delta'
+      sessionId?: string
+      messageId: string
+      partType: string
+      text: string
+    }
+  | {
+      kind: 'part_set'
+      sessionId?: string
+      messageId: string
+      partType: string
+      text: string
+    }
+  | { kind: 'part_full'; sessionId?: string; messageId: string; part: OcPart }
   | {
       kind: 'question'
       sessionId: string
@@ -21,8 +33,12 @@ export type StreamPatch =
   | { kind: 'question_resolved'; sessionId: string; requestId: string; status: 'answered' | 'rejected' }
   | { kind: 'permission'; sessionId: string; permissionId: string; title: string; detail?: string }
   | { kind: 'session_status'; sessionId: string; status: string }
-  | { kind: 'reload_messages' }
+  | { kind: 'reload_messages'; sessionId?: string }
   | { kind: 'noop' }
+
+function eventSessionId(props: Record<string, unknown>): string {
+  return String(props.sessionID || props.sessionId || props.session_id || '')
+}
 
 /**
  * Map OpenCode bus events to UI patches. Schema is defensive — OpenCode versions
@@ -85,11 +101,13 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
     const info = (props.info || props.message || props) as OcMessageBundle['info']
     const parts = (props.parts || []) as OcPart[]
     const hasParts = Array.isArray(props.parts)
+    const sessionId = eventSessionId(props)
     if (info && typeof info === 'object' && 'id' in info) {
       // message.updated often carries only info (no parts) — do not wipe content
       if (!hasParts) {
         return {
           kind: 'message',
+          sessionId,
           message: mapOcMessage({
             info: info as OcMessageBundle['info'],
             parts: [],
@@ -98,15 +116,18 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
       }
       return {
         kind: 'message',
+        sessionId,
         message: mapOcMessage({ info: info as OcMessageBundle['info'], parts }),
       }
     }
     // Sometimes the whole message is under properties
     if (props.sessionID || props.role) {
       const bundle = normalizeLooseMessage(props)
-      if (bundle) return { kind: 'message', message: mapOcMessage(bundle) }
+      if (bundle) {
+        return { kind: 'message', sessionId, message: mapOcMessage(bundle) }
+      }
     }
-    return { kind: 'reload_messages' }
+    return { kind: 'reload_messages', sessionId }
   }
 
   // Streaming part deltas / updates (token streaming + full tool parts)
@@ -147,6 +168,7 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
       'question',
       'permission',
     ])
+    const sessionId = eventSessionId(props)
     if (
       messageId &&
       partRaw &&
@@ -155,6 +177,7 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
     ) {
       return {
         kind: 'part_full',
+        sessionId,
         messageId,
         part: partRaw as OcPart,
       }
@@ -163,6 +186,7 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
     if (messageId && delta != null && String(delta).length > 0) {
       return {
         kind: 'part_delta',
+        sessionId,
         messageId,
         partType,
         text: String(delta),
@@ -173,6 +197,7 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
       if (type.includes('delta')) {
         return {
           kind: 'part_delta',
+          sessionId,
           messageId,
           partType,
           text: String(fullText),
@@ -180,6 +205,7 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
       }
       return {
         kind: 'part_set',
+        sessionId,
         messageId,
         partType,
         text: String(fullText),
@@ -189,11 +215,12 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
     if (messageId && partRaw && typeof partRaw === 'object' && partRaw.type) {
       return {
         kind: 'part_full',
+        sessionId,
         messageId,
         part: partRaw as OcPart,
       }
     }
-    return { kind: 'reload_messages' }
+    return { kind: 'reload_messages', sessionId }
   }
 
   if (
@@ -219,11 +246,11 @@ export function mapOcEvent(ev: OcEvent): StreamPatch {
   }
 
   if (type.includes('session.status') || type.includes('session.idle')) {
-    return { kind: 'reload_messages' }
+    return { kind: 'reload_messages', sessionId: eventSessionId(props) }
   }
 
   if (type.includes('session') || type.includes('message') || type.includes('tool')) {
-    return { kind: 'reload_messages' }
+    return { kind: 'reload_messages', sessionId: eventSessionId(props) }
   }
 
   return { kind: 'noop' }
