@@ -49,8 +49,9 @@ export function ReposStep({ draft, onChange }: ReposStepProps) {
   return (
     <div className="create-wizard-repos">
       <p className="create-wizard-lead">
-        Attach repositories for this project. They appear in the repo strip of the
-        workbench. You can add more later.
+        Attach git remotes for this project. Public HTTPS URLs are cloned into the
+        sandbox workspace after it starts. They also appear in the repo strip. You can
+        add more later via Connect.
       </p>
       <div className="create-wizard-repo-actions">
         <Button variant="secondary" size="sm" icon={<PlusIcon />} onClick={addRepo}>

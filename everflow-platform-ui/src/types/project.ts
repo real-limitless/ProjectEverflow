@@ -2,6 +2,8 @@ import type { ChatConversation, ChatMessage } from './panels'
 
 export type RepoProvider = 'github' | 'gitlab' | 'other' | 'none'
 
+export type RepoCloneStatus = 'pending' | 'cloning' | 'ready' | 'skipped' | 'error' | string
+
 export interface ProjectRepo {
   id: string
   label: string
@@ -11,6 +13,9 @@ export interface ProjectRepo {
   provider?: RepoProvider
   /** Workspace-relative git root (e.g. "." or "web"). Resolved at runtime when omitted. */
   localPath?: string
+  /** Server/UI clone lifecycle for remotes into the sandbox workspace */
+  cloneStatus?: RepoCloneStatus
+  cloneError?: string
 }
 
 export interface ProjectHarness {

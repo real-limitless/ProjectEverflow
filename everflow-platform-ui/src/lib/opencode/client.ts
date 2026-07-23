@@ -152,6 +152,8 @@ export async function promptSync(
     parts: Array<{ type: string; text?: string }>
     model?: { providerID: string; modelID: string }
     agent?: string
+    system?: string
+    tools?: Record<string, boolean>
   },
 ): Promise<OcMessageBundle> {
   return ocFetch(projectId, `session/${sessionId}/message`, {
@@ -167,17 +169,28 @@ export async function respondPermission(
   response: 'once' | 'always' | 'reject',
   remember?: boolean,
 ): Promise<void> {
-  // Prefer modern permission reply; fall back to session-scoped path
+  // Documented path first: POST /session/:id/permissions/:permissionID
+  // Fall back to global reply used by some OpenCode builds.
+  const id = encodeURIComponent(permissionId)
   try {
-    await ocFetch(projectId, `permission/${permissionId}/reply`, {
+    await ocFetch(projectId, `session/${encodeURIComponent(sessionId)}/permissions/${id}`, {
       method: 'POST',
-      body: JSON.stringify({ reply: response }),
+      body: JSON.stringify({ response, remember: remember ?? response === 'always' }),
     })
     return
   } catch {
-    await ocFetch(projectId, `session/${sessionId}/permissions/${permissionId}`, {
+    /* try alternates */
+  }
+  try {
+    await ocFetch(projectId, `permission/${id}/reply`, {
       method: 'POST',
-      body: JSON.stringify({ response, remember }),
+      body: JSON.stringify({ reply: response, response }),
+    })
+    return
+  } catch {
+    await ocFetch(projectId, `session/${encodeURIComponent(sessionId)}/permission/${id}/reply`, {
+      method: 'POST',
+      body: JSON.stringify({ reply: response, response, remember }),
     })
   }
 }

@@ -9,12 +9,12 @@ import { typeOf } from '@/lib/panelIds'
 export function DetachedPanelPage() {
   const [params] = useSearchParams()
   const panelId = (params.get('detach') || '') as PanelKey
-  const projectId = params.get('project') || 'aura'
+  const projectId = params.get('project') || ''
   const switchProject = usePlaygroundStore((s) => s.switchProject)
   const ensureInstanceState = usePlaygroundStore((s) => s.ensureInstanceState)
 
   useEffect(() => {
-    if (PROJECTS[projectId]) switchProject(projectId)
+    if (projectId && PROJECTS[projectId]) switchProject(projectId)
     if (panelId) {
       const t = typeOf(panelId)
       if (t) ensureInstanceState(panelId, { type: t })

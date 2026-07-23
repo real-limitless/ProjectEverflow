@@ -46,11 +46,26 @@ export function ReviewStep({ draft }: ReviewStepProps) {
           <DescriptionListDescription>
             {draft.repos.length
               ? draft.repos
-                  .map((r) => `${r.label}${r.active ? ' (primary)' : ''}`)
-                  .join(', ')
+                  .map((r) => {
+                    const bits = [r.label || 'repo']
+                    if (r.active) bits.push('primary')
+                    if (r.url?.trim()) bits.push(`clone ${r.url.trim()}`)
+                    if (r.branch) bits.push(`@ ${r.branch}`)
+                    return bits.join(' · ')
+                  })
+                  .join('; ')
               : 'None'}
           </DescriptionListDescription>
         </DescriptionListGroup>
+        {draft.repos.some((r) => r.url?.trim()) ? (
+          <DescriptionListGroup>
+            <DescriptionListTerm>Workspace</DescriptionListTerm>
+            <DescriptionListDescription>
+              Remotes are cloned into the sandbox after it starts (public HTTPS GitHub URLs work
+              without a token).
+            </DescriptionListDescription>
+          </DescriptionListGroup>
+        ) : null}
         <DescriptionListGroup>
           <DescriptionListTerm>Harnesses</DescriptionListTerm>
           <DescriptionListDescription>

@@ -3,10 +3,12 @@ import {
   DEFAULT_CHAT_AGENTS,
   DEFAULT_CHAT_MODE,
   DEFAULT_CONTEXT_WINDOW,
+  DEFAULT_PRIMARY_AGENT,
   agentById,
 } from '@/data/chatCatalog'
 import { defaultMetrics, seedConversationsForProject } from '@/data/chatShowcase'
-import { PROJECTS } from '@/data/projects'
+import { isSeedProjectId, PROJECTS } from '@/data/projects'
+import { isDemoMode } from '@/lib/api'
 import {
   deriveTitleFromMessages,
   estimateTokens,
@@ -27,6 +29,15 @@ export function cloneConversations(list: ChatConversation[]): ChatConversation[]
 export function seedProjectConversations(projectId: string): ChatConversation[] {
   const p = PROJECTS[projectId]
   if (!p) return []
+
+  // Showcase / hardcoded sample threads only for offline demo seeds
+  const allowShowcase = isDemoMode() && isSeedProjectId(projectId)
+  if (!allowShowcase) {
+    if (p.conversations?.length) return cloneConversations(p.conversations)
+    const title = p.convs?.[0]?.title || 'New chat'
+    return [emptyConversation(title)]
+  }
+
   if (p.conversations?.length) return cloneConversations(p.conversations)
   return seedConversationsForProject(projectId, p.convs, p.messages || [])
 }
@@ -56,6 +67,7 @@ export function syncPanelFromConversation(
       messages: [],
       chatMode: DEFAULT_CHAT_MODE,
       enabledAgents: DEFAULT_CHAT_AGENTS,
+      primaryAgent: DEFAULT_PRIMARY_AGENT,
     }
   }
   return {
@@ -64,6 +76,7 @@ export function syncPanelFromConversation(
     messages: cloneMessages(conv.messages),
     chatMode: conv.chatMode,
     enabledAgents: conv.agents.map((a) => a.id),
+    primaryAgent: conv.primaryAgent || DEFAULT_PRIMARY_AGENT,
   }
 }
 
@@ -81,7 +94,8 @@ export function demoAssistantReply(opts: {
   model: string
   mode: ChatMode
   tools: string[]
-  agents: string[]
+  /** Primary agent name for this turn */
+  primaryAgent?: string
   retry?: boolean
 }): ChatMessage[] {
   const {
@@ -89,46 +103,28 @@ export function demoAssistantReply(opts: {
     model,
     mode,
     tools,
-    agents,
+    primaryAgent = DEFAULT_PRIMARY_AGENT,
     retry = false,
   } = opts
   const ttftMs = 120 + Math.floor(Math.random() * 220)
   const tokensPerSec = 28 + Math.floor(Math.random() * 40)
-  const primaryAgentId = agents[0] || 'general'
-  const primary = agentById(primaryAgentId)
+  const primary = agentById(primaryAgent)
 
   const prefix = retry ? 'Retry · ' : ''
   const modeNote =
     mode === 'ask'
-      ? 'Ask mode — no file edits applied.'
+      ? 'Ask mode — read-only; no edits or shell.'
       : mode === 'edit'
-        ? 'Edit only — proposed a patch (demo).'
-        : 'Automatic — agents may use tools.'
+        ? 'Edit only — file edits may need approval; no shell (demo).'
+        : 'Automatic — edits & commands auto-approved (demo).'
+  const agentNote = `Agent: **${primary.name}**.`
 
   const messages: ChatMessage[] = []
-
-  if (mode === 'auto' && agents.length > 1) {
-    const planner = agentById(agents.includes('planner') ? 'planner' : agents[0])
-    messages.push({
-      id: newMessageId('a'),
-      role: 'assistant',
-      agent: planner,
-      thinking: 'Planning handoff…',
-      blocks: [
-        {
-          type: 'markdown',
-          text: `${prefix}**${planner.name}**: Breaking down “${userText.slice(0, 80)}${userText.length > 80 ? '…' : ''}”.\n\n${modeNote}`,
-        },
-      ],
-      metrics: { ttftMs, tokensPerSec, completionTokens: 64 },
-      createdAt: new Date().toISOString(),
-    })
-  }
 
   const blocks: ChatMessage['blocks'] = [
     {
       type: 'markdown',
-      text: `${prefix}Demo reply via **${model}**.\n\n${modeNote}\n\n> ${userText.slice(0, 200)}${userText.length > 200 ? '…' : ''}`,
+      text: `${prefix}Demo reply via **${model}** · ${agentNote}\n\n${modeNote}\n\n> ${userText.slice(0, 200)}${userText.length > 200 ? '…' : ''}`,
     },
   ]
 
@@ -164,7 +160,20 @@ export function demoAssistantReply(opts: {
     })
   }
 
-  if (mode === 'edit' || (mode === 'auto' && tools.includes('sandbox_fs'))) {
+  if (mode === 'edit') {
+    // Demo HITL: pending permission card so Once/Always/Reject UI is visible offline
+    blocks.push({
+      type: 'permission',
+      permission: {
+        id: `demo-perm-${Date.now()}`,
+        title: 'edit demo.tsx',
+        detail: `Apply demo patch for: ${userText.slice(0, 60)}`,
+        status: 'pending',
+      },
+    })
+  }
+
+  if (mode === 'auto' && tools.includes('sandbox_fs')) {
     blocks.push({
       type: 'tool',
       tool: {
@@ -199,6 +208,7 @@ export function emptyConversation(title = 'New chat'): ChatConversation {
     meta: 'Just now',
     pinned: false,
     agents: DEFAULT_CHAT_AGENTS.map((id) => agentById(id)),
+    primaryAgent: DEFAULT_PRIMARY_AGENT,
     messages: [],
     metrics: defaultMetrics(0),
     chatMode: DEFAULT_CHAT_MODE,

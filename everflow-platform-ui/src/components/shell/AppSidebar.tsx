@@ -8,6 +8,7 @@ import {
   PageSidebarBody,
 } from '@patternfly/react-core'
 import { NavLink, useLocation } from 'react-router-dom'
+import { getPlaygroundFloatPalettePos } from '@/lib/palettePosition'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { NAV_ITEMS } from './navItems'
 
@@ -19,6 +20,7 @@ export function AppSidebar() {
   const paletteDragging = usePlaygroundStore((s) => s.paletteDragging)
   const setPaletteMode = usePlaygroundStore((s) => s.setPaletteMode)
   const setPaletteVisible = usePlaygroundStore((s) => s.setPaletteVisible)
+  const setPalettePos = usePlaygroundStore((s) => s.setPalettePos)
   const slotEmpty = paletteMode !== 'docked' && !paletteDragging
   const trayHidden = paletteMode === 'chip' || !paletteVisible
 
@@ -86,6 +88,8 @@ export function AppSidebar() {
               variant="secondary"
               size="sm"
               onClick={() => {
+                // Bottom-center of playground so all panel type buttons are visible
+                setPalettePos(getPlaygroundFloatPalettePos())
                 setPaletteVisible(true)
                 setPaletteMode('float')
               }}

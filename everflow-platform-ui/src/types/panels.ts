@@ -151,7 +151,16 @@ export interface ChatConversation {
   title: string
   meta: string
   pinned: boolean
+  /**
+   * Historical / display participants (message author chips).
+   * Prompt routing uses `primaryAgent`, not this list.
+   */
   agents: ChatAgentRef[]
+  /**
+   * OpenCode agent name for the next prompt (e.g. plan, build, custom).
+   * Independent of chatMode permission policy.
+   */
+  primaryAgent?: string
   messages: ChatMessage[]
   metrics: ConversationMetrics
   chatMode: ChatMode
@@ -178,8 +187,13 @@ export interface PanelInstanceState {
   enabledTools?: string[]
   enabledMcps?: string[]
   enabledSkills?: string[]
-  /** Active agents participating in this chat instance */
+  /** @deprecated Prefer primaryAgent for OpenCode routing; multi-agent list is display-only */
   enabledAgents?: string[]
+  /**
+   * Primary OpenCode agent for this chat instance (plan, build, …).
+   * Independent of chatMode permission policy.
+   */
+  primaryAgent?: string
   chatMode?: ChatMode
   /** Preview multi-service */
   previewServiceId?: string

@@ -56,14 +56,16 @@ export function catalogReposToWorkspace(
   if (repos.length === 0) {
     return [{ id: 'main', label: 'workspace', path: '.', hasGit: false }]
   }
-  const multi = repos.length > 1
   return repos.map((r, i) => {
+    // Prefer explicit localPath; fall back to URL/label basename.
+    // Never map a cloneable remote to workspace root '.' — each repo has a dir.
     let path = sanitizeRepoPath(r.localPath)
-    if (path === '.' && multi) {
-      const hint = pathHintFromLabel(r.label) || pathHintFromLabel(r.url) || r.id
-      path = sanitizeRepoPath(hint || r.id)
+    if (!path || path === '.') {
+      const hint =
+        pathHintFromLabel(r.url) || pathHintFromLabel(r.label) || pathHintFromLabel(r.id)
+      path = sanitizeRepoPath(hint || r.id || `repo-${i}`)
+      if (!path || path === '.') path = r.id || `repo-${i}`
     }
-    if (!multi) path = sanitizeRepoPath(r.localPath || '.')
     return {
       id: r.id || `repo-${i}`,
       label: r.label || r.id || `repo-${i}`,
@@ -225,14 +227,28 @@ async function gitExec(
   })
 }
 
+/** find(1) exclusions for dependency / build trees (not intentional multi-repo roots). */
+const FIND_EXCLUDES = [
+  '*/node_modules/*',
+  '*/.venv/*',
+  '*/venv/*',
+  '*/vendor/*',
+  '*/.everflow/*',
+  '*/dist/*',
+  '*/build/*',
+  '*/.git/*',
+]
+  .map((p) => `! -path '${p}'`)
+  .join(' ')
+
 async function shellFindGitRoots(projectId: string): Promise<string[]> {
   const { execInSandbox } = await import('@/lib/api')
-  // find relative roots ending in /.git → strip suffix
+  // find relative roots ending in /.git → strip suffix; skip dependency / build trees
   const res = await execInSandbox(projectId, {
     cmd: 'sh',
     args: [
       '-c',
-      `find . -maxdepth ${FIND_MAXDEPTH} -type d -name .git 2>/dev/null | head -40`,
+      `find . -maxdepth ${FIND_MAXDEPTH} -type d -name .git ${FIND_EXCLUDES} 2>/dev/null | head -40`,
     ],
     cwd: '/workspace',
     timeout_seconds: 20,
@@ -250,10 +266,20 @@ async function shellFindGitRoots(projectId: string): Promise<string[]> {
   return roots
 }
 
-async function probeHasGit(projectId: string, repoPath: string): Promise<boolean> {
+/**
+ * True only when repoPath is the git work-tree root (not merely inside a parent repo).
+ * `git rev-parse --is-inside-work-tree` is too loose: any subfolder of a monorepo returns true.
+ * `--show-prefix` is empty exactly at the work-tree root (works for guest /workspace and host paths).
+ */
+async function probeIsGitRoot(projectId: string, repoPath: string): Promise<boolean> {
   try {
-    const res = await gitExec(projectId, repoPath, ['rev-parse', '--is-inside-work-tree'], 15)
-    return res.exit_code === 0 && res.stdout.trim() === 'true'
+    const root = sanitizeRepoPath(repoPath)
+    const inside = await gitExec(projectId, root, ['rev-parse', '--is-inside-work-tree'], 15)
+    if (inside.exit_code !== 0 || inside.stdout.trim() !== 'true') return false
+    const prefix = await gitExec(projectId, root, ['rev-parse', '--show-prefix'], 15)
+    if (prefix.exit_code !== 0) return false
+    // Empty prefix ⇒ cwd/root is the work-tree toplevel
+    return prefix.stdout.trim() === ''
   } catch {
     return false
   }
@@ -272,14 +298,36 @@ async function readBranch(projectId: string, repoPath: string): Promise<string |
   return undefined
 }
 
+function catalogPathCandidates(r: WorkspaceRepo, singleCatalog: boolean): string[] {
+  const candidates: string[] = []
+  const add = (p: string) => {
+    const s = sanitizeRepoPath(p)
+    if (!candidates.includes(s)) candidates.push(s)
+  }
+  add(r.path)
+  const hint = pathHintFromLabel(r.label)
+  if (hint) add(hint)
+  if (r.url) {
+    const uh = pathHintFromLabel(r.url)
+    if (uh) add(uh)
+  }
+  // Legacy: only probe workspace root when there is no remote URL (blank scaffold).
+  // Remotes always live under /workspace/<name>/ — never bind them to '.'.
+  if (singleCatalog && !r.url) add('.')
+  return candidates
+}
+
 /**
  * Merge catalog repos with live discovery of .git roots under /workspace.
+ * Live results only include real git work-tree roots — catalog ghosts without
+ * git are dropped so the Repository dropdown never lists "foo (no git)".
  */
 export async function discoverWorkspaceRepos(
   projectId: string,
   catalog: ProjectRepo[] | undefined | null,
 ): Promise<WorkspaceRepo[]> {
   const base = catalogReposToWorkspace(catalog)
+  const singleCatalog = (catalog?.length ?? 0) <= 1
   let found: string[] = []
   try {
     found = await shellFindGitRoots(projectId)
@@ -287,16 +335,20 @@ export async function discoverWorkspaceRepos(
     found = []
   }
 
-  // Probe catalog paths
+  // Verify find results are real work-tree roots (ignore empty / broken .git dirs)
+  const verifiedFound: string[] = []
+  for (const root of found) {
+    if (await probeIsGitRoot(projectId, root)) verifiedFound.push(root)
+  }
+  found = verifiedFound
+
+  // Probe catalog paths against true git roots only
   const probed: WorkspaceRepo[] = []
   for (const r of base) {
-    const candidates = [r.path]
-    if (r.path !== '.') candidates.push('.')
-    const hint = pathHintFromLabel(r.label)
-    if (hint) candidates.push(sanitizeRepoPath(hint))
+    const candidates = catalogPathCandidates(r, singleCatalog)
     let resolved: WorkspaceRepo = { ...r, hasGit: false }
     for (const c of candidates) {
-      const ok = await probeHasGit(projectId, c)
+      const ok = await probeIsGitRoot(projectId, c)
       if (ok) {
         const branch = (await readBranch(projectId, c)) || r.branch
         resolved = { ...r, path: c, hasGit: true, branch }
@@ -307,22 +359,17 @@ export async function discoverWorkspaceRepos(
   }
 
   // Attach discovered roots not already in list
-  const paths = new Set(probed.map((p) => p.path))
+  const paths = new Set(probed.filter((p) => p.hasGit).map((p) => p.path))
   for (const root of found) {
-    if (paths.has(root)) {
-      // mark matching as hasGit
-      for (const p of probed) {
-        if (p.path === root) p.hasGit = true
-      }
-      continue
-    }
-    // Prefer matching catalog by path hint
+    if (paths.has(root)) continue
+    // Prefer matching catalog by path hint / id / label basename
     const match = probed.find(
       (p) =>
         !p.hasGit &&
         (p.path === root ||
           pathHintFromLabel(p.label) === root ||
-          p.id === root),
+          p.id === root ||
+          sanitizeRepoPath(p.id) === root),
     )
     if (match) {
       match.path = root
@@ -344,28 +391,38 @@ export async function discoverWorkspaceRepos(
     paths.add(root)
   }
 
-  // If nothing has git but we found roots, ensure at least those
-  if (!probed.some((p) => p.hasGit) && found.length) {
-    return Promise.all(
-      found.map(async (root) => ({
-        id: `ws-${root === '.' ? 'root' : root.replace(/[/\\]/g, '-')}`,
-        label: root === '.' ? 'workspace' : root,
-        path: root,
-        branch: await readBranch(projectId, root),
-        hasGit: true,
-        provider: 'none' as const,
-      })),
-    )
-  }
-
-  // Single catalog entry with no multi: if root has git, force .
-  if (probed.length === 1 && found.includes('.')) {
+  // Legacy blank projects only: if there is no remote URL and root is a git
+  // work tree, bind the catalog entry to '.'. Remotes always use named dirs.
+  if (
+    singleCatalog &&
+    probed.length >= 1 &&
+    found.includes('.') &&
+    !probed[0].url
+  ) {
     probed[0].path = '.'
     probed[0].hasGit = true
     probed[0].branch = (await readBranch(projectId, '.')) || probed[0].branch
   }
 
-  return probed
+  // Prefer real git roots only — drop catalog placeholders like "test (no git)"
+  const withGit = probed.filter((p) => p.hasGit)
+  if (withGit.length > 0) {
+    // Dedupe by path (multiple catalog rows must not collapse to the same root twice)
+    const byPath = new Map<string, WorkspaceRepo>()
+    for (const r of withGit) {
+      if (!byPath.has(r.path)) byPath.set(r.path, r)
+    }
+    return Array.from(byPath.values())
+  }
+
+  // No git in workspace: single entry so the dropdown does not list multiple "(no git)" ghosts
+  const fallback = base[0] || {
+    id: 'main',
+    label: 'workspace',
+    path: '.',
+    hasGit: false,
+  }
+  return [{ ...fallback, hasGit: false }]
 }
 
 export async function loadGitChanges(

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Spinner } from '@patternfly/react-core'
 import CubesIcon from '@patternfly/react-icons/dist/esm/icons/cubes-icon'
-import { getProject } from '@/data/projects'
+import { getProject, updateProjectInCatalog } from '@/data/projects'
+import { getProject as apiGetProject } from '@/lib/api'
 import { ensureSandboxRunning } from '@/lib/ensureSandbox'
 import { isSandboxBooting } from '@/lib/sandboxReady'
 import { pushToast } from '@/lib/studioToast'
+import { ensureReposCloned, isCloneableUrl, mergeApiProjectRepos } from '@/lib/workspaceRepos'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 type Phase = 'booting' | 'failed'
@@ -65,6 +67,72 @@ export function SandboxBootGate({ projectId }: { projectId: string }) {
         applyStatus(result.status)
 
         if (result.ok && result.status.status === 'running') {
+          // Sync repos from API (server may have finished clone) then ensure any pending remotes
+          try {
+            setMessage('Cloning repositories into workspace…')
+            let catalog = getProject(projectId)
+            try {
+              const fresh = await apiGetProject(projectId)
+              if (runId !== runIdRef.current) return
+              const merged = mergeApiProjectRepos(fresh, catalog?.repos)
+              if (merged.length) {
+                updateProjectInCatalog(projectId, { repos: merged })
+                usePlaygroundStore.setState({
+                  catalogVersion: usePlaygroundStore.getState().catalogVersion + 1,
+                })
+                catalog = getProject(projectId)
+              }
+              applyStatus({
+                status: fresh.sandbox_status || result.status.status,
+                sandbox_name: fresh.sandbox_name,
+                error: fresh.sandbox_error,
+                image: fresh.sandbox_image,
+                created_at: fresh.sandbox_created_at,
+              })
+            } catch {
+              /* keep local catalog */
+            }
+
+            const needsClone = (catalog?.repos || []).some(
+              (r) =>
+                isCloneableUrl(r.url) &&
+                r.cloneStatus !== 'ready' &&
+                r.cloneStatus !== 'skipped',
+            )
+            if (needsClone && catalog?.repos?.length) {
+              const cloneResult = await ensureReposCloned(projectId, catalog.repos)
+              if (runId !== runIdRef.current) return
+              const anyReady = cloneResult.repos.some((r) => r.cloneStatus === 'ready')
+              updateProjectInCatalog(projectId, {
+                repos: cloneResult.repos,
+                // Drop seed file catalog so Code panel walks live sandbox FS
+                ...(anyReady || cloneResult.cloned > 0
+                  ? { files: [], code: {} }
+                  : {}),
+              })
+              usePlaygroundStore.setState({
+                catalogVersion: usePlaygroundStore.getState().catalogVersion + 1,
+              })
+              if (cloneResult.failed > 0) {
+                const firstErr = cloneResult.repos.find((r) => r.cloneStatus === 'error')
+                pushToast(
+                  firstErr?.cloneError?.split('\n')[0] ||
+                    `Failed to clone ${cloneResult.failed} repositor${cloneResult.failed === 1 ? 'y' : 'ies'}`,
+                  { kind: 'danger' },
+                )
+              } else if (cloneResult.cloned > 0) {
+                pushToast(
+                  `Cloned ${cloneResult.cloned} repositor${cloneResult.cloned === 1 ? 'y' : 'ies'} into workspace`,
+                  { kind: 'success' },
+                )
+              }
+            }
+          } catch (e) {
+            if (runId !== runIdRef.current) return
+            const msg = e instanceof Error ? e.message : 'Repository clone failed'
+            pushToast(msg, { kind: 'warning' })
+          }
+
           if (!toastedOkRef.current) {
             toastedOkRef.current = true
             pushToast('Sandbox ready', { kind: 'success' })
@@ -146,7 +214,9 @@ export function SandboxBootGate({ projectId }: { projectId: string }) {
           {failed
             ? message ||
               'The playground sandbox could not be started. Everything in the workbench runs inside the sandbox.'
-            : `Preparing a sandbox for “${p.name}”. The workbench opens when the container is running.`}
+            : status === 'creating' || status === 'pending'
+              ? `Preparing a sandbox for “${p.name}”. Dead or crashed sandboxes are recreated automatically after a stack restart.`
+              : `Preparing a sandbox for “${p.name}”. The workbench opens when the container is running.`}
         </p>
 
         <div className="sandbox-boot-meta">

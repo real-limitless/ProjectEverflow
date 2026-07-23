@@ -344,6 +344,19 @@
   padding-inline: 0.55rem !important;
 }
 
+.chat-layout .chat-mode-auto-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  color: var(--pf-t--global--text--color--subtle);
+  background: var(--pf-t--global--background--color--secondary--default);
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  opacity: 0.85;
+}
+
 .chat-layout .chat-metrics {
   display: flex;
   align-items: center;
@@ -1092,6 +1105,25 @@ textarea.chat-composer-input {
   font-variant-numeric: tabular-nums;
 }
 
+.chat-layout .composer-agent-toggle,
+.chat-composer .composer-agent-toggle {
+  min-height: 1.75rem;
+  padding-inline: 0.35rem !important;
+  gap: 0.25rem;
+  font-size: 0.7rem !important;
+  font-weight: 600;
+  color: var(--pf-t--global--text--color--subtle);
+  max-width: 7.5rem;
+}
+
+.chat-layout .composer-agent-label,
+.chat-composer .composer-agent-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 5.5rem;
+}
+
 .chat-layout .composer-model-toggle,
 .chat-composer .composer-model-toggle {
   min-width: 2rem !important;
@@ -1154,4 +1186,92 @@ button.chat-composer-send {
 :root.pf-v6-theme-dark .chat-layout .chat-composer-pill:focus-within,
 .pf-v6-theme-dark .chat-layout .chat-composer-pill:focus-within {
   background: var(--pf-t--global--background--color--primary--default) !important;
+}
+
+/* —— Model browse / pin —— */
+.model-browse-search {
+  margin-bottom: 0.75rem;
+}
+
+.model-browse-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--pf-t--global--text--color--subtle);
+  line-height: 1.4;
+}
+
+.model-browse-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(50vh, 22rem);
+  overflow: auto;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 8px;
+}
+
+.model-browse-empty {
+  padding: 1rem;
+  color: var(--pf-t--global--text--color--subtle);
+  font-size: 0.875rem;
+}
+
+.model-browse-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.model-browse-row:last-child {
+  border-bottom: none;
+}
+
+.model-browse-row.is-selected {
+  background: var(--pf-t--global--background--color--secondary--default);
+}
+
+.model-browse-pin {
+  flex: 0 0 2.5rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--pf-t--global--icon--color--brand--default);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.model-browse-pin:hover {
+  background: var(--pf-t--global--background--color--secondary--hover);
+}
+
+.model-browse-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0.55rem 0.75rem 0.55rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.model-browse-select:hover {
+  background: var(--pf-t--global--background--color--secondary--hover);
+}
+
+.model-browse-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--pf-t--global--text--color--regular);
+}
+
+.model-browse-meta {
+  font-size: 0.75rem;
+  color: var(--pf-t--global--text--color--subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

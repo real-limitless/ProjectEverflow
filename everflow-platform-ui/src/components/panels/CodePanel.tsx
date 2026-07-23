@@ -126,7 +126,47 @@ function TreeRows({
 }
 
 const FS_MAX_DEPTH = 12
-const FS_MAX_FILES = 2000
+const FS_MAX_FILES = 4000
+
+/**
+ * Heavy / VCS / build artifacts skipped during recursive tree walk so real source
+ * stays under the file cap. Names match a single path segment.
+ */
+const FS_SKIP_DIR_NAMES = new Set([
+  'node_modules',
+  '.git',
+  '.svn',
+  '.hg',
+  '.everflow',
+  '__pycache__',
+  '.venv',
+  'venv',
+  '.tox',
+  'dist',
+  'build',
+  'out',
+  '.next',
+  '.nuxt',
+  '.turbo',
+  '.cache',
+  'coverage',
+  'target',
+  'vendor',
+  '.yarn',
+  '.pnpm-store',
+  'Pods',
+  '.idea',
+  '.gradle',
+  'bower_components',
+])
+
+function shouldSkipFsDir(name: string): boolean {
+  if (!name || name === '.' || name === '..') return true
+  if (FS_SKIP_DIR_NAMES.has(name)) return true
+  // e.g. .gitkeep stays; skip other dotted cache dirs that are usually huge
+  if (name.startsWith('.') && (name.endsWith('_cache') || name.endsWith('-cache'))) return true
+  return false
+}
 
 /** Normalize a workspace-relative path from the sandbox agent (no leading ./). */
 function cleanFsPath(path: string, dir: string, name: string): string {
@@ -139,7 +179,7 @@ function cleanFsPath(path: string, dir: string, name: string): string {
 
 /**
  * Recursively list sandbox workspace files under `dir`.
- * Skips `.` / `..` / `.everflow`, guards cycles, and caps depth/size.
+ * Skips heavy dirs (node_modules, .git, …), guards cycles, and caps depth/size.
  */
 async function collectRemoteTree(
   projectId: string,
@@ -164,7 +204,10 @@ async function collectRemoteTree(
       truncated = true
       break
     }
-    if (!e.name || e.name === '.' || e.name === '..' || e.name === '.everflow') {
+    if (!e.name || e.name === '.' || e.name === '..') {
+      continue
+    }
+    if (e.is_dir && shouldSkipFsDir(e.name)) {
       continue
     }
     const clean = cleanFsPath(e.path, listKey, e.name)
@@ -238,7 +281,10 @@ export function CodePanel({ panelKey }: CodePanelProps) {
       })
       setFsLoaded(true)
       if (truncated) {
-        pushToast('Workspace tree truncated (too many files or too deep)', { kind: 'info' })
+        pushToast(
+          'Workspace tree truncated (file/depth limit). node_modules and .git are already skipped.',
+          { kind: 'info' },
+        )
       }
     } catch (e) {
       setFsError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'FS error')
@@ -409,7 +455,10 @@ export function CodePanel({ panelKey }: CodePanelProps) {
         </div>
         {fsError ? <div className="code-fs-error">{fsError}</div> : null}
         {fsTruncated ? (
-          <div className="code-fs-error">Tree truncated — open folders via Refresh after pruning</div>
+          <div className="code-fs-error">
+            Tree truncated (file or depth limit). Heavy folders like node_modules and .git are skipped
+            automatically — click Refresh after reducing large source trees.
+          </div>
         ) : null}
         {fromApi && !sandboxRunning ? (
           <div className="code-empty-msg">Sandbox {p.sandboxStatus || 'pending'}…</div>

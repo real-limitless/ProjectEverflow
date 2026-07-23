@@ -35,7 +35,7 @@ export function BasicsStep({
             if (!slugManual) patch.slug = slugifyProjectName(v)
             onChange(patch)
           }}
-          placeholder="e.g. Aura Host"
+          placeholder="e.g. my-app"
           autoFocus
         />
       </FormGroup>

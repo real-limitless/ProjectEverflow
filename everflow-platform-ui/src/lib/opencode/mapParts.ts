@@ -859,6 +859,7 @@ export function sessionToConversation(
     meta: 'OpenCode',
     pinned: false,
     agents: [],
+    primaryAgent: undefined,
     messages,
     metrics: {
       contextUsedTokens: 0,

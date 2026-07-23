@@ -9,6 +9,7 @@ import {
   addProjectToCatalog,
   createBlankProject,
   getProject,
+  isSeedProjectId,
   listUserCreatedProjects,
   mergeUserProjects,
   slugifyProjectName,
@@ -51,6 +52,7 @@ import {
   DEFAULT_CHAT_MODE,
   DEFAULT_CHAT_SKILLS,
   DEFAULT_CHAT_TOOLS,
+  DEFAULT_PRIMARY_AGENT,
   agentById,
 } from '@/data/chatCatalog'
 import {
@@ -73,6 +75,7 @@ import {
   type ApiProject,
 } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+import { getPlaygroundFloatPalettePos } from '@/lib/palettePosition'
 import { pushToast } from '@/lib/studioToast'
 
 interface PlaygroundState {
@@ -192,6 +195,8 @@ interface PlaygroundState {
   retryAssistantMessage: (panelKey: PanelKey, messageId: string) => void
   setChatMode: (panelKey: PanelKey, mode: ChatMode) => void
   setConversationAgents: (panelKey: PanelKey, agentIds: string[]) => void
+  /** Set primary OpenCode agent for this conversation (plan, build, …) */
+  setConversationAgent: (panelKey: PanelKey, agentName: string) => void
   updateConversationMessages: (
     projectId: string,
     convId: string,
@@ -364,6 +369,16 @@ function buildDefaultLayout(
   }
 }
 
+/** Drop pure offline demo seeds from restored open tabs when not in demo mode. */
+function filterOpenProjectIds(ids: string[]): string[] {
+  return ids.filter((id) => {
+    if (!PROJECTS[id]) return false
+    if (isDemoMode()) return true
+    if (isSeedProjectId(id) && !PROJECTS[id].fromApi) return false
+    return true
+  })
+}
+
 function createInitial() {
   let groupIdSeq = 1
   let instanceSeq = 1
@@ -386,29 +401,18 @@ function createInitial() {
     return instanceState[key]
   }
 
-  const defaultOpenIds = ['aura', 'callour']
-  const defaultCurrentId = 'aura'
-  projectChats[defaultCurrentId] = seedProjectConversations(defaultCurrentId)
+  // Clean slate: no demo projects auto-opened (use Create / Open project).
   const projectLayouts: Record<string, LayoutNode> = {}
-  const layout = buildDefaultLayout(
-    nextGroupId,
-    spawnPanelKey,
-    ensureInstanceState,
-    defaultCurrentId,
-    projectChats[defaultCurrentId],
-  )
-  projectLayouts[defaultCurrentId] = cloneLayout(layout)
+  const emptyLayout = emptyGroup('g-empty')
 
   const persisted = loadPersisted()
   if (persisted) {
     // Restore user-created projects before validating open ids
     mergeUserProjects(persisted.userProjects)
 
-    const rawOpen = Array.isArray(persisted.openProjectIds)
-      ? persisted.openProjectIds
-      : defaultOpenIds
-    // Preserve empty list when user closed all projects
-    const ids = rawOpen.filter((id) => PROJECTS[id])
+    const rawOpen = Array.isArray(persisted.openProjectIds) ? persisted.openProjectIds : []
+    // Preserve empty list when user closed all projects; strip demo seeds outside demo mode
+    const ids = filterOpenProjectIds(rawOpen)
     const persistedCurrent = persisted.currentProjectId
     const currentProjectId =
       persistedCurrent && PROJECTS[persistedCurrent] && ids.includes(persistedCurrent)
@@ -455,23 +459,36 @@ function createInitial() {
       groupIdSeq: persisted.groupIdSeq || groupIdSeq,
       instanceSeq: persisted.instanceSeq || instanceSeq,
       paletteMode: persisted.paletteMode || ('float' as PaletteMode),
-      palettePos: persisted.palettePos || { x: 24, y: window.innerHeight - 160 },
+      palettePos: persisted.palettePos || {
+        // Bottom-center-ish fallback; refined when tray is shown
+        x: Math.max(24, (typeof window !== 'undefined' ? window.innerWidth : 1200) / 2 - 220),
+        y: Math.max(72, (typeof window !== 'undefined' ? window.innerHeight : 800) - 200),
+      },
       catalogVersion: 0,
       activeRepoByProject: {},
     }
   }
 
   return {
-    openProjectIds: defaultOpenIds,
-    currentProjectId: defaultCurrentId,
-    layout,
+    openProjectIds: [] as string[],
+    currentProjectId: null as string | null,
+    layout: emptyLayout,
     projectLayouts,
     instanceState,
     projectChats,
     groupIdSeq,
     instanceSeq,
     paletteMode: 'float' as PaletteMode,
-    palettePos: { x: 24, y: typeof window !== 'undefined' ? window.innerHeight - 160 : 600 },
+    palettePos: {
+      x:
+        typeof window !== 'undefined'
+          ? Math.max(24, window.innerWidth / 2 - 220)
+          : 400,
+      y:
+        typeof window !== 'undefined'
+          ? Math.max(72, window.innerHeight - 200)
+          : 600,
+    },
     catalogVersion: 0,
     terminalPrefill: null as string | null,
     activeRepoByProject: {},
@@ -681,6 +698,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   switchProject: (id) => {
     if (!getProject(id)) return
+    // Block pure demo seeds outside demo mode
+    if (!isDemoMode() && isSeedProjectId(id) && !getProject(id)?.fromApi) return
     const s = get()
     if (id === s.currentProjectId) return
     const projectLayouts = { ...s.projectLayouts }
@@ -776,18 +795,37 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
           { id: 'agent-claude-code', label: 'Claude Code', enabled: true },
           { id: 'agent-opencode', label: 'OpenCode', enabled: true },
         ],
-      repos:
-        existing?.repos ||
-        seed?.repos ||
-        [
-          {
-            id: 'main',
-            label: `${apiProject.slug}/app`,
-            active: true,
-            branch: 'main',
-            provider: 'none',
-          },
-        ],
+      repos: (() => {
+        const fromApi = apiProject.repos?.length
+          ? apiProject.repos.map((r, i) => ({
+              id: r.id || `repo-${i}`,
+              label: r.label || r.id || `repo-${i}`,
+              active: Boolean(r.active),
+              url: r.url || undefined,
+              branch: r.branch || 'main',
+              provider: (r.provider as import('@/types/project').RepoProvider) || 'github',
+              localPath: r.local_path || undefined,
+              cloneStatus: r.clone_status || undefined,
+              cloneError: r.clone_error || undefined,
+            }))
+          : null
+        if (fromApi?.length) {
+          if (!fromApi.some((r) => r.active)) fromApi[0].active = true
+          return fromApi
+        }
+        return (
+          existing?.repos ||
+          seed?.repos || [
+            {
+              id: 'main',
+              label: `${apiProject.slug}/app`,
+              active: true,
+              branch: 'main',
+              provider: 'none' as const,
+            },
+          ]
+        )
+      })(),
       convs: existing?.convs || seed?.convs || [{ id: 'c1', title: 'New chat', meta: 'Just now' }],
       messages: existing?.messages || seed?.messages || [],
       files: existing?.files || seed?.files || [{ path: 'README.md', name: 'README.md', folder: '' }],
@@ -836,7 +874,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         harnessIds: ['agent-claude-code', 'agent-opencode'],
         options: {
           layout: 'standard',
-          includeSampleData: true,
+          includeSampleData: false,
           environment: 'local',
           visibility: 'private',
           dockPalette: true,
@@ -854,12 +892,20 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     if (!demo && auth.user && auth.org) {
       const slug = draft.slug?.trim() || slugifyProjectName(draft.name)
       try {
+        const { projectReposToApiPayload, normalizeReposForCreate } = await import(
+          '@/lib/workspaceRepos'
+        )
+        const normalizedRepos = normalizeReposForCreate(draft.repos || [])
         const apiProject = await apiCreateProject(auth.org.id, {
           name: draft.name.trim(),
           slug,
           description: draft.description?.trim() || undefined,
+          repos: projectReposToApiPayload(normalizedRepos),
         })
-        project = createProjectFromDraft(draft, { apiProject })
+        project = createProjectFromDraft(
+          { ...draft, repos: normalizedRepos },
+          { apiProject },
+        )
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Create project failed'
         pushToast(msg, { kind: 'danger' })
@@ -936,9 +982,13 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   closePanel: (panelId) => {
     const layout = removePanelFromLayout(get().layout, panelId, () => get().nextGroupId())
     set({ layout })
-    // Keep panel tray discoverable after close
+    // Keep panel tray discoverable after close (bottom-center of playground)
     if (get().paletteMode === 'chip' || !get().paletteVisible) {
-      set({ paletteVisible: true, paletteMode: 'float' })
+      set({
+        paletteVisible: true,
+        paletteMode: 'float',
+        palettePos: getPlaygroundFloatPalettePos(),
+      })
     }
     get().persist()
   },
@@ -1098,6 +1148,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       enabledMcps: DEFAULT_CHAT_MCPS,
       enabledSkills: DEFAULT_CHAT_SKILLS,
       enabledAgents: DEFAULT_CHAT_AGENTS,
+      primaryAgent: DEFAULT_PRIMARY_AGENT,
       chatMode: DEFAULT_CHAT_MODE,
     })
     let convId = st.convId
@@ -1112,7 +1163,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const model = st.model || DEFAULT_CHAT_MODEL
     const tools = st.enabledTools || []
     const mode = (st.chatMode || DEFAULT_CHAT_MODE) as ChatMode
-    const agents = st.enabledAgents || DEFAULT_CHAT_AGENTS
+    const primaryAgent = st.primaryAgent || DEFAULT_PRIMARY_AGENT
 
     const userMsg: ChatMessage = {
       id: newMessageId('u'),
@@ -1126,7 +1177,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       model,
       mode,
       tools,
-      agents,
+      primaryAgent,
     })
     const messages = [...(st.messages || []), userMsg, ...assistantMsgs]
     const last = assistantMsgs[assistantMsgs.length - 1]
@@ -1235,6 +1286,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const forked = emptyConversation(`Fork: ${src.title}`)
     forked.messages = cloneMessages(src.messages.slice(0, cutIdx + 1))
     forked.agents = cloneConversations([src])[0].agents
+    forked.primaryAgent = src.primaryAgent || DEFAULT_PRIMARY_AGENT
     forked.chatMode = src.chatMode
     forked.metrics = { ...src.metrics }
     forked.meta = 'Forked · just now'
@@ -1265,7 +1317,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       model: st.model || DEFAULT_CHAT_MODEL,
       mode,
       tools: st.enabledTools || DEFAULT_CHAT_TOOLS,
-      agents: st.enabledAgents || DEFAULT_CHAT_AGENTS,
+      primaryAgent: st.primaryAgent || DEFAULT_PRIMARY_AGENT,
     })
     const next = [...kept, ...assistantMsgs]
     const last = assistantMsgs[assistantMsgs.length - 1]
@@ -1296,7 +1348,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       model: st.model || DEFAULT_CHAT_MODEL,
       mode: (st.chatMode || DEFAULT_CHAT_MODE) as ChatMode,
       tools: st.enabledTools || DEFAULT_CHAT_TOOLS,
-      agents: st.enabledAgents || DEFAULT_CHAT_AGENTS,
+      primaryAgent: st.primaryAgent || DEFAULT_PRIMARY_AGENT,
       retry: true,
     })
     const next = [...kept, ...assistantMsgs]
@@ -1327,6 +1379,20 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const idx = list.findIndex((c) => c.id === st.convId)
     if (idx < 0) return
     list[idx] = { ...list[idx], agents }
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
+  },
+
+  setConversationAgent: (panelKey, agentName) => {
+    const projectId = get().currentProjectId
+    const name = agentName.trim()
+    if (!name) return
+    get().ensureInstanceState(panelKey, { primaryAgent: name })
+    const st = get().instanceState[panelKey]
+    if (!projectId || !st?.convId) return
+    const list = cloneConversations(get().ensureProjectChats(projectId))
+    const idx = list.findIndex((c) => c.id === st.convId)
+    if (idx < 0) return
+    list[idx] = { ...list[idx], primaryAgent: name }
     set({ projectChats: { ...get().projectChats, [projectId]: list } })
   },
 

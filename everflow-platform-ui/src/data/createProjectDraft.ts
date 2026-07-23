@@ -10,6 +10,10 @@ import { DEFAULT_AGENT_HARNESS_IDS, harnessesFromIds } from './harnesses'
 import { getTemplate, type ProjectTemplateId } from './projectTemplates'
 import { PROJECTS, slugifyProjectName } from './projects'
 import type { ApiProject } from '@/lib/api'
+import {
+  apiReposToProjectRepos,
+  normalizeReposForCreate,
+} from '@/lib/workspaceRepos'
 
 export interface CreateProjectDraft {
   name: string
@@ -53,13 +57,15 @@ export function createProjectFromDraft(
       : [...DEFAULT_AGENT_HARNESS_IDS]
 
   const template = getTemplate(draft.templateId)
-  const repos =
+
+  // Prefer repos returned by API (includes clone status / local_path) when present
+  const apiRepos = opts?.apiProject?.repos?.length
+    ? apiReposToProjectRepos(opts.apiProject.repos)
+    : null
+
+  const draftRepos =
     draft.repos.length > 0
-      ? draft.repos.map((r, i) => ({
-          ...r,
-          id: r.id || `repo-${i}`,
-          active: i === 0 ? true : !!r.active && i === 0 ? true : r.active,
-        }))
+      ? normalizeReposForCreate(draft.repos)
       : [
           {
             id: 'main',
@@ -67,23 +73,41 @@ export function createProjectFromDraft(
             active: true,
             branch: 'main',
             provider: 'none' as const,
+            cloneStatus: 'skipped' as const,
           },
         ]
 
+  const normalizedRepos: ProjectRepo[] = apiRepos?.length
+    ? normalizeReposForCreate(
+        apiRepos.map((r, i) => ({
+          ...r,
+          // Preserve draft active/label when ids match
+          ...(draftRepos.find((d) => d.id === r.id) || {}),
+          ...r,
+          active: draftRepos.find((d) => d.id === r.id)?.active ?? r.active ?? i === 0,
+        })),
+      )
+    : draftRepos
+
   // Ensure exactly one active repo
   let sawActive = false
-  const normalizedRepos = repos.map((r) => {
-    if (r.active && !sawActive) {
+  for (let i = 0; i < normalizedRepos.length; i++) {
+    if (normalizedRepos[i].active && !sawActive) {
       sawActive = true
-      return { ...r, active: true }
+      normalizedRepos[i] = { ...normalizedRepos[i], active: true }
+    } else {
+      normalizedRepos[i] = { ...normalizedRepos[i], active: false }
     }
-    return { ...r, active: false }
-  })
-  if (!sawActive && normalizedRepos[0]) normalizedRepos[0].active = true
+  }
+  if (!sawActive && normalizedRepos[0]) {
+    normalizedRepos[0] = { ...normalizedRepos[0], active: true }
+  }
 
   const harnesses = harnessesFromIds(harnessIds)
   const includeSample = draft.options.includeSampleData
+  const hasRemote = normalizedRepos.some((r) => Boolean(r.url?.trim()))
 
+  // API projects with remotes should not seed fake App.tsx — workspace comes from git clone
   let files = [
     { path: 'README.md', name: 'README.md', folder: '' },
     { path: 'src/App.tsx', name: 'App.tsx', folder: 'src' },
@@ -93,7 +117,10 @@ export function createProjectFromDraft(
     'App.tsx': `<span class="tok-kw">export default function</span> <span class="tok-fn">App</span>() {\n  <span class="tok-kw">return</span> &lt;<span class="tok-tag">div</span>&gt;Hello ${trimmed}&lt;/<span class="tok-tag">div</span>&gt;;\n}`,
   }
 
-  if (template.seedFiles?.length) {
+  if (opts?.apiProject && hasRemote) {
+    files = []
+    code = {}
+  } else if (template.seedFiles?.length) {
     files = template.seedFiles.map((f) => ({
       path: f.path,
       name: f.name,
@@ -109,7 +136,7 @@ export function createProjectFromDraft(
     }
   }
 
-  if (!includeSample) {
+  if (!includeSample && !(opts?.apiProject && hasRemote)) {
     // Minimal: keep README only when blank-ish
     if (template.id === 'blank') {
       files = [{ path: 'README.md', name: 'README.md', folder: '' }]

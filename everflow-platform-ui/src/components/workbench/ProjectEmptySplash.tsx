@@ -1,7 +1,7 @@
 import { Button } from '@patternfly/react-core'
 import FolderOpenIcon from '@patternfly/react-icons/dist/esm/icons/folder-open-icon'
 import PlusCircleIcon from '@patternfly/react-icons/dist/esm/icons/plus-circle-icon'
-import { getProject, listProjectIds } from '@/data/projects'
+import { getProject, listVisibleProjectIds } from '@/data/projects'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 export function ProjectEmptySplash() {
@@ -12,7 +12,7 @@ export function ProjectEmptySplash() {
 
   // catalogVersion forces re-read of mutable PROJECTS after create
   void catalogVersion
-  const projectIds = listProjectIds()
+  const projectIds = listVisibleProjectIds()
   const hasProjects = projectIds.length > 0
 
   return (

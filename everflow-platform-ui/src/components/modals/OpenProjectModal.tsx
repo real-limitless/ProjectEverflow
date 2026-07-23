@@ -20,7 +20,7 @@ import CubesIcon from '@patternfly/react-icons/dist/esm/icons/cubes-icon'
 import FolderOpenIcon from '@patternfly/react-icons/dist/esm/icons/folder-open-icon'
 import PlusCircleIcon from '@patternfly/react-icons/dist/esm/icons/plus-circle-icon'
 import SearchIcon from '@patternfly/react-icons/dist/esm/icons/search-icon'
-import { getProject, listProjectIds } from '@/data/projects'
+import { getProject, listVisibleProjectIds } from '@/data/projects'
 import { getTemplate } from '@/data/projectTemplates'
 import { isDemoMode, listProjects } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
@@ -92,14 +92,12 @@ export function OpenProjectModal() {
   }, [isOpen, user, org, ingestApiProject])
 
   const rows = useMemo((): ProjectRow[] => {
-    return listProjectIds()
+    // Visible catalog (excludes pure demo seeds outside demo mode) + already-open tabs
+    const ids = new Set([...listVisibleProjectIds(), ...openProjectIds])
+    return [...ids]
       .map((id) => {
         const p = getProject(id)
         if (!p) return null
-        // In API mode hide pure demo seeds unless already open
-        if (!isDemoMode() && user && !p.fromApi && !openProjectIds.includes(id)) {
-          return null
-        }
         const template = getTemplate(p.templateId)
         return {
           id,
@@ -118,7 +116,7 @@ export function OpenProjectModal() {
       })
       .filter(Boolean)
       .sort((a, b) => a!.name.localeCompare(b!.name)) as ProjectRow[]
-  }, [catalogVersion, openProjectIds, currentProjectId, user])
+  }, [catalogVersion, openProjectIds, currentProjectId])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()

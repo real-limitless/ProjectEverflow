@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Button,
   FormGroup,
@@ -14,15 +14,49 @@ import {
 import PlugIcon from '@patternfly/react-icons/dist/esm/icons/plug-icon'
 import { CreateResourceModal } from '@/components/studio/CreateResourceModal'
 import { EmptySplash } from '@/components/studio/EmptySplash'
+import { getProject } from '@/data/projects'
+import {
+  getOpenCodeHarness,
+  putOpenCodeHarness,
+  slugifyAgentName,
+} from '@/lib/harness/opencodePack'
+import { ensureOpenCode, listMcp } from '@/lib/opencode/client'
 import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { useProjectStudio, useStudioDemoStore } from '@/store/studioDemoStore'
+import type { McpServerDef } from '@/types/studio'
+
+function mcpConfigFromForm(
+  name: string,
+  transport: string,
+  endpoint: string,
+  enabled: boolean,
+): Record<string, unknown> {
+  const isStdio = transport.toLowerCase().includes('stdio')
+  if (isStdio) {
+    const parts = endpoint.trim().split(/\s+/).filter(Boolean)
+    return {
+      type: 'local',
+      command: parts.length ? parts : ['npx', '-y', name],
+      enabled,
+    }
+  }
+  return {
+    type: 'remote',
+    url: endpoint || `https://mcp.example.com/${name}`,
+    enabled,
+  }
+}
 
 export function ToolsPanel() {
   const projectId = usePlaygroundStore((s) => s.currentProjectId) || 'default'
+  const project = getProject(projectId === 'default' ? null : projectId)
+  const isApi = Boolean(project?.fromApi)
+  const sandboxReady = !isApi || project?.sandboxStatus === 'running'
+
   const studio = useProjectStudio(projectId)
   const httpTools = studio.httpTools
-  const mcps = studio.mcps
+  const localMcps = studio.mcps
   const createTool = useStudioDemoStore((s) => s.createTool)
   const deleteTool = useStudioDemoStore((s) => s.deleteTool)
   const createMcp = useStudioDemoStore((s) => s.createMcp)
@@ -33,6 +67,8 @@ export function ToolsPanel() {
   const [sub, setSub] = useState<'tools' | 'mcps'>('tools')
   const [toolOpen, setToolOpen] = useState(false)
   const [mcpOpen, setMcpOpen] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [liveMcp, setLiveMcp] = useState<McpServerDef[] | null>(null)
 
   const [toolName, setToolName] = useState('')
   const [method, setMethod] = useState('GET')
@@ -42,7 +78,154 @@ export function ToolsPanel() {
   const [transport, setTransport] = useState('HTTP/SSE')
   const [endpoint, setEndpoint] = useState('')
 
+  const refreshLiveMcp = useCallback(async () => {
+    if (!isApi || !sandboxReady) {
+      setLiveMcp(null)
+      return
+    }
+    try {
+      const [harness, statusMap] = await Promise.all([
+        getOpenCodeHarness(projectId).catch(() => null),
+        listMcp(projectId).catch(() => ({})),
+      ])
+      const fromPack = Object.entries(harness?.mcp || {}).map(([name, cfg]) => {
+        const c = cfg as Record<string, unknown>
+        return {
+          id: name,
+          name,
+          transport: String(c.type || 'remote'),
+          endpoint: String(
+            c.url ||
+              (Array.isArray(c.command) ? (c.command as string[]).join(' ') : '') ||
+              '',
+          ),
+          on: c.enabled !== false,
+          config: c,
+          status: (statusMap as Record<string, { status?: string }>)[name]?.status,
+        } satisfies McpServerDef
+      })
+      // Include status-only entries not yet in pack
+      for (const [name, st] of Object.entries(statusMap || {})) {
+        if (!fromPack.some((m) => m.name === name)) {
+          fromPack.push({
+            id: name,
+            name,
+            transport: 'remote',
+            endpoint: '',
+            on: true,
+            config: {},
+            status: (st as { status?: string })?.status,
+          })
+        }
+      }
+      setLiveMcp(fromPack)
+    } catch {
+      setLiveMcp(null)
+    }
+  }, [isApi, sandboxReady, projectId])
+
+  useEffect(() => {
+    void refreshLiveMcp()
+  }, [refreshLiveMcp])
+
+  useEffect(() => {
+    const onHarness = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ projectId?: string }>).detail
+      if (detail?.projectId && detail.projectId !== projectId) return
+      void refreshLiveMcp()
+    }
+    window.addEventListener('everflow:harness-updated', onHarness)
+    return () => window.removeEventListener('everflow:harness-updated', onHarness)
+  }, [projectId, refreshLiveMcp])
+
+  const mcps = liveMcp && liveMcp.length > 0 ? liveMcp : localMcps
   const empty = httpTools.length === 0 && mcps.length === 0
+
+  const syncMcpToOpenCode = async (
+    name: string,
+    transportVal: string,
+    endpointVal: string,
+    enabled: boolean,
+  ) => {
+    if (!isApi || !sandboxReady) return false
+    setSyncing(true)
+    try {
+      await putOpenCodeHarness(projectId, {
+        mcp: {
+          [name]: mcpConfigFromForm(name, transportVal, endpointVal, enabled),
+        },
+      })
+      try {
+        await ensureOpenCode(projectId, true)
+      } catch {
+        /* optional restart */
+      }
+      await refreshLiveMcp()
+      window.dispatchEvent(new CustomEvent('everflow:harness-updated', { detail: { projectId } }))
+      return true
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Failed to sync MCP to OpenCode', {
+        kind: 'danger',
+      })
+      return false
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const handleCreateMcp = async () => {
+    if (!mcpName.trim()) return
+    const name = slugifyAgentName(mcpName.trim())
+    const ep = endpoint || 'https://mcp.example.com/sse'
+    createMcp(projectId, {
+      name,
+      transport,
+      endpoint: ep,
+      on: true,
+    })
+    if (isApi && sandboxReady) {
+      const ok = await syncMcpToOpenCode(name, transport, ep, true)
+      if (ok) pushToast(`MCP “${name}” synced to OpenCode`, { kind: 'success' })
+    } else {
+      pushToast('MCP server created (local demo)', { kind: 'success' })
+    }
+    setMcpName('')
+    setEndpoint('')
+    setMcpOpen(false)
+  }
+
+  const handleToggleMcp = async (m: McpServerDef) => {
+    toggleMcp(projectId, m.id)
+    if (isApi && sandboxReady) {
+      await syncMcpToOpenCode(m.name, m.transport, m.endpoint, !m.on)
+    }
+  }
+
+  const handleDeleteMcp = async (m: McpServerDef) => {
+    deleteMcp(projectId, m.id)
+    if (isApi && sandboxReady) {
+      setSyncing(true)
+      try {
+        // Disable rather than fully remove unknown structure
+        await putOpenCodeHarness(projectId, {
+          mcp: {
+            [m.name]: { enabled: false },
+          },
+        })
+        await refreshLiveMcp()
+        window.dispatchEvent(
+          new CustomEvent('everflow:harness-updated', { detail: { projectId } }),
+        )
+        pushToast('MCP disabled in OpenCode', { kind: 'warning' })
+      } catch (e) {
+        pushToast(e instanceof Error ? e.message : 'Failed to update MCP', { kind: 'danger' })
+      } finally {
+        setSyncing(false)
+      }
+    } else {
+      pushToast('MCP deleted', { kind: 'warning' })
+    }
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -60,11 +243,18 @@ export function ToolsPanel() {
           variant="primary"
           size="sm"
           onClick={() => (sub === 'tools' ? setToolOpen(true) : setMcpOpen(true))}
+          isDisabled={syncing}
         >
           {sub === 'tools' ? 'Create tool' : 'Create MCP'}
         </Button>
       </div>
       <div className="panel-scroll">
+        {sub === 'mcps' && isApi ? (
+          <p className="lc-meta" style={{ marginTop: 0 }}>
+            MCP servers sync into the project sandbox <code>opencode.json</code> and are available to
+            OpenCode agents. Assign them per-agent in the Agents panel.
+          </p>
+        ) : null}
         {empty ? (
           <EmptySplash
             title="No tools or MCP servers"
@@ -122,7 +312,7 @@ export function ToolsPanel() {
         ) : mcps.length === 0 ? (
           <EmptySplash
             title="No MCP servers"
-            body="Connect an MCP server over HTTP/SSE or stdio (demo)."
+            body="Connect an MCP server over HTTP/SSE or stdio. It will sync to OpenCode when the sandbox is running."
             primaryLabel="Create MCP server"
             onPrimary={() => setMcpOpen(true)}
           />
@@ -134,24 +324,29 @@ export function ToolsPanel() {
                   <div className="lc-title">{m.name}</div>
                   <div className="lc-meta">
                     {m.transport} · {m.endpoint}
+                    {m.status ? ` · ${m.status}` : ''}
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Label color={m.on ? 'green' : 'grey'}>{m.on ? 'on' : 'off'}</Label>
+                  {isApi && sandboxReady ? (
+                    <Label color="blue" isCompact>
+                      opencode
+                    </Label>
+                  ) : null}
                   <Switch
                     id={`mcp-${m.id}`}
                     isChecked={m.on}
-                    onChange={() => toggleMcp(projectId, m.id)}
+                    onChange={() => void handleToggleMcp(m)}
                     aria-label={`Toggle ${m.name}`}
+                    isDisabled={syncing}
                   />
                   <Button
                     variant="link"
                     isDanger
                     size="sm"
-                    onClick={() => {
-                      deleteMcp(projectId, m.id)
-                      pushToast('MCP deleted', { kind: 'warning' })
-                    }}
+                    onClick={() => void handleDeleteMcp(m)}
+                    isDisabled={syncing}
                   >
                     Delete
                   </Button>
@@ -200,32 +395,33 @@ export function ToolsPanel() {
         isOpen={mcpOpen}
         title="Create MCP server"
         onClose={() => setMcpOpen(false)}
-        onSubmit={() => {
-          if (!mcpName.trim()) return
-          createMcp(projectId, {
-            name: mcpName.trim(),
-            transport,
-            endpoint: endpoint || 'https://mcp.example.com/sse',
-            on: true,
-          })
-          pushToast('MCP server created', { kind: 'success' })
-          setMcpName('')
-          setEndpoint('')
-          setMcpOpen(false)
-        }}
-        isSubmitDisabled={!mcpName.trim()}
+        onSubmit={() => void handleCreateMcp()}
+        isSubmitDisabled={!mcpName.trim() || syncing}
+        submitLabel={syncing ? 'Syncing…' : isApi ? 'Create & sync' : 'Create'}
       >
         <FormGroup label="Name" isRequired fieldId="mcp-name">
           <TextInput id="mcp-name" value={mcpName} onChange={(_e, v) => setMcpName(v)} />
         </FormGroup>
         <FormGroup label="Transport" fieldId="mcp-transport">
           <FormSelect id="mcp-transport" value={transport} onChange={(_e, v) => setTransport(v)}>
-            <FormSelectOption value="HTTP/SSE" label="HTTP/SSE" />
-            <FormSelectOption value="stdio" label="stdio" />
+            <FormSelectOption value="HTTP/SSE" label="HTTP/SSE (remote URL)" />
+            <FormSelectOption value="stdio" label="stdio (local command)" />
           </FormSelect>
         </FormGroup>
-        <FormGroup label="Endpoint / command" fieldId="mcp-ep">
-          <TextInput id="mcp-ep" value={endpoint} onChange={(_e, v) => setEndpoint(v)} />
+        <FormGroup
+          label={transport.toLowerCase().includes('stdio') ? 'Command' : 'URL'}
+          fieldId="mcp-ep"
+        >
+          <TextInput
+            id="mcp-ep"
+            value={endpoint}
+            onChange={(_e, v) => setEndpoint(v)}
+            placeholder={
+              transport.toLowerCase().includes('stdio')
+                ? 'npx -y @modelcontextprotocol/server-github'
+                : 'https://…'
+            }
+          />
         </FormGroup>
       </CreateResourceModal>
     </div>

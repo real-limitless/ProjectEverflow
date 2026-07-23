@@ -10,7 +10,8 @@ interface ChatHeaderProps {
   title: string
   mode: ChatMode
   metrics?: ConversationMetrics
-  agents?: { name: string; role: string }[]
+  /** Primary agent name for this conversation (display only) */
+  primaryAgent?: string
   onModeChange: (mode: ChatMode) => void
 }
 
@@ -18,7 +19,7 @@ export function ChatHeader({
   title,
   mode,
   metrics,
-  agents,
+  primaryAgent,
   onModeChange,
 }: ChatHeaderProps) {
   const used = metrics?.contextUsedTokens ?? 0
@@ -29,18 +30,14 @@ export function ChatHeader({
     <div className="chat-header">
       <div className="chat-header-left">
         <span className="title">{title || 'Chat'}</span>
-        {agents && agents.length > 0 ? (
-          <div className="chat-header-agents" title="Agents in this chat">
-            {agents.map((a) => (
-              <span key={a.name} className={`agent-chip agent-${a.role}`}>
-                {a.name}
-              </span>
-            ))}
+        {primaryAgent ? (
+          <div className="chat-header-agents" title="Primary agent for this conversation">
+            <span className="agent-chip agent-general">{primaryAgent}</span>
           </div>
         ) : null}
       </div>
 
-      <ToggleGroup className="chat-mode-toggle" aria-label="Chat mode">
+      <ToggleGroup className="chat-mode-toggle" aria-label="Permission mode">
         {CHAT_MODES.map((m) => (
           <ToggleGroupItem
             key={m.id}
@@ -52,6 +49,11 @@ export function ChatHeader({
           />
         ))}
       </ToggleGroup>
+      {mode === 'auto' ? (
+        <span className="chat-mode-auto-badge" title="Permissions auto-approved">
+          auto
+        </span>
+      ) : null}
 
       <div className="chat-metrics" aria-label="Conversation metrics">
         <span className="metric" title={`Context ${used.toLocaleString()} / ${window.toLocaleString()} tokens`}>
@@ -79,7 +81,7 @@ export function ChatHeader({
               : '—'}
           </span>
         </span>
-        <span className="metric metric-mode-mobile" title="Mode">
+        <span className="metric metric-mode-mobile" title="Permission mode">
           <span className="metric-label">Mode</span>
           <span className="metric-value">{modeLabel(mode)}</span>
         </span>

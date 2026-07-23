@@ -17,7 +17,7 @@ export function emptyWizardDraft(): WizardDraft {
     harnessIds: [...template.defaultHarnessIds],
     options: {
       layout: template.defaultLayout,
-      includeSampleData: true,
+      includeSampleData: false,
       environment: 'local',
       visibility: 'private',
       dockPalette: true,

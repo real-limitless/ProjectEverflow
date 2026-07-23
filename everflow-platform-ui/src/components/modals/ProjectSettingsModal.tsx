@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  Alert,
   Button,
   Form,
   FormGroup,
+  FormHelperText,
+  FormSection,
   FormSelect,
   FormSelectOption,
+  Grid,
+  GridItem,
+  HelperText,
+  HelperTextItem,
   Modal,
   ModalBody,
   ModalFooter,
@@ -18,6 +25,7 @@ import {
 } from '@patternfly/react-core'
 import { enabledHarnessIds, harnessesFromIds } from '@/data/harnesses'
 import { getProject } from '@/data/projects'
+import { ProvidersManager } from '@/components/providers/ProvidersManager'
 import { HarnessPicker } from '@/components/project-settings/HarnessPicker'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import type {
@@ -26,7 +34,7 @@ import type {
   WorkspaceLayoutMode,
 } from '@/types/project'
 
-type SettingsTab = 'general' | 'harnesses' | 'workbench'
+type SettingsTab = 'general' | 'harnesses' | 'providers' | 'workbench'
 
 interface SettingsDraft {
   name: string
@@ -126,64 +134,132 @@ export function ProjectSettingsModal() {
             >
               <Tab eventKey="general" title={<TabTitleText>General</TabTitleText>} />
               <Tab eventKey="harnesses" title={<TabTitleText>Harnesses</TabTitleText>} />
+              <Tab eventKey="providers" title={<TabTitleText>Providers</TabTitleText>} />
               <Tab eventKey="workbench" title={<TabTitleText>Workbench</TabTitleText>} />
             </Tabs>
 
             <div className="project-settings-body">
+              {error ? (
+                <Alert
+                  variant="danger"
+                  isInline
+                  isPlain
+                  title={error}
+                  className="project-settings-alert"
+                  role="alert"
+                />
+              ) : null}
+
               {tab === 'general' && (
-                <Form className="create-wizard-form">
-                  <FormGroup label="Name" fieldId="ps-name" isRequired>
-                    <TextInput
-                      id="ps-name"
-                      value={draft.name}
-                      onChange={(_e, v) => patch({ name: v })}
-                      aria-label="Project name"
-                    />
-                  </FormGroup>
-                  <FormGroup label="Slug" fieldId="ps-slug">
-                    <TextInput
-                      id="ps-slug"
-                      value={project.slug || project.id}
-                      isDisabled
-                      aria-label="Project slug"
-                    />
-                  </FormGroup>
-                  <FormGroup label="Description" fieldId="ps-desc">
-                    <TextArea
-                      id="ps-desc"
-                      value={draft.description}
-                      onChange={(_e, v) => patch({ description: v })}
-                      aria-label="Project description"
-                      rows={3}
-                    />
-                  </FormGroup>
-                  <FormGroup label="Environment" fieldId="ps-env">
-                    <FormSelect
-                      id="ps-env"
-                      value={draft.environment}
-                      onChange={(_e, v) =>
-                        patch({ environment: v as ProjectEnvironment })
-                      }
-                      aria-label="Environment"
-                    >
-                      <FormSelectOption value="local" label="Local" />
-                      <FormSelectOption value="staging" label="Staging" />
-                      <FormSelectOption value="production-stub" label="Production (stub)" />
-                    </FormSelect>
-                  </FormGroup>
-                  <FormGroup label="Visibility" fieldId="ps-vis">
-                    <FormSelect
-                      id="ps-vis"
-                      value={draft.visibility}
-                      onChange={(_e, v) =>
-                        patch({ visibility: v as ProjectVisibility })
-                      }
-                      aria-label="Visibility"
-                    >
-                      <FormSelectOption value="private" label="Private (organization)" />
-                      <FormSelectOption value="public" label="Public" />
-                    </FormSelect>
-                  </FormGroup>
+                <Form className="project-settings-form">
+                  <FormSection title="Identity" titleElement="h2">
+                    <Grid hasGutter md={6}>
+                      <GridItem span={12} md={6}>
+                        <FormGroup label="Name" fieldId="ps-name" isRequired>
+                          <TextInput
+                            id="ps-name"
+                            value={draft.name}
+                            onChange={(_e, v) => patch({ name: v })}
+                            aria-label="Project name"
+                            isRequired
+                            validated={error && !draft.name.trim() ? 'error' : 'default'}
+                          />
+                        </FormGroup>
+                      </GridItem>
+                      <GridItem span={12} md={6}>
+                        <FormGroup label="Slug" fieldId="ps-slug">
+                          <TextInput
+                            id="ps-slug"
+                            value={project.slug || project.id}
+                            readOnlyVariant="default"
+                            aria-label="Project slug"
+                          />
+                          <FormHelperText>
+                            <HelperText>
+                              <HelperTextItem>
+                                Used in URLs and sandbox paths. Cannot be changed after create.
+                              </HelperTextItem>
+                            </HelperText>
+                          </FormHelperText>
+                        </FormGroup>
+                      </GridItem>
+                      <GridItem span={12}>
+                        <FormGroup label="Description" fieldId="ps-desc">
+                          <TextArea
+                            id="ps-desc"
+                            value={draft.description}
+                            onChange={(_e, v) => patch({ description: v })}
+                            aria-label="Project description"
+                            rows={3}
+                            resizeOrientation="vertical"
+                          />
+                          <FormHelperText>
+                            <HelperText>
+                              <HelperTextItem>
+                                Optional summary shown in project lists and the open dialog.
+                              </HelperTextItem>
+                            </HelperText>
+                          </FormHelperText>
+                        </FormGroup>
+                      </GridItem>
+                    </Grid>
+                  </FormSection>
+
+                  <FormSection title="Access" titleElement="h2">
+                    <Grid hasGutter md={6}>
+                      <GridItem span={12} md={6}>
+                        <FormGroup label="Environment" fieldId="ps-env">
+                          <FormSelect
+                            id="ps-env"
+                            value={draft.environment}
+                            onChange={(_e, v) =>
+                              patch({ environment: v as ProjectEnvironment })
+                            }
+                            aria-label="Environment"
+                          >
+                            <FormSelectOption value="local" label="Local" />
+                            <FormSelectOption value="staging" label="Staging" />
+                            <FormSelectOption
+                              value="production-stub"
+                              label="Production (stub)"
+                            />
+                          </FormSelect>
+                          <FormHelperText>
+                            <HelperText>
+                              <HelperTextItem>
+                                Target environment for this project’s workbench defaults.
+                              </HelperTextItem>
+                            </HelperText>
+                          </FormHelperText>
+                        </FormGroup>
+                      </GridItem>
+                      <GridItem span={12} md={6}>
+                        <FormGroup label="Visibility" fieldId="ps-vis">
+                          <FormSelect
+                            id="ps-vis"
+                            value={draft.visibility}
+                            onChange={(_e, v) =>
+                              patch({ visibility: v as ProjectVisibility })
+                            }
+                            aria-label="Visibility"
+                          >
+                            <FormSelectOption
+                              value="private"
+                              label="Private (organization)"
+                            />
+                            <FormSelectOption value="public" label="Public" />
+                          </FormSelect>
+                          <FormHelperText>
+                            <HelperText>
+                              <HelperTextItem>
+                                Who can discover and open this project.
+                              </HelperTextItem>
+                            </HelperText>
+                          </FormHelperText>
+                        </FormGroup>
+                      </GridItem>
+                    </Grid>
+                  </FormSection>
                 </Form>
               )}
 
@@ -201,37 +277,54 @@ export function ProjectSettingsModal() {
                 />
               )}
 
-              {tab === 'workbench' && (
-                <Form className="create-wizard-form">
-                  <p className="create-wizard-lead">
-                    Defaults for how this project opens in the workbench. Existing open
-                    layouts are not reset automatically.
-                  </p>
-                  <FormGroup label="Default workspace layout" fieldId="ps-layout">
-                    <FormSelect
-                      id="ps-layout"
-                      value={draft.layoutMode}
-                      onChange={(_e, v) =>
-                        patch({ layoutMode: v as WorkspaceLayoutMode })
-                      }
-                      aria-label="Workspace layout"
-                    >
-                      <FormSelectOption
-                        value="standard"
-                        label="Standard (chat + preview stack)"
-                      />
-                      <FormSelectOption value="chat-first" label="Chat-first" />
-                      <FormSelectOption value="code-first" label="Code-first" />
-                    </FormSelect>
-                  </FormGroup>
-                </Form>
+              {tab === 'providers' && (
+                <ProvidersManager
+                  scope="project"
+                  projectId={projectId || undefined}
+                  lead={
+                    <>
+                      Optional project overrides. These keys take priority over your account
+                      AI providers for this project’s chat, embeddings, and OCR. Changes save
+                      immediately (independent of the footer Save button).
+                    </>
+                  }
+                />
               )}
 
-              {error ? (
-                <p className="create-wizard-help is-error" role="alert">
-                  {error}
-                </p>
-              ) : null}
+              {tab === 'workbench' && (
+                <Form className="project-settings-form">
+                  <FormSection title="Workbench defaults" titleElement="h2">
+                    <p className="project-settings-lead">
+                      Defaults for how this project opens in the workbench. Existing open
+                      layouts are not reset automatically.
+                    </p>
+                    <FormGroup label="Default workspace layout" fieldId="ps-layout">
+                      <FormSelect
+                        id="ps-layout"
+                        value={draft.layoutMode}
+                        onChange={(_e, v) =>
+                          patch({ layoutMode: v as WorkspaceLayoutMode })
+                        }
+                        aria-label="Workspace layout"
+                      >
+                        <FormSelectOption
+                          value="standard"
+                          label="Standard (chat + preview stack)"
+                        />
+                        <FormSelectOption value="chat-first" label="Chat-first" />
+                        <FormSelectOption value="code-first" label="Code-first" />
+                      </FormSelect>
+                      <FormHelperText>
+                        <HelperText>
+                          <HelperTextItem>
+                            Applied when the project is opened with no saved layout.
+                          </HelperTextItem>
+                        </HelperText>
+                      </FormHelperText>
+                    </FormGroup>
+                  </FormSection>
+                </Form>
+              )}
             </div>
           </>
         ) : null}

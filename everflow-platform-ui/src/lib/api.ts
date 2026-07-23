@@ -127,12 +127,25 @@ export type Org = {
   updated_at: string
 }
 
+export type ApiProjectRepo = {
+  id: string
+  label: string
+  url?: string | null
+  branch?: string | null
+  provider?: string | null
+  local_path?: string | null
+  active?: boolean | null
+  clone_status?: string | null
+  clone_error?: string | null
+}
+
 export type ApiProject = {
   id: string
   organization_id: string
   name: string
   slug: string
   description: string | null
+  repos?: ApiProjectRepo[] | null
   sandbox_name?: string | null
   sandbox_status?: string
   sandbox_image?: string | null
@@ -182,7 +195,20 @@ export async function listProjects(orgId: string): Promise<ApiProject[]> {
 
 export async function createProject(
   orgId: string,
-  payload: { name: string; slug: string; description?: string },
+  payload: {
+    name: string
+    slug: string
+    description?: string
+    repos?: Array<{
+      id: string
+      label: string
+      url?: string
+      branch?: string
+      provider?: string
+      local_path?: string
+      active?: boolean
+    }>
+  },
 ): Promise<ApiProject> {
   return apiFetch(`/api/v1/orgs/${orgId}/projects`, {
     method: 'POST',
@@ -287,6 +313,104 @@ export async function writeSandboxFs(
   await apiFetch(`/api/v1/projects/${projectId}/sandbox/fs/content?${q}`, {
     method: 'PUT',
     body: JSON.stringify({ content }),
+  })
+}
+
+/** AI provider vault (encrypted on server; never returns raw keys). */
+export type ProviderName = 'openrouter' | 'openai' | 'anthropic' | 'xai' | 'custom'
+
+export type ProviderCatalogItem = {
+  id: string
+  name: string
+  description: string
+  scopes: string[]
+}
+
+export type ProviderCredential = {
+  id: string
+  owner_type: 'user' | 'project'
+  owner_id: string
+  provider: string
+  label: string | null
+  scopes: string[]
+  is_default: boolean
+  key_hint: string | null
+  created_at: string
+  updated_at: string
+  last_used_at: string | null
+}
+
+export async function listProviderCatalog(): Promise<ProviderCatalogItem[]> {
+  return apiFetch('/api/v1/providers/catalog')
+}
+
+export async function listMyProviders(): Promise<ProviderCredential[]> {
+  return apiFetch('/api/v1/me/providers')
+}
+
+export async function createMyProvider(payload: {
+  provider: ProviderName
+  api_key: string
+  label?: string
+  scopes?: string[]
+  is_default?: boolean
+}): Promise<ProviderCredential> {
+  return apiFetch('/api/v1/me/providers', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteMyProvider(credId: string): Promise<void> {
+  await apiFetch(`/api/v1/me/providers/${credId}`, { method: 'DELETE' })
+}
+
+export async function listProjectProviders(
+  projectId: string,
+): Promise<ProviderCredential[]> {
+  return apiFetch(`/api/v1/projects/${projectId}/providers`)
+}
+
+export async function createProjectProvider(
+  projectId: string,
+  payload: {
+    provider: ProviderName
+    api_key: string
+    label?: string
+    scopes?: string[]
+    is_default?: boolean
+  },
+): Promise<ProviderCredential> {
+  return apiFetch(`/api/v1/projects/${projectId}/providers`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteProjectProvider(
+  projectId: string,
+  credId: string,
+): Promise<void> {
+  await apiFetch(`/api/v1/projects/${projectId}/providers/${credId}`, {
+    method: 'DELETE',
+  })
+}
+
+export type ProviderInjectResult = {
+  injected: boolean
+  reason?: string
+  env_keys: string[]
+  opencode_providers: string[]
+  path?: string | null
+  error?: string
+}
+
+/** Resolve vault keys for the project and inject into the running sandbox. */
+export async function injectProjectProviders(
+  projectId: string,
+): Promise<ProviderInjectResult> {
+  return apiFetch(`/api/v1/projects/${projectId}/providers/inject`, {
+    method: 'POST',
   })
 }
 
@@ -412,6 +536,129 @@ export function previewIframeSrc(endpoint: PreviewEndpoint, path = '/'): string 
     const p = path.startsWith('/') ? path.slice(1) : path
     return `${base}${p}?ticket=${encodeURIComponent(endpoint.ticket)}`
   }
+}
+
+// ── Studio: knowledge canvases + project agents (platform API / Everflow MCP) ─
+
+export type ApiKnowledgeCanvas = {
+  id: string
+  project_id: string
+  name: string
+  description?: string | null
+  content_md?: string
+  origin: string
+  status: string
+  chunks?: number | null
+  mime?: string | null
+  size_label?: string | null
+  created_by?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ApiProjectAgent = {
+  id: string
+  project_id: string
+  name: string
+  role: string
+  description: string
+  system_prompt: string
+  tools: string[]
+  active: boolean
+  created_by?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export async function listKnowledgeCanvases(projectId: string): Promise<ApiKnowledgeCanvas[]> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/canvases`)
+}
+
+export async function getKnowledgeCanvas(
+  projectId: string,
+  canvasId: string,
+): Promise<ApiKnowledgeCanvas> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/canvases/${canvasId}`)
+}
+
+export async function createKnowledgeCanvas(
+  projectId: string,
+  body: {
+    name: string
+    description?: string
+    content_md?: string
+    origin?: string
+  },
+): Promise<ApiKnowledgeCanvas> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/canvases`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateKnowledgeCanvas(
+  projectId: string,
+  canvasId: string,
+  body: Partial<{
+    name: string
+    description: string | null
+    content_md: string
+    status: string
+  }>,
+): Promise<ApiKnowledgeCanvas> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/canvases/${canvasId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteKnowledgeCanvas(projectId: string, canvasId: string): Promise<void> {
+  await apiFetch(`/api/v1/projects/${projectId}/knowledge/canvases/${canvasId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function listProjectAgents(projectId: string): Promise<ApiProjectAgent[]> {
+  return apiFetch(`/api/v1/projects/${projectId}/agents`)
+}
+
+export async function createProjectAgent(
+  projectId: string,
+  body: {
+    name: string
+    role?: string
+    description?: string
+    system_prompt?: string
+    tools?: string[]
+    active?: boolean
+  },
+): Promise<ApiProjectAgent> {
+  return apiFetch(`/api/v1/projects/${projectId}/agents`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateProjectAgent(
+  projectId: string,
+  agentId: string,
+  body: Partial<{
+    name: string
+    role: string
+    description: string
+    system_prompt: string
+    tools: string[]
+    active: boolean
+  }>,
+): Promise<ApiProjectAgent> {
+  return apiFetch(`/api/v1/projects/${projectId}/agents/${agentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteProjectAgent(projectId: string, agentId: string): Promise<void> {
+  await apiFetch(`/api/v1/projects/${projectId}/agents/${agentId}`, { method: 'DELETE' })
 }
 
 export { API_BASE }

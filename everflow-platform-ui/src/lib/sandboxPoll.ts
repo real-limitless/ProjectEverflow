@@ -1,4 +1,14 @@
 import { getSandboxStatus, type SandboxStatus } from '@/lib/api'
+import { isSandboxPollTerminal } from '@/lib/sandboxReady'
+
+/** Default poll interval while waiting for create/start. */
+export const SANDBOX_POLL_INTERVAL_MS = 2000
+
+/**
+ * Default wait budget. Backend create uses sandbox_agent_timeout_seconds (120s);
+ * allow a bit more for slow first boots / named-volume setup.
+ */
+export const SANDBOX_POLL_TIMEOUT_MS = 150_000
 
 export async function waitForSandbox(
   projectId: string,
@@ -8,15 +18,14 @@ export async function waitForSandbox(
     onUpdate?: (status: SandboxStatus) => void
   },
 ): Promise<SandboxStatus> {
-  const intervalMs = opts?.intervalMs ?? 2000
-  // Create returns once the microVM is up (~10s); harness install is deferred.
-  const timeoutMs = opts?.timeoutMs ?? 60_000
+  const intervalMs = opts?.intervalMs ?? SANDBOX_POLL_INTERVAL_MS
+  const timeoutMs = opts?.timeoutMs ?? SANDBOX_POLL_TIMEOUT_MS
   const start = Date.now()
 
   // First hit immediately
   let last = await getSandboxStatus(projectId)
   opts?.onUpdate?.(last)
-  if (last.status === 'running' || last.status === 'error' || last.status === 'destroyed') {
+  if (isSandboxPollTerminal(last.status)) {
     return last
   }
 
@@ -24,7 +33,7 @@ export async function waitForSandbox(
     await new Promise((r) => setTimeout(r, intervalMs))
     last = await getSandboxStatus(projectId)
     opts?.onUpdate?.(last)
-    if (last.status === 'running' || last.status === 'error' || last.status === 'destroyed') {
+    if (isSandboxPollTerminal(last.status)) {
       return last
     }
   }

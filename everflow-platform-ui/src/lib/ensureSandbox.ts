@@ -4,7 +4,12 @@ import {
   startSandbox,
   type SandboxStatus,
 } from '@/lib/api'
-import { waitForSandbox } from '@/lib/sandboxPoll'
+import {
+  SANDBOX_POLL_INTERVAL_MS,
+  SANDBOX_POLL_TIMEOUT_MS,
+  waitForSandbox,
+} from '@/lib/sandboxPoll'
+import { shouldRecreateSandbox } from '@/lib/sandboxReady'
 
 export type EnsureSandboxResult = {
   status: SandboxStatus
@@ -27,6 +32,42 @@ function applyUpdate(
   onUpdate?: (status: SandboxStatus) => void,
 ): void {
   onUpdate?.(st)
+}
+
+/**
+ * Prefer agent-reported status when the platform row is still "running" but the
+ * microVM is dead (common after sandbox-agent restart).
+ */
+function effectiveStatus(st: SandboxStatus): string {
+  const top = st.status || ''
+  const agentRaw = st.agent && typeof st.agent.status === 'string' ? st.agent.status : null
+  const agent = agentRaw?.trim() || null
+  if (agent && agent !== top) {
+    if (top === 'running' && agent !== 'running') {
+      return agent
+    }
+    if (shouldRecreateSandbox(agent) && !shouldRecreateSandbox(top) && top !== 'creating' && top !== 'pending') {
+      return agent
+    }
+  }
+  return top
+}
+
+function withEffectiveStatus(st: SandboxStatus): SandboxStatus {
+  const eff = effectiveStatus(st)
+  if (eff === st.status) return st
+  const agentErr =
+    st.agent && typeof st.agent.error === 'string' ? (st.agent.error as string) : null
+  return {
+    ...st,
+    status: eff,
+    error:
+      st.error ||
+      agentErr ||
+      (shouldRecreateSandbox(eff)
+        ? `Sandbox is ${eff} on agent; recreating…`
+        : st.error),
+  }
 }
 
 /**
@@ -56,19 +97,21 @@ async function doEnsure(
   opts?: EnsureOpts,
 ): Promise<EnsureSandboxResult> {
   const onUpdate = opts?.onUpdate
-  const intervalMs = opts?.intervalMs
-  const timeoutMs = opts?.timeoutMs
+  const intervalMs = opts?.intervalMs ?? SANDBOX_POLL_INTERVAL_MS
+  const timeoutMs = opts?.timeoutMs ?? SANDBOX_POLL_TIMEOUT_MS
 
   let st: SandboxStatus
   try {
-    st = await getSandboxStatus(projectId)
+    st = withEffectiveStatus(await getSandboxStatus(projectId))
   } catch (e) {
     // If status fetch fails entirely, try recreate as last resort when forced
     if (opts?.forceRecreate) {
       try {
         st = await recreateSandbox(projectId)
         applyUpdate(st, onUpdate)
-        st = await waitForSandbox(projectId, { onUpdate, intervalMs, timeoutMs })
+        st = withEffectiveStatus(
+          await waitForSandbox(projectId, { onUpdate, intervalMs, timeoutMs }),
+        )
         return {
           status: st,
           action: 'recreate',
@@ -106,34 +149,20 @@ async function doEnsure(
   let action: EnsureSandboxResult['action'] = 'poll'
 
   try {
-    if (opts?.forceRecreate || shouldRecreate(st.status)) {
+    if (opts?.forceRecreate || shouldRecreateSandbox(st.status)) {
       action = 'recreate'
-      st = await recreateSandbox(projectId)
-      applyUpdate(
-        {
-          ...st,
-          status: st.status === 'running' ? 'running' : 'creating',
-        },
-        onUpdate,
-      )
+      st = await runRecreate(projectId, onUpdate)
     } else if (st.status === 'stopped') {
       action = 'start'
       try {
         st = await startSandbox(projectId)
         applyUpdate(st, onUpdate)
       } catch (startErr) {
-        // Missing on agent → recreate
+        // Missing / dead on agent → recreate
         const msg = startErr instanceof Error ? startErr.message : String(startErr)
-        if (/not found|missing|409|404/i.test(msg)) {
+        if (/not found|missing|not running|crashed|409|404/i.test(msg)) {
           action = 'recreate'
-          st = await recreateSandbox(projectId)
-          applyUpdate(
-            {
-              ...st,
-              status: st.status === 'running' ? 'running' : 'creating',
-            },
-            onUpdate,
-          )
+          st = await runRecreate(projectId, onUpdate)
         } else {
           throw startErr
         }
@@ -145,7 +174,21 @@ async function doEnsure(
       return { status: st, action, ok: true }
     }
 
-    st = await waitForSandbox(projectId, { onUpdate, intervalMs, timeoutMs })
+    st = withEffectiveStatus(
+      await waitForSandbox(projectId, { onUpdate, intervalMs, timeoutMs }),
+    )
+
+    // Still dead after poll (e.g. stuck creating, or crashed mid-wait) → one auto-recreate
+    if (st.status !== 'running' && action !== 'recreate' && shouldRecreateSandbox(st.status)) {
+      action = 'recreate'
+      st = await runRecreate(projectId, onUpdate)
+      if (st.status !== 'running') {
+        st = withEffectiveStatus(
+          await waitForSandbox(projectId, { onUpdate, intervalMs, timeoutMs }),
+        )
+      }
+    }
+
     return {
       status: st,
       action,
@@ -153,6 +196,31 @@ async function doEnsure(
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Sandbox ensure failed'
+    // Not running / missing on agent during ensure → force recreate once
+    if (action !== 'recreate' && /not found|missing|not running|crashed|409|404/i.test(msg)) {
+      try {
+        action = 'recreate'
+        st = await runRecreate(projectId, onUpdate)
+        if (st.status !== 'running') {
+          st = withEffectiveStatus(
+            await waitForSandbox(projectId, { onUpdate, intervalMs, timeoutMs }),
+          )
+        }
+        return { status: st, action, ok: st.status === 'running' }
+      } catch (reErr) {
+        const reMsg = reErr instanceof Error ? reErr.message : msg
+        const failed: SandboxStatus = {
+          project_id: projectId,
+          sandbox_name: st?.sandbox_name ?? null,
+          status: 'error',
+          error: reMsg,
+          image: st?.image,
+          created_at: st?.created_at,
+        }
+        applyUpdate(failed, onUpdate)
+        return { status: failed, action: 'recreate', ok: false }
+      }
+    }
     const failed: SandboxStatus = {
       project_id: projectId,
       sandbox_name: st?.sandbox_name ?? null,
@@ -166,8 +234,17 @@ async function doEnsure(
   }
 }
 
-function shouldRecreate(status: string): boolean {
-  return status === 'error' || status === 'destroyed' || status === 'unknown' || !status
+async function runRecreate(
+  projectId: string,
+  onUpdate?: (status: SandboxStatus) => void,
+): Promise<SandboxStatus> {
+  const st = await recreateSandbox(projectId)
+  const next: SandboxStatus = {
+    ...st,
+    status: st.status === 'running' ? 'running' : 'creating',
+  }
+  applyUpdate(next, onUpdate)
+  return next
 }
 
 /** Whether an ensure is currently running for this project. */

@@ -7,6 +7,9 @@ import {
   DEFAULT_CHAT_MODE,
   DEFAULT_CHAT_SKILLS,
   DEFAULT_CHAT_TOOLS,
+  DEFAULT_PRIMARY_AGENT,
+  OPENCODE_AGENT_FALLBACKS,
+  pickDefaultPrimaryAgent,
   type CatalogItem,
 } from '@/data/chatCatalog'
 import { getProject } from '@/data/projects'
@@ -42,6 +45,7 @@ import {
   upsertMessage,
   upsertQuestionMessage,
 } from '@/lib/opencode/mapEvents'
+import { openCodePromptForMode } from '@/lib/opencode/chatMode'
 import {
   assistantTurnReady,
   estimateLiveTokensPerSec,
@@ -56,6 +60,8 @@ import { ChatEmptyState } from './ChatEmptyState'
 import { ChatHeader } from './ChatHeader'
 import { ChatMessageRow } from './ChatMessageRow'
 import { ConnectProviderModal } from './ConnectProviderModal'
+import { ModelBrowseModal } from './ModelBrowseModal'
+import { loadPinnedModels, togglePinnedModel } from '@/lib/pinnedModels'
 import { ConvRail } from './ConvRail'
 
 interface ChatPanelProps {
@@ -89,17 +95,20 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const editUserMessage = usePlaygroundStore((s) => s.editUserMessage)
   const retryAssistantMessage = usePlaygroundStore((s) => s.retryAssistantMessage)
   const setChatMode = usePlaygroundStore((s) => s.setChatMode)
-  const setConversationAgents = usePlaygroundStore((s) => s.setConversationAgents)
+  const setConversationAgent = usePlaygroundStore((s) => s.setConversationAgent)
   const updateConversationMessages = usePlaygroundStore((s) => s.updateConversationMessages)
   const [draft, setDraft] = useState('')
   const [liveStatus, setLiveStatus] = useState<LiveStatus>('idle')
   const [liveError, setLiveError] = useState<string | null>(null)
   const [providerOpen, setProviderOpen] = useState(false)
+  /** User chose to skip connecting a key (use free / built-in OpenCode models). */
+  const [providerSkipped, setProviderSkipped] = useState(false)
+  const [modelBrowseOpen, setModelBrowseOpen] = useState(false)
+  const [pinnedModelIds, setPinnedModelIds] = useState<string[]>([])
   const [models, setModels] = useState<CatalogItem[] | null>(null)
   const [mcpsLive, setMcpsLive] = useState<CatalogItem[] | null>(null)
   const [agentsLive, setAgentsLive] = useState<CatalogItem[] | null>(null)
   const [sending, setSending] = useState(false)
-  const [bootStage, setBootStage] = useState<string>('')
   const sseRef = useRef<AbortController | null>(null)
   const liveRef = useRef(false)
   /** Monotonic bootstrap generation — remount/retry increments; stale async exits. */
@@ -108,6 +117,10 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const pollAbortRef = useRef(0)
   /** Question request ids already answered in this session — never re-inject as pending. */
   const answeredQuestionIdsRef = useRef<Set<string>>(new Set())
+  /** Current chat mode for SSE handlers (avoid stale closures). */
+  const modeRef = useRef<ChatMode>(DEFAULT_CHAT_MODE)
+  /** Permission ids we already auto-approved this session (dedupe). */
+  const autoApprovedPermIdsRef = useRef<Set<string>>(new Set())
 
   function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
@@ -156,6 +169,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       enabledMcps: DEFAULT_CHAT_MCPS,
       enabledSkills: DEFAULT_CHAT_SKILLS,
       enabledAgents: DEFAULT_CHAT_AGENTS,
+      primaryAgent: primary?.primaryAgent || DEFAULT_PRIMARY_AGENT,
       chatMode: primary?.chatMode || DEFAULT_CHAT_MODE,
       railCollapsed: false,
     })
@@ -164,13 +178,15 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const tools = st.enabledTools || DEFAULT_CHAT_TOOLS
   const mcps = st.enabledMcps || DEFAULT_CHAT_MCPS
   const skills = st.enabledSkills || DEFAULT_CHAT_SKILLS
-  const agents = st.enabledAgents || DEFAULT_CHAT_AGENTS
   const mode = (st.chatMode || DEFAULT_CHAT_MODE) as ChatMode
+  modeRef.current = mode
   const railCollapsed = !!st.railCollapsed
   const messages = st.messages || []
   const isEmpty = messages.length === 0
 
   const activeConv = conversations.find((c) => c.id === st.convId) || primary
+  const primaryAgent =
+    st.primaryAgent || activeConv?.primaryAgent || DEFAULT_PRIMARY_AGENT
 
   const hydrateSession = useCallback(
     async (
@@ -319,8 +335,15 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       const mapped: ChatConversation[] = []
       for (const s of sessions) {
         const prev = prevById.get(s.id)
-        // Preserve in-memory messages for known sessions until hydrate fills them
-        mapped.push(sessionToConversation(s, prev?.messages || []))
+        // Preserve in-memory messages + Everflow UI state for known sessions
+        const base = sessionToConversation(s, prev?.messages || [])
+        if (prev) {
+          base.chatMode = prev.chatMode
+          base.primaryAgent = prev.primaryAgent
+          base.agents = prev.agents
+          base.metrics = prev.metrics
+        }
+        mapped.push(base)
       }
       if (mapped.length === 0) {
         const created = await createSession(projectId, 'New chat')
@@ -352,6 +375,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         listMcp(projectId).catch(() => ({})),
         listAgents(projectId).catch(() => []),
       ])
+      // harness-updated listeners call loadCatalogs to pick up new agents/MCP
       const modelItems: CatalogItem[] = []
       for (const pvd of prov.providers || []) {
         const modelsRaw = pvd.models
@@ -375,12 +399,23 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       }
       setModels(modelItems.length ? modelItems : null)
       const connected = prov.connected || []
+      // Free / built-in OpenCode models appear in the catalog without vault keys.
+      // Only soft-prompt for a provider when there are truly no models.
       if (connected.length === 0 && modelItems.length === 0) {
-        // providers list may exist without connected
-      }
-      if (connected.length === 0) {
-        // Still allow if user has no "connected" field — check later on send
         setLiveStatus((s) => (s === 'connecting' ? 'needs_provider' : s))
+      }
+      // Prefer a real catalog model when the UI default is missing
+      if (modelItems.length) {
+        const cur =
+          usePlaygroundStore.getState().instanceState[panelKey]?.model || DEFAULT_CHAT_MODEL
+        if (!modelItems.some((m) => m.id === cur)) {
+          const prefer =
+            modelItems.find((m) => /big.?pickle|nemo|free|opencode/i.test(m.id + m.label)) ||
+            modelItems[0]
+          if (prefer) {
+            usePlaygroundStore.getState().ensureInstanceState(panelKey, { model: prefer.id })
+          }
+        }
       }
 
       const mcpItems: CatalogItem[] = Object.entries(mcpMap || {}).map(([id, st]) => ({
@@ -400,18 +435,39 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       }))
       setAgentsLive(agentItems.length ? agentItems : null)
 
+      // Soft-default primary agent if panel has none (prefer build from live catalog)
+      if (agentItems.length) {
+        const cur =
+          usePlaygroundStore.getState().instanceState[panelKey]?.primaryAgent
+        if (!cur) {
+          const def = pickDefaultPrimaryAgent(agentItems.map((a) => a.id))
+          usePlaygroundStore.getState().setConversationAgent(panelKey, def)
+        }
+      }
+
       return { connected, modelItems }
     } catch {
       return { connected: [] as string[], modelItems: [] as CatalogItem[] }
     }
-  }, [])
+  }, [panelKey])
+
+  // Refresh agents/MCP when Agents or Tools panel syncs harness pack
+  useEffect(() => {
+    if (!useLive || !currentProjectId) return
+    const onHarness = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ projectId?: string }>).detail
+      if (detail?.projectId && detail.projectId !== currentProjectId) return
+      void loadCatalogs(currentProjectId)
+    }
+    window.addEventListener('everflow:harness-updated', onHarness)
+    return () => window.removeEventListener('everflow:harness-updated', onHarness)
+  }, [useLive, currentProjectId, loadCatalogs])
 
   // Bootstrap OpenCode when live. Generation token survives Strict Mode remounts:
   // cleanup cancels the prior gen; a new effect always starts a fresh bootstrap.
   useEffect(() => {
     if (!useLive || !currentProjectId) {
       setLiveStatus(isDemoMode() || !p?.fromApi ? 'demo' : 'idle')
-      setBootStage('')
       return
     }
 
@@ -419,17 +475,14 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     const gen = ++bootGenRef.current
     setLiveStatus('connecting')
     setLiveError(null)
-    setBootStage('Starting OpenCode in sandbox…')
 
     const stillActive = () => !cancelled && gen === bootGenRef.current
 
     ;(async () => {
       try {
-        setBootStage('Starting OpenCode in sandbox…')
         await withTimeout(ensureOpenCode(currentProjectId), 25_000, 'OpenCode ensure')
         if (!stillActive()) return
 
-        setBootStage('Loading providers…')
         let cat = { connected: [] as string[], modelItems: [] as CatalogItem[] }
         try {
           cat = await withTimeout(loadCatalogs(currentProjectId), 20_000, 'Provider catalog')
@@ -439,7 +492,6 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         }
         if (!stillActive()) return
 
-        setBootStage('Loading sessions…')
         const prefer =
           usePlaygroundStore.getState().instanceState[panelKey]?.convId
         try {
@@ -558,9 +610,49 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
                 ) {
                   return
                 }
+                const autoApprove =
+                  openCodePromptForMode(modeRef.current).autoApprovePermissions
                 const msgs =
                   usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
                   []
+
+                if (autoApprove && !autoApprovedPermIdsRef.current.has(patch.permissionId)) {
+                  autoApprovedPermIdsRef.current.add(patch.permissionId)
+                  const permMsg: ChatMessage = {
+                    id: `perm-${patch.permissionId}`,
+                    role: 'assistant',
+                    blocks: [
+                      {
+                        type: 'permission',
+                        permission: {
+                          id: patch.permissionId,
+                          title: patch.title,
+                          detail: patch.detail
+                            ? `${patch.detail}\n(auto-approved)`
+                            : 'Auto-approved (Automatic mode)',
+                          status: 'resolved',
+                        },
+                      },
+                    ],
+                  }
+                  apply(upsertMessage(msgs, permMsg))
+                  void respondPermission(
+                    projectId,
+                    convId,
+                    patch.permissionId,
+                    'once',
+                    false,
+                  )
+                    .then(() =>
+                      hydrateSession(projectId, convId, { force: true }),
+                    )
+                    .catch((e) => {
+                      autoApprovedPermIdsRef.current.delete(patch.permissionId)
+                      setLiveError((e as Error).message)
+                    })
+                  return
+                }
+
                 const permMsg: ChatMessage = {
                   id: `perm-${patch.permissionId}`,
                   role: 'assistant',
@@ -593,15 +685,14 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         attachSse()
 
         if (!stillActive()) return
-        setBootStage('')
-        if (cat.connected.length === 0) {
-          setLiveStatus('needs_provider')
-        } else {
+        // Ready when any models exist (incl. free OpenCode) or user skipped provider gate
+        if (cat.connected.length > 0 || cat.modelItems.length > 0 || providerSkipped) {
           setLiveStatus('ready')
+        } else {
+          setLiveStatus('needs_provider')
         }
       } catch (e) {
         if (!stillActive()) return
-        setBootStage('')
         setLiveError((e as Error).message)
         setLiveStatus('error')
       }
@@ -617,7 +708,18 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       sseRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- live project connection only
-  }, [useLive, currentProjectId])
+  }, [useLive, currentProjectId, providerSkipped])
+
+  // Load pinned models when project changes; reset provider-skip gate per project
+  useEffect(() => {
+    if (!currentProjectId) {
+      setPinnedModelIds([])
+      setProviderSkipped(false)
+      return
+    }
+    setPinnedModelIds(loadPinnedModels(currentProjectId))
+    setProviderSkipped(false)
+  }, [currentProjectId])
 
   const sendLive = async (text: string) => {
     if (!currentProjectId || !st.convId) return
@@ -650,26 +752,32 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       ensureInstanceState(panelKey, { messages: optimistic })
       updateConversationMessages(projectId, convId, optimistic)
 
-      const liveAgentIds = new Set((agentsLive || []).map((a) => a.id))
       const liveModelIds = new Set((models || []).map((m) => m.id))
       const modelRef =
         liveModelIds.has(model) || model.includes('/')
           ? parseModelId(model)
           : null
+      // Permission mode only (tools + auto-approve); agent is user-selected
+      const modePrompt = openCodePromptForMode(modeRef.current)
+      const selectedAgent =
+        usePlaygroundStore.getState().instanceState[panelKey]?.primaryAgent ||
+        primaryAgent
       const agentName =
-        agents.find((id) => liveAgentIds.has(id)) ||
+        selectedAgent ||
         (agentsLive && agentsLive[0]?.id) ||
-        undefined
+        DEFAULT_PRIMARY_AGENT
 
       const body: {
         parts: Array<{ type: string; text?: string }>
         model?: { providerID: string; modelID: string }
         agent?: string
+        tools?: Record<string, boolean>
       } = {
         parts: [{ type: 'text', text }],
       }
       if (modelRef) body.model = modelRef
       if (agentName) body.agent = agentName
+      if (modePrompt.tools) body.tools = modePrompt.tools
 
       try {
         await promptAsync(projectId, convId, body)
@@ -754,7 +862,11 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       setLiveError((e as Error).message)
       const msg = ((e as Error).message || '').toLowerCase()
       if (msg.includes('auth') || msg.includes('api key') || (e as { status?: number }).status === 401) {
-        setLiveStatus('needs_provider')
+        // Soft prompt only — free models may still work after picking another model
+        if (!providerSkipped && !(models && models.length)) {
+          setLiveStatus('needs_provider')
+        }
+        setProviderOpen(true)
       }
     } finally {
       if (pollAbortRef.current === pollGen) {
@@ -774,15 +886,25 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     }
   }
 
+  const continueWithoutProvider = () => {
+    setProviderSkipped(true)
+    setLiveStatus('ready')
+    setProviderOpen(false)
+  }
+
   const send = (text?: string) => {
     const body = (text ?? draft).trim()
     if (!body) return
     setDraft('')
     if (useLive && (liveStatus === 'ready' || liveStatus === 'needs_provider')) {
-      if (liveStatus === 'needs_provider') {
+      // Soft gate only: offer provider once, but never hard-block free OpenCode models
+      if (liveStatus === 'needs_provider' && !providerSkipped && !(models && models.length)) {
         setProviderOpen(true)
         setDraft(body)
         return
+      }
+      if (liveStatus === 'needs_provider') {
+        setLiveStatus('ready')
       }
       void sendLive(body)
       return
@@ -794,16 +916,10 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     permissionId: string,
     response: 'once' | 'always' | 'reject',
   ) => {
-    if (!useLive || !currentProjectId || !st.convId) return
-    try {
-      await respondPermission(
-        currentProjectId,
-        st.convId,
-        permissionId,
-        response,
-        response === 'always',
-      )
-      const msgs = (st.messages || []).map((m) => {
+    const markResolved = () => {
+      const msgs = (
+        usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
+      ).map((m) => {
         if (!m.blocks) return m
         return {
           ...m,
@@ -818,7 +934,29 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         }
       })
       ensureInstanceState(panelKey, { messages: msgs })
-      updateConversationMessages(currentProjectId, st.convId, msgs)
+      if (currentProjectId && st.convId) {
+        updateConversationMessages(currentProjectId, st.convId, msgs)
+      }
+    }
+
+    // Demo / offline: resolve the card locally only
+    if (!useLive || !currentProjectId || !st.convId) {
+      markResolved()
+      return
+    }
+    const projectId = currentProjectId
+    const convId = st.convId
+    try {
+      await respondPermission(
+        projectId,
+        convId,
+        permissionId,
+        response,
+        response === 'always',
+      )
+      markResolved()
+      // Tool continues after approve/deny — refresh history
+      void hydrateSession(projectId, convId, { force: true })
     } catch (e) {
       setLiveError((e as Error).message)
     }
@@ -942,8 +1080,16 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
 
   const liveSelect = async (id: string) => {
     if (!currentProjectId) return
-    // Switching sessions: allow empty history
-    ensureInstanceState(panelKey, { convId: id, messages: [] })
+    // Switching sessions: allow empty history; restore per-conversation agent/mode
+    const list = usePlaygroundStore.getState().projectChats[currentProjectId] || []
+    const conv = list.find((c) => c.id === id)
+    ensureInstanceState(panelKey, {
+      convId: id,
+      messages: [],
+      chatMode: conv?.chatMode || DEFAULT_CHAT_MODE,
+      primaryAgent: conv?.primaryAgent || DEFAULT_PRIMARY_AGENT,
+      title: conv?.title,
+    })
     await hydrateSession(currentProjectId, id, { allowEmpty: true, force: true })
   }
 
@@ -983,7 +1129,9 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
 
   const composerModels = models
   const composerMcps = mcpsLive ? mcpsLive.map((m) => m.id) : mcps
-  const composerAgents = agentsLive ? agentsLive.map((a) => a.id) : agents
+  const composerAgentOptions = agentsLive?.length
+    ? agentsLive
+    : OPENCODE_AGENT_FALLBACKS
 
   return (
     <div
@@ -1038,17 +1186,9 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           title={st.title || activeConv?.title || 'Chat'}
           mode={mode}
           metrics={activeConv?.metrics}
-          agents={activeConv?.agents}
+          primaryAgent={primaryAgent}
           onModeChange={(m) => setChatMode(panelKey, m)}
         />
-
-        {useLive && liveStatus === 'connecting' ? (
-          <div className="chat-empty" style={{ minHeight: 80 }}>
-            <p className="chat-empty-desc">
-              {bootStage || 'Connecting to OpenCode in sandbox…'}
-            </p>
-          </div>
-        ) : null}
 
         {useLive && liveStatus === 'error' ? (
           <div className="chat-empty" style={{ minHeight: 100 }}>
@@ -1061,7 +1201,6 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
                 // Force effect re-run by bumping generation and toggling status
                 bootGenRef.current += 1
                 setLiveError(null)
-                setBootStage('Retrying…')
                 setLiveStatus('connecting')
                 const projectId = currentProjectId!
                 const gen = bootGenRef.current
@@ -1079,11 +1218,13 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
                       () => undefined,
                     )
                     if (gen !== bootGenRef.current) return
-                    setBootStage('')
-                    setLiveStatus(cat.connected.length === 0 ? 'needs_provider' : 'ready')
+                    setLiveStatus(
+                      cat.connected.length > 0 || cat.modelItems.length > 0 || providerSkipped
+                        ? 'ready'
+                        : 'needs_provider',
+                    )
                   } catch (e) {
                     if (gen !== bootGenRef.current) return
-                    setBootStage('')
                     setLiveError((e as Error).message)
                     setLiveStatus('error')
                   }
@@ -1095,24 +1236,34 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           </div>
         ) : null}
 
-        {useLive && liveStatus === 'needs_provider' ? (
+        {useLive && liveStatus === 'needs_provider' && !providerSkipped ? (
           <div className="chat-empty" style={{ minHeight: 100 }}>
-            <h2 className="chat-empty-title">Connect a provider</h2>
+            <h2 className="chat-empty-title">Connect a provider (optional)</h2>
             <p className="chat-empty-desc">
-              OpenCode needs an LLM API key in this sandbox before chat can run.
+              Add a paid API key for more models, or continue with OpenCode’s free / built-in
+              models (Big Pickle, Nemotron, and others when available).
             </p>
-            <button
-              type="button"
-              className="chat-empty-chip"
-              onClick={() => setProviderOpen(true)}
-            >
-              Connect provider
-            </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="chat-empty-chip"
+                onClick={() => setProviderOpen(true)}
+              >
+                Connect provider
+              </button>
+              <button
+                type="button"
+                className="chat-empty-chip"
+                onClick={continueWithoutProvider}
+              >
+                Continue without key
+              </button>
+            </div>
           </div>
         ) : null}
 
         <div className={`messages${isEmpty && !sending ? ' messages--empty' : ''}`}>
-          {isEmpty && !sending && liveStatus !== 'connecting' && liveStatus !== 'error' ? (
+          {isEmpty && !sending && liveStatus !== 'error' ? (
             <ChatEmptyState
               onSuggestion={(text) => {
                 setDraft(text)
@@ -1162,7 +1313,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           tools={tools}
           mcps={composerMcps}
           skills={skills}
-          agents={composerAgents}
+          agent={primaryAgent}
           mode={mode}
           onModelChange={(id) => ensureInstanceState(panelKey, { model: id })}
           onToolsChange={(ids) => ensureInstanceState(panelKey, { enabledTools: ids })}
@@ -1170,18 +1321,13 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           onSkillsChange={(ids) =>
             ensureInstanceState(panelKey, { enabledSkills: ids })
           }
-          onAgentsChange={(ids) => setConversationAgents(panelKey, ids)}
+          onAgentChange={(id) => setConversationAgent(panelKey, id)}
           modelOptions={composerModels || undefined}
+          allModelOptions={models || undefined}
+          pinnedModelIds={pinnedModelIds}
+          onBrowseModels={() => setModelBrowseOpen(true)}
           mcpOptions={mcpsLive || undefined}
-          agentOptions={
-            agentsLive
-              ? agentsLive.map((a) => ({
-                  id: a.id,
-                  name: a.label,
-                  role: 'general' as const,
-                }))
-              : undefined
-          }
+          agentOptions={composerAgentOptions}
           sendDisabled={
             sending ||
             (useLive && (liveStatus === 'connecting' || liveStatus === 'error'))
@@ -1195,11 +1341,27 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           isOpen={providerOpen}
           onClose={() => setProviderOpen(false)}
           onConnected={() => {
+            setProviderSkipped(false)
             setLiveStatus('ready')
             void loadCatalogs(currentProjectId)
           }}
+          onContinueWithoutKey={continueWithoutProvider}
+          continueLabel="Continue without key"
         />
       ) : null}
+
+      <ModelBrowseModal
+        isOpen={modelBrowseOpen}
+        onClose={() => setModelBrowseOpen(false)}
+        models={models || composerModels || []}
+        selectedId={model}
+        pinnedIds={pinnedModelIds}
+        onSelect={(id) => ensureInstanceState(panelKey, { model: id })}
+        onTogglePin={(id) => {
+          if (!currentProjectId) return
+          setPinnedModelIds(togglePinnedModel(currentProjectId, id))
+        }}
+      />
     </div>
   )
 }

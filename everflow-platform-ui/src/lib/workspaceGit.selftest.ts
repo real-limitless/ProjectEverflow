@@ -72,8 +72,28 @@ const cat = catalogReposToWorkspace([
 ])
 assert(cat.length === 2, '2 catalog')
 assert(cat[0].path === 'web' || cat[0].path === 'org', 'multi path hint')
+assert(cat.every((r) => r.hasGit === false), 'catalog defaults hasGit false')
+// Multi-repo path hints must not invent a bare "test" root unless the label basename is test
+const withTestLabel = catalogReposToWorkspace([
+  { id: 'main', label: 'org/app', active: true },
+  { id: 'extra', label: 'test', active: false },
+])
+assert(withTestLabel[1].path === 'test', 'label test → path test')
+assert(withTestLabel[1].label === 'test', 'label preserved')
+assert(withTestLabel[1].hasGit === false, 'no git until live probe')
 const single = catalogReposToWorkspace([{ id: 'main', label: 'app', active: true }])
-assert(single[0].path === '.', 'single defaults to .')
+assert(single[0].path === 'app', 'single uses label basename as path')
+const withUrl = catalogReposToWorkspace([
+  {
+    id: 'r1',
+    label: 'repo-1',
+    active: true,
+    url: 'https://github.com/org/my-app.git',
+    localPath: '.',
+  },
+])
+assert(withUrl[0].path === 'my-app', 'URL basename even when localPath was .')
+assert(withUrl[0].path !== '.', 'remotes never map to workspace root')
 
 assert(sanitizeBranchName('main') === 'main', 'branch main')
 assert(sanitizeBranchName('feature/foo-bar') === 'feature/foo-bar', 'branch slash')

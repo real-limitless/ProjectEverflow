@@ -317,9 +317,101 @@ body,
 
 .project-settings-body {
   min-height: 16rem;
-  max-height: min(60vh, 28rem);
+  max-height: min(60vh, 32rem);
   overflow-y: auto;
   padding-inline-end: 0.15rem;
+}
+
+/* Full-width settings form (do not reuse create-wizard-form max-width) */
+.project-settings-form {
+  width: 100%;
+  max-width: none;
+}
+
+.project-settings-form .pf-v6-c-form__group,
+.project-settings-form .pf-v6-c-form-control,
+.project-settings-form .pf-v6-c-form-select,
+.project-settings-form textarea {
+  width: 100%;
+  max-width: none;
+}
+
+.project-settings-form .pf-v6-c-form__section-title {
+  font-size: var(--pf-t--global--font--size--md);
+  font-weight: var(--pf-t--global--font--weight--heading--bold);
+  margin-block-end: 0.25rem;
+}
+
+.project-settings-lead {
+  margin: 0 0 1rem;
+  color: var(--pf-t--global--text--color--subtle);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.project-settings-alert {
+  margin-block-end: 1rem;
+}
+
+/* —— AI providers manager —— */
+.providers-manager-loading {
+  display: flex;
+  justify-content: center;
+  padding: 2rem 0;
+}
+
+.providers-manager-empty {
+  margin: 0 0 1rem;
+  color: var(--pf-t--global--text--color--subtle);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.providers-manager-cards {
+  list-style: none;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.providers-manager-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: var(--pf-t--global--border--radius--medium, 6px);
+  background: var(--pf-t--global--background--color--primary--default);
+}
+
+.providers-manager-card-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.providers-manager-card-label {
+  font-weight: 400;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.providers-manager-card-meta {
+  font-size: 0.75rem;
+  color: var(--pf-t--global--text--color--subtle);
+  margin-top: 0.15rem;
+  font-family: var(--pf-t--global--font--family--mono, ui-monospace, monospace);
+}
+
+.providers-manager-actions {
+  margin-top: 0.75rem;
+}
+
+.providers-manager-form {
+  margin-top: 0.25rem;
+  padding-top: 1rem;
+  border-block-start: 1px solid var(--pf-t--global--border--color--default);
 }
 
 /* Project tab context menu */
@@ -1192,21 +1284,58 @@ body,
   white-space: pre-wrap;
 }
 
-.project-tabs-actions .pg-add-project,
-.project-tabs-actions .pg-project-settings {
-  min-width: 2rem;
+/* Keep save / gear / plus on one baseline (Dropdown adds a wrapper around save) */
+.project-tabs-actions > * {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 2rem;
-  padding: 0;
+  line-height: 0;
+}
+
+.project-tabs-actions .pg-add-project,
+.project-tabs-actions .pg-project-settings,
+.project-tabs-actions .pg-layout-menu {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 2rem !important;
+  width: 2rem !important;
+  height: 2rem !important;
+  min-height: 2rem !important;
+  padding: 0 !important;
   font-size: 1.125rem;
   line-height: 1;
+  border: none !important;
+  box-shadow: none !important;
   border-radius: var(--pf-t--global--border--radius--small);
   color: var(--pf-t--global--text--color--subtle);
+  background: transparent !important;
 }
 
 .project-tabs-actions .pg-add-project:hover,
-.project-tabs-actions .pg-project-settings:hover {
+.project-tabs-actions .pg-project-settings:hover,
+.project-tabs-actions .pg-layout-menu:hover {
   color: var(--pf-t--global--text--color--regular);
-  background: var(--pf-t--global--background--color--action--plain--hover);
+  background: var(--pf-t--global--background--color--action--plain--hover) !important;
+}
+
+.project-tabs-actions .pg-add-project .pf-v6-c-button__icon,
+.project-tabs-actions .pg-project-settings .pf-v6-c-button__icon,
+.project-tabs-actions .pg-layout-menu .pf-v6-c-button__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 !important;
+  line-height: 0;
+}
+
+.project-tabs-actions .pg-add-project svg,
+.project-tabs-actions .pg-project-settings svg,
+.project-tabs-actions .pg-layout-menu svg {
+  width: 1em;
+  height: 1em;
+  vertical-align: middle;
 }
 
 .project-tabs-actions .pg-project-settings:disabled {

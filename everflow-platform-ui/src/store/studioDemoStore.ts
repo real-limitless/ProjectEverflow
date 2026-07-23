@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { create } from 'zustand'
 import { getStudioExtras } from '@/data/studioExtras'
 import { getProject } from '@/data/projects'
+import { categoryToLegacyKind, deriveN8nGraph } from '@/lib/n8nImport'
 import type {
   AgentDefinition,
   BackgroundJob,
@@ -48,14 +49,44 @@ function resolveProjectId(projectId: string | null | undefined): string {
   return projectId || 'default'
 }
 
+/** Demo seed ids: iss-42 / pr-12 / *-sec-*; user-created ids use uid() → prefix-ts-rand. */
+function isDemoCatalogIssueId(id: string): boolean {
+  return /^iss-\d+$/.test(id) || id.startsWith('iss-sec-')
+}
+
+function isDemoCatalogPrId(id: string): boolean {
+  return /^pr-\d+$/.test(id) || id.startsWith('pr-sec-')
+}
+
+function stripDemoCatalog(state: ProjectStudioState): ProjectStudioState {
+  const issues = state.issues.filter((i) => !isDemoCatalogIssueId(i.id))
+  const pullRequests = state.pullRequests.filter((pr) => !isDemoCatalogPrId(pr.id))
+  // Demo seed agents use source: 'demo' and short ids a1/a2/a3
+  const agents = state.agents.filter((a) => a.source !== 'demo' && !/^a\d+$/.test(a.id))
+  // Demo MCP seeds look like github-mcp / docs-search with id mcp-N
+  const mcps = state.mcps.filter((m) => !/^mcp-\d+$/.test(m.id))
+  if (
+    issues.length === state.issues.length &&
+    pullRequests.length === state.pullRequests.length &&
+    agents.length === state.agents.length &&
+    mcps.length === state.mcps.length
+  ) {
+    return state
+  }
+  return { ...state, issues, pullRequests, agents, mcps }
+}
+
 function seedProject(projectId: string): ProjectStudioState {
   const d = getStudioExtras(projectId)
   const p = getProject(projectId)
   const primaryRepoId =
     p?.repos.find((r) => r.active)?.id || p?.repos[0]?.id || 'main'
   const secondaryRepos = (p?.repos || []).filter((r) => r.id !== primaryRepoId)
+  /** API-backed projects must not get showcase issue/PR catalog noise. */
+  const useDemoCatalog = !p?.fromApi
 
-  const issues: RepoIssue[] = [
+  const issues: RepoIssue[] = useDemoCatalog
+    ? [
     {
       id: 'iss-42',
       number: 42,
@@ -108,8 +139,10 @@ function seedProject(projectId: string): ProjectStudioState {
       repoId: r.id,
     })),
   ]
+    : []
 
-  const pullRequests: PullRequest[] = [
+  const pullRequests: PullRequest[] = useDemoCatalog
+    ? [
     {
       id: 'pr-12',
       number: 12,
@@ -174,6 +207,7 @@ function seedProject(projectId: string): ProjectStudioState {
       repoId: r.id,
     })),
   ]
+    : []
 
   const commits = [
     {
@@ -289,7 +323,12 @@ function seedProject(projectId: string): ProjectStudioState {
     log: [`started ${r.id}`, `status=${r.status}`, `duration=${r.dur}`],
   }))
 
-  const seedCanvases = p?.canvases ?? [{ name: 'Architecture', desc: 'System sketch' }]
+  // API-backed projects start with no demo knowledge (real vault/RAG wiring).
+  const useDemoKnowledge = !p?.fromApi
+
+  const seedCanvases = useDemoKnowledge
+    ? p?.canvases ?? [{ name: 'Architecture', desc: 'System sketch' }]
+    : []
   const canvases: KnowledgeCanvas[] = seedCanvases.map((c, i) => ({
     id: `cv-${i}`,
     name: c.name,
@@ -305,27 +344,30 @@ function seedProject(projectId: string): ProjectStudioState {
     updatedAt: 'just now',
   }))
 
-  // Seed OCR document as a full canvas (knowledge document)
-  canvases.unshift({
-    id: 'cv-runbook',
-    name: 'runbook.pdf',
-    desc: 'Converted via Unlimited OCR',
-    contentMd: `# Operations Runbook\n\n> Extracted from **runbook.pdf** via Unlimited OCR (demo).\n\n## Deploy checklist\n\n1. Confirm host health\n2. Apply compose stack\n3. Smoke-test preview URL\n\n## Rollback\n\n- Keep previous image tag\n- Restore env snapshot if needed\n\n## Contacts\n\n- On-call: platform team\n`,
-    origin: 'ocr',
-    status: 'indexed',
-    chunks: 128,
-    mime: 'application/pdf',
-    sizeLabel: '2.4 MB',
-    updatedAt: 'earlier',
-  })
+  if (useDemoKnowledge) {
+    // Seed OCR document as a full canvas (knowledge document) — demo projects only
+    canvases.unshift({
+      id: 'cv-runbook',
+      name: 'runbook.pdf',
+      desc: 'Converted via Unlimited OCR',
+      contentMd: `# Operations Runbook\n\n> Extracted from **runbook.pdf** via Unlimited OCR (demo).\n\n## Deploy checklist\n\n1. Confirm host health\n2. Apply compose stack\n3. Smoke-test preview URL\n\n## Rollback\n\n- Keep previous image tag\n- Restore env snapshot if needed\n\n## Contacts\n\n- On-call: platform team\n`,
+      origin: 'ocr',
+      status: 'indexed',
+      chunks: 128,
+      mime: 'application/pdf',
+      sizeLabel: '2.4 MB',
+      updatedAt: 'earlier',
+    })
+  }
 
   const docs: KnowledgeDoc[] = []
 
-  const mindMaps: MindMap[] = [
-    {
-      id: 'mm-1',
-      name: 'Product map',
-      mermaid: `mindmap
+  const mindMaps: MindMap[] = useDemoKnowledge
+    ? [
+        {
+          id: 'mm-1',
+          name: 'Product map',
+          mermaid: `mindmap
   root((${d.projectName || 'Project'}))
     Studio
       Agents
@@ -333,20 +375,21 @@ function seedProject(projectId: string): ProjectStudioState {
     Deploy
       Hosts
       Compose`,
-      updatedAt: 'just now',
-    },
-    {
-      id: 'mm-2',
-      name: 'RAG pipeline',
-      mermaid: `flowchart LR
+          updatedAt: 'just now',
+        },
+        {
+          id: 'mm-2',
+          name: 'RAG pipeline',
+          mermaid: `flowchart LR
   A[Upload / Canvas] --> B[OCR / Markdown]
   B --> C[Chunk]
   C --> D[Embed]
   D --> E[(Vector store)]
   E --> F[Chatbot retrieve]`,
-      updatedAt: 'yesterday',
-    },
-  ]
+          updatedAt: 'yesterday',
+        },
+      ]
+    : []
 
   const tables = d.tables.map((t) => ({
     ...t,
@@ -361,32 +404,50 @@ function seedProject(projectId: string): ProjectStudioState {
     progress: j.progress,
   }))
 
-  const agents: AgentDefinition[] = d.agents.map((a) => ({
-    id: a.id,
-    name: a.name,
-    role: a.name.includes('Deploy') ? 'reviewer' : a.name.includes('General') ? 'general' : 'coder',
-    desc: a.desc,
-    systemPrompt: `You are ${a.name}. ${a.desc}. Be concise and safe.`,
-    tools: ['file_read', 'git_status'],
-    active: a.active,
-  }))
+  // API projects use OpenCode live agents — never seed showcase "Coding Assistant" etc.
+  const agents: AgentDefinition[] = useDemoCatalog
+    ? d.agents.map((a) => ({
+        id: a.id,
+        name: a.name,
+        role: a.name.includes('Deploy')
+          ? 'reviewer'
+          : a.name.includes('General')
+            ? 'general'
+            : 'coder',
+        desc: a.desc,
+        description: a.desc,
+        systemPrompt: `You are ${a.name}. ${a.desc}. Be concise and safe.`,
+        prompt: `You are ${a.name}. ${a.desc}. Be concise and safe.`,
+        mode: 'all' as const,
+        tools: ['file_read', 'git_status'],
+        active: a.active,
+        managed: false,
+        source: 'demo' as const,
+      }))
+    : []
 
-  const httpTools: HttpToolDef[] = d.httpTools.map((t, i) => ({
-    id: `tool-${i}`,
-    name: t.name,
-    method: t.method,
-    url: `https://api.example.com/${t.name}`,
-    headers: '',
-    on: t.on,
-  }))
+  const httpTools: HttpToolDef[] = useDemoCatalog
+    ? d.httpTools.map((t, i) => ({
+        id: `tool-${i}`,
+        name: t.name,
+        method: t.method,
+        url: `https://api.example.com/${t.name}`,
+        headers: '',
+        on: t.on,
+      }))
+    : []
 
-  const mcps: McpServerDef[] = d.mcps.map((m, i) => ({
-    id: `mcp-${i}`,
-    name: m.name,
-    transport: m.transport,
-    endpoint: m.transport.includes('stdio') ? 'npx -y @example/mcp' : 'https://mcp.example.com/sse',
-    on: m.on,
-  }))
+  const mcps: McpServerDef[] = useDemoCatalog
+    ? d.mcps.map((m, i) => ({
+        id: `mcp-${i}`,
+        name: m.name,
+        transport: m.transport,
+        endpoint: m.transport.includes('stdio')
+          ? 'npx -y @example/mcp'
+          : 'https://mcp.example.com/sse',
+        on: m.on,
+      }))
+    : []
 
   const envEntries: EnvEntry[] = [
     ...d.envVars.map((e, i) => ({
@@ -705,6 +766,8 @@ interface StudioDemoState {
   ) => void
   addWorkflowRun: (projectId: string, run: WorkflowRun) => void
   importN8n: (projectId: string, json: unknown) => string | null
+  createBlankWorkflow: (projectId: string, name?: string) => string
+  deleteWorkflow: (projectId: string, workflowId: string) => void
 
   // SQL demo
   runSql: (projectId: string, sql: string) => SqlResult
@@ -716,7 +779,19 @@ export const useStudioDemoStore = create<StudioDemoState>((set, get) => ({
   ensure: (projectId: string) => {
     const id = resolveProjectId(projectId)
     const existing = get().byProject[id]
-    if (existing) return existing
+    if (existing) {
+      // Strip showcase catalog noise if this became an API project after first seed
+      const p = getProject(id)
+      if (p?.fromApi) {
+        const cleaned = stripDemoCatalog(existing)
+        if (cleaned !== existing) {
+          seedCache.set(id, cleaned)
+          set((s) => ({ byProject: { ...s.byProject, [id]: cleaned } }))
+          return cleaned
+        }
+      }
+      return existing
+    }
     const seeded = getStableSeed(id)
     // Promote into store without allocating a new seed on every snapshot.
     set((s) => {
@@ -1213,55 +1288,113 @@ export const useStudioDemoStore = create<StudioDemoState>((set, get) => ({
     }))
   },
 
+  createBlankWorkflow: (projectId, name) => {
+    const id = uid('wf')
+    const nodeId = `n-${Date.now()}`
+    get().update(projectId, (s) => ({
+      ...s,
+      workflows: [
+        {
+          id,
+          name: name?.trim() || 'Untitled workflow',
+          status: 'idle',
+          trigger: 'manual',
+          runs: 0,
+          active: false,
+          nodes: [
+            {
+              id: nodeId,
+              type: 'studio',
+              position: { x: 240, y: 300 },
+              data: {
+                label: 'Start',
+                kind: 'trigger' as WfNodeKind,
+                n8nType: 'n8n-nodes-base.manualTrigger',
+                typeVersion: 1,
+                category: 'trigger',
+                supported: true,
+                parameters: {},
+              },
+            },
+          ],
+          edges: [],
+          n8nDocument: {
+            name: name?.trim() || 'Untitled workflow',
+            nodes: [
+              {
+                id: nodeId,
+                name: 'Start',
+                type: 'n8n-nodes-base.manualTrigger',
+                typeVersion: 1,
+                position: [240, 300],
+                parameters: {},
+              },
+            ],
+            connections: {},
+          },
+        },
+        ...s.workflows,
+      ],
+    }))
+    return id
+  },
+
+  deleteWorkflow: (projectId, workflowId) => {
+    get().update(projectId, (s) => ({
+      ...s,
+      workflows: s.workflows.filter((w) => w.id !== workflowId),
+      workflowRuns: s.workflowRuns.filter((r) => r.workflowId !== workflowId),
+    }))
+  },
+
   importN8n: (projectId, json) => {
     try {
-      const raw = json as {
-        name?: string
-        nodes?: { name?: string; type?: string; position?: [number, number] | { x: number; y: number } }[]
-        connections?: Record<string, { main?: { node: string }[][] }>
-      }
-      const nodes = (raw.nodes ?? []).map((n, i) => {
-        const pos = Array.isArray(n.position)
-          ? { x: n.position[0] ?? i * 160, y: n.position[1] ?? 100 }
-          : n.position ?? { x: i * 160, y: 100 }
-        const t = (n.type || '').toLowerCase()
-        let kind: WfNodeKind = 'unknown'
-        if (t.includes('trigger') || t.includes('webhook') || t.includes('cron')) kind = 'trigger'
-        else if (t.includes('http')) kind = 'http'
-        else if (t.includes('openai') || t.includes('llm') || t.includes('agent')) kind = 'llm'
-        else if (t.includes('code') || t.includes('function')) kind = 'code'
-        else if (t.includes('if') || t.includes('switch')) kind = 'condition'
-        else if (t.includes('slack') || t.includes('email') || t.includes('notify')) kind = 'notify'
-        return {
-          id: `imp-${i}`,
-          type: 'studio',
-          position: pos,
-          data: { label: n.name || `Node ${i + 1}`, kind, params: { n8nType: n.type || 'unknown' } },
-        }
-      })
-      const nameToId = new Map(nodes.map((n) => [n.data.label, n.id]))
-      const edges: WorkflowDef['edges'] = []
-      Object.entries(raw.connections || {}).forEach(([from, conn]) => {
-        const source = nameToId.get(from)
-        conn.main?.forEach((chain) => {
-          chain.forEach((link) => {
-            const target = nameToId.get(link.node)
-            if (source && target) edges.push({ id: uid('e'), source, target })
-          })
-        })
-      })
+      const derived = deriveN8nGraph(json)
+      const nodes: WorkflowDef['nodes'] = derived.nodes.map((n) => ({
+        id: n.id,
+        type: 'studio',
+        position: n.position,
+        data: {
+          label: n.name,
+          kind: categoryToLegacyKind(n.category) as WfNodeKind,
+          n8nType: n.type,
+          typeVersion: n.typeVersion,
+          category: n.category,
+          supported: n.supported,
+          parameters: n.parameters,
+          credentials: n.credentials,
+          params: { n8nType: n.type },
+          disabled: n.disabled,
+          retryOnFail: n.retryOnFail,
+          maxTries: n.maxTries,
+        },
+      }))
+      const edges: WorkflowDef['edges'] = derived.edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        connectionType: e.connectionType,
+        sourceHandle: e.sourceHandle,
+        sourceIndex: e.sourceIndex,
+        targetIndex: e.targetIndex,
+      }))
       const id = uid('wf')
+      const doc =
+        json && typeof json === 'object' ? (json as Record<string, unknown>) : {}
       get().update(projectId, (s) => ({
         ...s,
         workflows: [
           {
             id,
-            name: raw.name || 'Imported n8n workflow',
+            name: derived.name,
             status: 'idle',
-            trigger: 'imported',
+            trigger: derived.report.triggerSummary,
             runs: 0,
             nodes,
             edges,
+            n8nDocument: doc,
+            importReport: derived.report as unknown as Record<string, unknown>,
+            active: derived.active,
           },
           ...s.workflows,
         ],

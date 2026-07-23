@@ -356,23 +356,26 @@ function BlockView({
               <button
                 type="button"
                 className="msg-question-chip"
+                title="Allow this request once"
                 onClick={() => onPermission?.(block.permission!.id, 'once')}
               >
-                Once
+                Allow once
               </button>
               <button
                 type="button"
                 className="msg-question-chip"
+                title="Allow matching requests for the rest of this session"
                 onClick={() => onPermission?.(block.permission!.id, 'always')}
               >
-                Always
+                Always allow
               </button>
               <button
                 type="button"
                 className="msg-question-chip"
+                title="Deny this request"
                 onClick={() => onPermission?.(block.permission!.id, 'reject')}
               >
-                Reject
+                Deny
               </button>
             </div>
           ) : null}

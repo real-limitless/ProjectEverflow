@@ -90,13 +90,49 @@ export interface TerminalSession {
   history: string[]
 }
 
-export type WfNodeKind = 'trigger' | 'http' | 'llm' | 'code' | 'condition' | 'notify' | 'unknown'
+export type WfNodeKind =
+  | 'trigger'
+  | 'http'
+  | 'llm'
+  | 'code'
+  | 'condition'
+  | 'notify'
+  | 'unknown'
+  // n8n category aliases (canvas styling)
+  | 'input'
+  | 'transform'
+  | 'logic'
+  | 'ai'
+  | 'output'
+  | 'data'
 
 export interface WfNodeData extends Record<string, unknown> {
   label: string
   kind: WfNodeKind
+  /** n8n type string e.g. n8n-nodes-base.ftp */
+  n8nType?: string
+  typeVersion?: number | null
+  category?: string
+  supported?: boolean
+  parameters?: Record<string, unknown>
+  credentials?: Record<string, unknown> | null
   params?: Record<string, string>
   running?: boolean
+  /** last run step status for canvas highlight */
+  runStatus?: 'ok' | 'err' | 'running' | null
+  disabled?: boolean
+  retryOnFail?: boolean
+  maxTries?: number | null
+}
+
+export interface WorkflowEdgeDef {
+  id: string
+  source: string
+  target: string
+  connectionType?: string
+  sourceHandle?: string
+  sourceIndex?: number
+  targetIndex?: number
 }
 
 export interface WorkflowDef {
@@ -106,7 +142,13 @@ export interface WorkflowDef {
   trigger: string
   runs: number
   nodes: { id: string; type: string; position: { x: number; y: number }; data: WfNodeData }[]
-  edges: { id: string; source: string; target: string }[]
+  edges: WorkflowEdgeDef[]
+  /** Full n8n export when available (API / faithful import) */
+  n8nDocument?: Record<string, unknown>
+  importReport?: Record<string, unknown>
+  active?: boolean
+  /** API-backed workflow id equals id when from server */
+  fromApi?: boolean
 }
 
 export interface WorkflowRun {
@@ -193,14 +235,55 @@ export interface BackgroundJob {
   schedule?: string
 }
 
+/** Permission action for OpenCode tools / MCP / skills. */
+export type AgentPermissionAction = 'allow' | 'ask' | 'deny'
+
+export type AgentMode = 'primary' | 'subagent' | 'all'
+
+/**
+ * Project agent definition — OpenCode-aligned (prompt + model + permissions).
+ * Legacy fields (role, desc, systemPrompt, tools, active) kept for demo seed mapping.
+ */
 export interface AgentDefinition {
   id: string
   name: string
-  role: string
-  desc: string
-  systemPrompt: string
-  tools: string[]
-  active: boolean
+  /** @deprecated Prefer description; kept for demo seeds */
+  role?: string
+  /** Short description (OpenCode required) */
+  description?: string
+  /** @deprecated Prefer description */
+  desc?: string
+  /** Instruction prompt body */
+  prompt?: string
+  /** @deprecated Prefer prompt */
+  systemPrompt?: string
+  mode?: AgentMode
+  /** Primary model id: provider/model */
+  model?: string
+  /** Preferred models for Chat picker (Everflow metadata; only model written to OpenCode) */
+  modelsPreferred?: string[]
+  permission?: Record<string, AgentPermissionAction | Record<string, AgentPermissionAction>>
+  /** MCP server names this agent may use */
+  mcpIds?: string[]
+  /** Skill names/patterns allowed */
+  skillAllow?: string[]
+  color?: string
+  temperature?: number
+  disable?: boolean
+  managed?: boolean
+  source?: 'opencode-builtin' | 'opencode-file' | 'everflow' | 'demo'
+  /** @deprecated Free-text tool names from demo form */
+  tools?: string[]
+  active?: boolean
+}
+
+export interface SkillDefinition {
+  id: string
+  name: string
+  description: string
+  body: string
+  managed?: boolean
+  source?: 'opencode-file' | 'everflow' | 'demo'
 }
 
 export interface HttpToolDef {
@@ -218,6 +301,9 @@ export interface McpServerDef {
   transport: string
   endpoint: string
   on: boolean
+  /** OpenCode MCP config blob when synced */
+  config?: Record<string, unknown>
+  status?: string
 }
 
 export interface EnvEntry {

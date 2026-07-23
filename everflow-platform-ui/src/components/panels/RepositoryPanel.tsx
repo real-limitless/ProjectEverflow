@@ -9,7 +9,6 @@ import {
   Select,
   SelectList,
   SelectOption,
-  Spinner,
   TextArea,
   TextInput,
   Tabs,
@@ -59,6 +58,16 @@ function matchesRepoId(itemRepoId: string | undefined, activeRepoId: string, pri
   // Untagged items belong to the primary/active-at-seed repo
   if (!itemRepoId) return activeRepoId === primaryId
   return itemRepoId === activeRepoId
+}
+
+/** Demo seed issue ids (iss-42, iss-sec-*) vs user-created uid() ids (iss-<ts>-<rand>). */
+function isSeedIssueId(id: string): boolean {
+  return /^iss-\d+$/.test(id) || id.startsWith('iss-sec-')
+}
+
+/** Demo seed PR ids (pr-12, pr-sec-*) vs user-created uid() ids. */
+function isSeedPrId(id: string): boolean {
+  return /^pr-\d+$/.test(id) || id.startsWith('pr-sec-')
 }
 
 export function RepositoryPanel() {
@@ -121,9 +130,13 @@ export function RepositoryPanel() {
   const [prHead, setPrHead] = useState('feature/branch')
   const [editBody, setEditBody] = useState('')
 
-  // Selector list: live discovery when sandbox running, else catalog
+  // Selector list: live discovery when sandbox running, else catalog.
+  // Live mode never surfaces catalog ghosts without git (e.g. "test (no git)").
   const repoOptions: WorkspaceRepo[] = useMemo(() => {
-    if (liveMode && workspaceRepos.length) return workspaceRepos
+    if (liveMode && workspaceRepos.length) {
+      const withGit = workspaceRepos.filter((r) => r.hasGit)
+      return withGit.length > 0 ? withGit : workspaceRepos.slice(0, 1)
+    }
     return catalogReposToWorkspace(catalogRepos)
     // catalogVersion tracks catalog.repos mutations
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -166,13 +179,31 @@ export function RepositoryPanel() {
   }, [selectedRepo.id, selectedRepo.path])
 
   const refreshDiscovery = useCallback(async () => {
-    const catalog = getProject(currentProjectId)?.repos || []
+    let catalog = getProject(currentProjectId)?.repos || []
     if (!liveMode || !currentProjectId) {
       setWorkspaceRepos(catalogReposToWorkspace(catalog))
       return
     }
     setDiscovering(true)
     try {
+      // Ensure any catalog URLs missing from the workspace are cloned first
+      const { ensureReposCloned, isCloneableUrl } = await import('@/lib/workspaceRepos')
+      const needsClone = catalog.some(
+        (r) =>
+          isCloneableUrl(r.url) && r.cloneStatus !== 'ready' && r.cloneStatus !== 'skipped',
+      )
+      if (needsClone) {
+        const result = await ensureReposCloned(currentProjectId, catalog)
+        updateProjectInCatalog(currentProjectId, { repos: result.repos })
+        usePlaygroundStore.setState({
+          catalogVersion: usePlaygroundStore.getState().catalogVersion + 1,
+        })
+        catalog = result.repos
+        if (result.failed > 0) {
+          const first = result.repos.find((r) => r.cloneStatus === 'error')
+          setGitError(first?.cloneError || 'Failed to clone one or more repositories')
+        }
+      }
       const found = await discoverWorkspaceRepos(currentProjectId, catalog)
       setWorkspaceRepos(found)
     } catch (e) {
@@ -314,22 +345,24 @@ export function RepositoryPanel() {
   const commits: GitCommit[] =
     liveMode && liveCommits !== null ? liveCommits : demoCommits
 
-  const issues = useMemo(
-    () =>
-      studio.issues.filter(
-        (i) =>
-          (issueFilter === 'all' || i.status === issueFilter) &&
-          matchesRepoId(i.repoId, selectedRepo.id, primaryRepoId || selectedRepo.id),
-      ),
-    [studio.issues, issueFilter, selectedRepo.id, primaryRepoId],
-  )
-  const pullRequests = useMemo(
-    () =>
-      studio.pullRequests.filter((pr) =>
-        matchesRepoId(pr.repoId, selectedRepo.id, primaryRepoId || selectedRepo.id),
-      ),
-    [studio.pullRequests, selectedRepo.id, primaryRepoId],
-  )
+  // Live API projects must not show showcase seed issues/PRs (those exist only for demo mode).
+  const issues = useMemo(() => {
+    const scoped = studio.issues.filter(
+      (i) =>
+        (issueFilter === 'all' || i.status === issueFilter) &&
+        matchesRepoId(i.repoId, selectedRepo.id, primaryRepoId || selectedRepo.id),
+    )
+    if (!fromApi) return scoped
+    // Seed IDs look like iss-42 / iss-sec-*; user-created use uid() → iss-<ts>-<rand>
+    return scoped.filter((i) => !isSeedIssueId(i.id))
+  }, [studio.issues, issueFilter, selectedRepo.id, primaryRepoId, fromApi])
+  const pullRequests = useMemo(() => {
+    const scoped = studio.pullRequests.filter((pr) =>
+      matchesRepoId(pr.repoId, selectedRepo.id, primaryRepoId || selectedRepo.id),
+    )
+    if (!fromApi) return scoped
+    return scoped.filter((pr) => !isSeedPrId(pr.id))
+  }, [studio.pullRequests, selectedRepo.id, primaryRepoId, fromApi])
 
   const total = useMemo(
     () =>
@@ -459,10 +492,20 @@ export function RepositoryPanel() {
     }
   }
 
+  const catalogSelected = (p?.repos || []).find(
+    (r) => r.id === selectedRepo.id || r.localPath === selectedRepo.path,
+  )
+  const cloneHint =
+    catalogSelected?.cloneStatus === 'error'
+      ? `Clone failed: ${catalogSelected.cloneError?.split('\n')[0] || 'error'}`
+      : catalogSelected?.cloneStatus === 'pending' || catalogSelected?.cloneStatus === 'cloning'
+        ? 'Cloning repository into workspace…'
+        : null
+
   const sourceHint = liveMode
     ? selectedRepo.hasGit
       ? `Workspace · ${selectedRepo.path === '.' ? '/workspace' : `/workspace/${selectedRepo.path}`}`
-      : 'No git repository at this path'
+      : cloneHint || 'No git repository at this path — enter a URL at create time or Connect, then Refresh'
     : 'Demo data (sandbox not live)'
 
   return (
@@ -482,7 +525,7 @@ export function RepositoryPanel() {
                 <FormSelectOption
                   key={r.id}
                   value={r.id}
-                  label={r.hasGit || !liveMode ? r.label : `${r.label} (no git)`}
+                  label={r.label}
                 />
               ))}
             </FormSelect>
@@ -539,7 +582,11 @@ export function RepositoryPanel() {
             size="sm"
             className={`repo-refresh-btn${gitLoading || discovering || branchSwitching ? ' is-spinning' : ''}`}
             icon={<SyncAltIcon />}
-            aria-label="Refresh repository"
+            aria-label={
+              gitLoading || discovering || branchSwitching
+                ? 'Refreshing repository…'
+                : 'Refresh repository'
+            }
             title="Refresh"
             isDisabled={gitLoading || discovering || branchSwitching}
             onClick={() => {
@@ -548,9 +595,6 @@ export function RepositoryPanel() {
                 .then(() => loadBranchList())
             }}
           />
-          {(gitLoading || discovering || branchSwitching) && (
-            <Spinner size="sm" aria-label="Loading git" />
-          )}
         </div>
         <Tabs
           activeKey={sub}
@@ -725,7 +769,14 @@ export function RepositoryPanel() {
                 Create pull request
               </Button>
               {pullRequests.length === 0 ? (
-                <EmptySplash title="No pull requests" body="No PRs for this repository yet." />
+                <EmptySplash
+                  title="No pull requests"
+                  body={
+                    fromApi
+                      ? 'No local PRs yet. Remote GitHub/GitLab pull requests are not synced in this build — create one here to track work in the studio.'
+                      : 'No PRs for this repository yet.'
+                  }
+                />
               ) : (
                 pullRequests.map((pr) => (
                   <div
@@ -803,7 +854,14 @@ export function RepositoryPanel() {
                 ))}
               </div>
               {issues.length === 0 ? (
-                <EmptySplash title="No issues" body="No issues for this repository." />
+                <EmptySplash
+                  title="No issues"
+                  body={
+                    fromApi
+                      ? 'No local issues yet. Remote GitHub/GitLab issues are not synced in this build — create one here for studio tracking.'
+                      : 'No issues for this repository.'
+                  }
+                />
               ) : (
                 issues.map((iss) => (
                   <div

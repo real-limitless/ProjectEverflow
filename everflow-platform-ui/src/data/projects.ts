@@ -1,5 +1,13 @@
+import { isDemoMode } from '@/lib/api'
 import type { ChatMessage } from '@/types/panels'
 import type { Project } from '@/types/project'
+
+/** Hardcoded offline-demo catalog entries (Aura Host, Callour Agency, etc.). */
+export const SEED_PROJECT_IDS = new Set(['aura', 'callour', 'router'])
+
+export function isSeedProjectId(id: string | null | undefined): boolean {
+  return Boolean(id && SEED_PROJECT_IDS.has(id))
+}
 
 export const PROJECTS: Record<string, Project> = {
   aura: {
@@ -227,6 +235,21 @@ export function listProjectIds(): string[] {
   return Object.keys(PROJECTS)
 }
 
+/**
+ * Project ids safe to show in non-demo UI (excludes pure seed demos).
+ * Demo mode still returns the full catalog.
+ */
+export function listVisibleProjectIds(): string[] {
+  if (isDemoMode()) return listProjectIds()
+  return listProjectIds().filter((id) => {
+    const p = PROJECTS[id]
+    if (!p) return false
+    // Hide offline demo seeds; keep user-created and API projects
+    if (isSeedProjectId(id) && !p.fromApi) return false
+    return true
+  })
+}
+
 /** @deprecated use listProjectIds() — kept as live getter for existing imports */
 export const PROJECT_IDS = listProjectIds()
 
@@ -267,7 +290,7 @@ export function mergeUserProjects(
 }
 
 export function listUserCreatedProjects(
-  seedIds: Set<string> = new Set(['aura', 'callour', 'router']),
+  seedIds: Set<string> = SEED_PROJECT_IDS,
 ): Record<string, Project> {
   const out: Record<string, Project> = {}
   for (const [id, p] of Object.entries(PROJECTS)) {

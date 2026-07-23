@@ -1,6 +1,10 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { PANEL_META } from '@/data/panelMeta'
+import {
+  getPlaygroundChipPos,
+  getPlaygroundFloatPalettePos,
+} from '@/lib/palettePosition'
 import { PANEL_TYPES } from '@/types/panels'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
@@ -55,6 +59,8 @@ export function PanelPalette() {
 
   const [slotEl, setSlotEl] = useState<HTMLElement | null>(null)
   const [dropHot, setDropHot] = useState(false)
+  /** After showing float tray, remeasure and pin bottom-center of playground. */
+  const recenterFloatRef = useRef(false)
 
   // Keep portal target in sync; clear empty class when docking
   useLayoutEffect(() => {
@@ -71,6 +77,26 @@ export function PanelPalette() {
     slot.classList.toggle('is-drop-hot', dropHot && paletteDragging)
   }, [mode, paletteDragging, dropHot])
 
+  // After float becomes visible, pin to bottom-center (or clamp if off-screen)
+  // so panel type buttons are fully visible in the playground.
+  useLayoutEffect(() => {
+    if (mode !== 'float' || !visible || paletteDragging) return
+    const el = document.getElementById('panelPalette')
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const force = recenterFloatRef.current
+    recenterFloatRef.current = false
+    const overflow =
+      rect.bottom > window.innerHeight - 4 ||
+      rect.right > window.innerWidth - 4 ||
+      rect.top < 4 ||
+      rect.left < 4
+    if (!force && !overflow) return
+    setPalettePos(
+      getPlaygroundFloatPalettePos({ width: rect.width, height: rect.height }),
+    )
+  }, [mode, visible, paletteDragging, setPalettePos])
+
   const dockToSidebar = () => {
     const slot = getSlot()
     if (slot) {
@@ -81,16 +107,19 @@ export function PanelPalette() {
     setPaletteMode('docked')
   }
 
-  const floatPalette = () => {
+  const floatPalette = (opts?: { place?: 'bottom-center' | 'keep' }) => {
+    const place = opts?.place ?? 'bottom-center'
+    if (place === 'bottom-center') {
+      recenterFloatRef.current = true
+      setPalettePos(getPlaygroundFloatPalettePos())
+    }
     setPaletteVisible(true)
     setPaletteMode('float')
   }
 
   const hidePalette = () => {
-    // Park chip where users can always find it (bottom-left near sidebar)
-    const safeX = 10
-    const safeY = Math.max(72, window.innerHeight - 56)
-    setPalettePos({ x: safeX, y: safeY })
+    // Park recovery chip bottom-center of playground (visible when sidebar is collapsed)
+    setPalettePos(getPlaygroundChipPos())
     setPaletteVisible(false)
     setPaletteMode('chip')
   }
@@ -110,7 +139,8 @@ export function PanelPalette() {
         x: Math.max(0, clientX - 40),
         y: Math.max(0, clientY - 16),
       })
-      floatPalette()
+      // Keep drop position from drag; do not jump to bottom-center
+      floatPalette({ place: 'keep' })
     }
   }
 

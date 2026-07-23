@@ -22,6 +22,11 @@ export const CHAT_TOOLS: CatalogItem[] = [
 ]
 
 export const CHAT_MCPS: CatalogItem[] = [
+  {
+    id: 'everflow',
+    label: 'Everflow',
+    description: 'Create canvases, agents, and project actions in Everflow',
+  },
   { id: 'github-mcp', label: 'GitHub MCP', description: 'Issues, PRs, repos' },
   { id: 'docs-search', label: 'Docs search', description: 'Internal docs RAG' },
   { id: 'postgres-mcp', label: 'Postgres MCP', description: 'SQL tools' },
@@ -36,9 +41,9 @@ export const CHAT_SKILLS: CatalogItem[] = [
 ]
 
 export const CHAT_MODES: { id: ChatMode; label: string; description: string }[] = [
-  { id: 'ask', label: 'Ask', description: 'Answer only — no file edits' },
-  { id: 'edit', label: 'Edit only', description: 'Propose and apply code edits' },
-  { id: 'auto', label: 'Automatic', description: 'Full agent workflow with tools' },
+  { id: 'ask', label: 'Ask', description: 'Read-only — no edits or shell' },
+  { id: 'edit', label: 'Edit only', description: 'Edits with approval; no shell' },
+  { id: 'auto', label: 'Automatic', description: 'Edits & commands auto-approved' },
 ]
 
 export const CHAT_AGENTS: ChatAgentRef[] = [
@@ -51,11 +56,22 @@ export const CHAT_AGENTS: ChatAgentRef[] = [
 
 export const DEFAULT_CHAT_MODEL = 'grok-2'
 export const DEFAULT_CHAT_TOOLS = ['sandbox_fs', 'git']
-export const DEFAULT_CHAT_MCPS = ['github-mcp']
+export const DEFAULT_CHAT_MCPS = ['everflow']
 export const DEFAULT_CHAT_SKILLS = ['fix']
+/** @deprecated Multi-agent demo list; routing uses DEFAULT_PRIMARY_AGENT */
 export const DEFAULT_CHAT_AGENTS = ['planner', 'frontend', 'backend']
+/** Default OpenCode-style primary agent when none selected */
+export const DEFAULT_PRIMARY_AGENT = 'build'
 export const DEFAULT_CHAT_MODE: ChatMode = 'ask'
 export const DEFAULT_CONTEXT_WINDOW = 128_000
+
+/** Offline / before OpenCode catalog loads */
+export const OPENCODE_AGENT_FALLBACKS: CatalogItem[] = [
+  { id: 'build', label: 'build', description: 'Full agent — implement and run tools' },
+  { id: 'plan', label: 'plan', description: 'Plan mode — research and design' },
+  { id: 'general', label: 'general', description: 'General-purpose agent' },
+  { id: 'explore', label: 'explore', description: 'Explore codebase (read-focused)' },
+]
 
 export function agentById(id: string): ChatAgentRef {
   return CHAT_AGENTS.find((a) => a.id === id) || { id, name: id, role: 'general' as AgentRole }
@@ -63,4 +79,18 @@ export function agentById(id: string): ChatAgentRef {
 
 export function modeLabel(mode: ChatMode | undefined): string {
   return CHAT_MODES.find((m) => m.id === mode)?.label || 'Ask'
+}
+
+/**
+ * Pick a default primary agent from available OpenCode agent names.
+ * Prefers build, then plan, then first available.
+ */
+export function pickDefaultPrimaryAgent(available: string[] = []): string {
+  if (!available.length) return DEFAULT_PRIMARY_AGENT
+  const lower = new Map(available.map((a) => [a.toLowerCase(), a]))
+  for (const pref of ['build', 'plan', 'general', 'explore']) {
+    const hit = lower.get(pref)
+    if (hit) return hit
+  }
+  return available[0]
 }
