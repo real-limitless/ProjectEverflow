@@ -1,0 +1,1027 @@
+{
+  "name": "Stock Agent Emailer",
+  "nodes": [
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "StandardCompute",
+          "mode": "list",
+          "cachedResultName": "StandardCompute"
+        },
+        "responsesApiEnabled": false,
+        "options": {
+          "maxTokens": 32768
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2512,
+        -1424
+      ],
+      "id": "c7ee8ab9-9f49-4f35-95c7-92eb9861413d",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "PteucNxNuV8CUIpm",
+          "name": "StandardCompute"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "endpointUrl": "https://mcp.rapidapi.com",
+        "authentication": "multipleHeadersAuth",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.3,
+      "position": [
+        3200,
+        -1600
+      ],
+      "id": "effd0cfc-163c-4f4e-8779-15d873aa957b",
+      "name": "RapidAPI Hub - Real-Time News Data",
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "zRsSrlZOM8nLyV0R",
+          "name": "RapidAPI Hub - Real-Time News Data"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "endpointUrl": "https://mcp.rapidapi.com",
+        "authentication": "multipleHeadersAuth",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.3,
+      "position": [
+        3088,
+        -1472
+      ],
+      "id": "680c5447-8b3e-4bcc-98c5-5a901212499b",
+      "name": "RapidAPI Hub - Seeking Alpha",
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "dTYg8kGNzPmDCWh0",
+          "name": "RapidAPI Hub - Seeking Alpha"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "endpointUrl": "https://mcp.rapidapi.com",
+        "authentication": "multipleHeadersAuth",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.3,
+      "position": [
+        2944,
+        -1408
+      ],
+      "id": "deac7465-9dec-4499-bfef-d64b837db324",
+      "name": "RapidAPI Hub - YH Finance",
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "yXyJrowDZLZ8bGLf",
+          "name": "RapidAPI Hub - YH Finance"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "endpointUrl": "https://mcp.rapidapi.com",
+        "authentication": "multipleHeadersAuth",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.3,
+      "position": [
+        2816,
+        -1360
+      ],
+      "id": "8d3c3bf6-fdf9-4577-8659-5934b1b4aa8e",
+      "name": "RapidAPI Hub - Cryptocurrency News",
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "BR1ti1Ki0ziBhUsW",
+          "name": "RapidAPI Hub - Cryptocurrency News"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'You are analyzing my real brokerage account. Below is my current portfolio positions and transaction history, provided as a JSON array where each row is tagged with a sourceFile field (either a Portfolio_Positions export or a History_for_Account export):\\n\\n' +  $json.rows.toJsonString()+ '\\n\\nFor each distinct holding in the portfolio: look up current price/valuation context, recent news, and analyst sentiment using your tools (Real-Time News, Seeking Alpha, YH Finance, Cryptocurrency News as appropriate). Then produce: 1) a per-position summary (cost basis vs current context, notable news/catalysts), 2) portfolio-level risk and concentration analysis, 3) clear actionable recommendations (hold/trim/add/watch) with reasoning grounded in the tool data, not assumptions.' }}",
+        "options": {
+          "systemMessage": "You are a professional equity and portfolio research analyst. You are given the user's real brokerage portfolio positions and transaction history as structured JSON data in the prompt. You have tools for real-time news, Seeking Alpha analysis, Yahoo Finance data, and cryptocurrency news \u2014 use them to cross-reference every holding before drawing conclusions. Always ground your analysis in tool results and the provided portfolio data; never fabricate prices, news, or figures. Be specific and cite what each tool returned."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2608,
+        -1696
+      ],
+      "id": "811dcd1b-7a3f-42d6-9b6b-0e70d9d6c9a4",
+      "name": "Single Stock Researcher",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough",
+        "returnOutput": "allRuns"
+      },
+      "id": "804f162e-544a-4928-a0d3-38d34bcb1b85",
+      "typeVersion": 1.1,
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [
+        320,
+        -2160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "listPrompts"
+      },
+      "type": "n8n-nodes-mcp.mcpClientTool",
+      "typeVersion": 1,
+      "position": [
+        2672,
+        -1360
+      ],
+      "id": "793fcf79-0098-44e3-8dd0-65f731167c6f",
+      "name": "MCP Client",
+      "credentials": {
+        "mcpClientApi": {
+          "id": "kUSMcKxYo7Tqgbua",
+          "name": "Client (STDIO) account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "list",
+        "path": "/home/chen",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.ftp",
+      "typeVersion": 1,
+      "position": [
+        592,
+        -2000
+      ],
+      "id": "e6f61220-07b1-44eb-b92f-eb306e0aae30",
+      "name": "FTP",
+      "credentials": {
+        "ftp": {
+          "id": "kC9OIa7vVA6Z2BVF",
+          "name": "FTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.name }}",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              },
+              "rightValue": "Portfolio_Positions",
+              "id": "de1b5d40-ea5f-43b5-948a-1ae04904f752"
+            },
+            {
+              "leftValue": "={{ $json.name }}",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              },
+              "rightValue": "History_for_Account",
+              "id": "df986cf9-0586-4688-83ea-d39c377a63e5"
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "215cebe7-61ae-4445-8097-390a1e93207f",
+      "name": "Filter Portfolio Files",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        784,
+        -2000
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "a8d1977a-3516-43c7-a7d6-a2ea6f474cf0",
+      "name": "Loop Over Portfolio Files",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1072,
+        -1968
+      ]
+    },
+    {
+      "parameters": {
+        "path": "={{ $json.path }}",
+        "options": {}
+      },
+      "id": "697291a0-b66c-4ec7-a8ab-aad66a5dcd84",
+      "name": "Download Portfolio File",
+      "type": "n8n-nodes-base.ftp",
+      "typeVersion": 1,
+      "position": [
+        1216,
+        -1744
+      ],
+      "credentials": {
+        "ftp": {
+          "id": "kC9OIa7vVA6Z2BVF",
+          "name": "FTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "destinationKey": "text",
+        "options": {}
+      },
+      "id": "75e67796-70db-4b8f-9b8b-1a1357430621",
+      "name": "Extract Raw CSV Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1408,
+        -1520
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sourceFile-assignment",
+              "name": "sourceFile",
+              "value": "={{ $(\"Download Portfolio File\").item.json.name }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "dc32f53a-55d0-4895-a1b7-77a4a1ebc421",
+      "name": "Tag Source File",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2272,
+        -800
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "rows",
+        "options": {}
+      },
+      "id": "f3fa3a55-be5b-4831-9f1a-8199d4cea60e",
+      "name": "Aggregate Portfolio Rows",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1776,
+        -2000
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const lines = $json.text.split(/\\r\\n|\\n/);\nconst cleaned = lines.map(line => line.replace(/,\\s*$/, '')).join('\\n');\nreturn { ...$json, text: cleaned };"
+      },
+      "id": "30da3792-293e-462f-a7b6-59bd72cdb8a8",
+      "name": "Clean Trailing Commas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1616,
+        -1328
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "text",
+        "options": {}
+      },
+      "id": "2bd4d694-f949-4684-a55a-f6037c93f157",
+      "name": "Convert Cleaned Text to File",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1856,
+        -1248
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "headerRow": true,
+          "skipRecordsWithErrors": {
+            "value": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "id": "8e1f129c-e790-42a6-aa53-8ca6af559c9f",
+      "name": "Parse Cleaned CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        2128,
+        -1024
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "robot@example.com",
+        "toEmail": "user@example.com",
+        "subject": "=Portfolio Research Report - {{ $now.toFormat(\"MMMM d, yyyy\") }}",
+        "emailFormat": "both",
+        "text": "={{ $json.output }}",
+        "html": "={{ $json.emailHtml }}",
+        "options": {}
+      },
+      "id": "de3b506c-28ad-46b6-877d-52718d85b1f4",
+      "name": "Send Portfolio Research Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3664,
+        -2224
+      ],
+      "webhookId": "badb45d9-361b-4d34-89b6-2bae8046c143",
+      "credentials": {
+        "smtp": {
+          "id": "7uaKxf2TI2eH0qeP",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const md = $json.output || '';\n\nfunction escapeHtml(s) {\n  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction inline(text) {\n  text = escapeHtml(text);\n  text = text.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');\n  text = text.replace(/(^|[^*])\\*([^*]+?)\\*($|[^*])/g, '$1<em>$2</em>$3');\n  text = text.replace(/`([^`]+)`/g, '<code style=\"background:#f1f5f9;padding:1px 4px;border-radius:3px;\">$1</code>');\n  text = text.replace(/\\[(.+?)\\]\\((.+?)\\)/g, '<a href=\"$2\" style=\"color:#2563eb;\">$1</a>');\n  return text;\n}\n\nconst lines = md.split(/\\r?\\n/);\nlet html = '';\nlet inList = false;\nlet listType = null;\nlet inTable = false;\nlet tableRows = [];\n\nfunction closeList() {\n  if (inList) {\n    html += listType === 'ol' ? '</ol>' : '</ul>';\n    inList = false;\n    listType = null;\n  }\n}\n\nfunction flushTable() {\n  if (!tableRows.length) return;\n  html += '<table style=\"width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;\">';\n  tableRows.forEach((row, i) => {\n    const cells = row.split('|').map(c => c.trim()).filter((c, idx, arr) => !(idx === 0 && c === '') && !(idx === arr.length - 1 && c === ''));\n    if (cells.every(c => /^:?-+:?$/.test(c))) return;\n    const tag = i === 0 ? 'th' : 'td';\n    html += '<tr>' + cells.map(c => `<${tag} style=\"border:1px solid #e2e8f0;padding:6px 8px;text-align:left;${tag === 'th' ? 'background:#f8fafc;font-weight:600;' : ''}\">${inline(c)}</${tag}>`).join('') + '</tr>';\n  });\n  html += '</table>';\n  tableRows = [];\n  inTable = false;\n}\n\nfor (const raw of lines) {\n  const line = raw.trim();\n\n  if (line.startsWith('|')) {\n    inTable = true;\n    tableRows.push(line);\n    continue;\n  } else if (inTable) {\n    flushTable();\n  }\n\n  if (/^#{1,6}\\s/.test(line)) {\n    closeList();\n    const level = Math.min(line.match(/^#+/)[0].length, 4);\n    const text = line.replace(/^#+\\s*/, '');\n    const sizes = { 1: '22px', 2: '19px', 3: '16px', 4: '14px' };\n    html += `<h${level} style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0f172a;margin:18px 0 8px;font-size:${sizes[level]};\">${inline(text)}</h${level}>`;\n    continue;\n  }\n\n  if (/^(-{3,}|\\*{3,})$/.test(line)) {\n    closeList();\n    html += '<hr style=\"border:none;border-top:1px solid #e2e8f0;margin:16px 0;\">';\n    continue;\n  }\n\n  if (/^[-*]\\s+/.test(line)) {\n    if (!inList || listType !== 'ul') {\n      closeList();\n      html += '<ul style=\"margin:8px 0;padding-left:20px;\">';\n      inList = true;\n      listType = 'ul';\n    }\n    html += `<li style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;color:#334155;line-height:1.5;margin-bottom:4px;\">${inline(line.replace(/^[-*]\\s+/, ''))}</li>`;\n    continue;\n  }\n\n  if (/^\\d+\\.\\s+/.test(line)) {\n    if (!inList || listType !== 'ol') {\n      closeList();\n      html += '<ol style=\"margin:8px 0;padding-left:20px;\">';\n      inList = true;\n      listType = 'ol';\n    }\n    html += `<li style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;color:#334155;line-height:1.5;margin-bottom:4px;\">${inline(line.replace(/^\\d+\\.\\s+/, ''))}</li>`;\n    continue;\n  }\n\n  closeList();\n  if (line === '') continue;\n  html += `<p style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;color:#334155;line-height:1.6;margin:0 0 10px;\">${inline(line)}</p>`;\n}\ncloseList();\nflushTable();\n\nconst reportDate = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });\n\nconst wrapped = `<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Portfolio Research Report</title></head><body style=\"margin:0;padding:0;background:#0f172a;\"><table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"background:#0f172a;\"><tr><td align=\"center\" style=\"padding:32px 10px;\"><table role=\"presentation\" width=\"600\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"max-width:600px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 20px 25px -5px rgba(15,23,42,.3);\"><tr><td style=\"padding:0 24px 6px;background-color:#1e2937;background:linear-gradient(135deg,#0f172a 0%,#1e2937 100%);\"><table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\"><tr><td style=\"padding:24px 0 18px;text-align:center;\"><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:11px;font-weight:600;color:#e2a87d;letter-spacing:1px;margin-bottom:6px;\">STOCK AGENT</div><h1 style=\"margin:0 0 8px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:22px;line-height:1.2;font-weight:700;color:#fff;\">Portfolio Research Report</h1><p style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;color:#cbd5e1;\">${reportDate}</p></td></tr></table></td></tr><tr><td style=\"padding:20px 24px;\">${html}</td></tr><tr><td style=\"padding:14px 24px;background:#0f172a;color:#94a3b8;\"><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:10px;line-height:1.5;\">Automated research generated by your Stock Agent n8n workflow. Not financial advice \u2014 verify all figures before acting.</div></td></tr></table></td></tr></table></body></html>`;\n\nreturn { ...$json, emailHtml: wrapped };"
+      },
+      "id": "5534d958-6d79-4275-9bc7-f88d4beee3d8",
+      "name": "Convert Research to HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3376,
+        -2240
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "8a78b4e4-6907-4b26-9bb5-809d0eddd776",
+      "name": "Test Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        320,
+        -1936
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        320,
+        -1728
+      ],
+      "id": "07ec7548-2b7e-4883-bf05-0d10d06629b9",
+      "name": "Schedule Trigger1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2336,
+        -1920
+      ],
+      "id": "f94711da-5c6f-4dcd-83ba-4f07a6467c17",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "rows",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        2032,
+        -1984
+      ],
+      "id": "8ffb5b3a-6837-42cb-a9a4-9b7223729578",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "temp_table",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "output": "={{ $json.output }}"
+          },
+          "matchingColumns": [
+            "output"
+          ],
+          "schema": [
+            {
+              "id": "output",
+              "displayName": "output",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "optimizeBulk": false
+        }
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2944,
+        -1872
+      ],
+      "id": "dc9cfc2c-2153-4e18-87b3-67b73f50fb2f",
+      "name": "Insert row"
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        992,
+        -2272
+      ],
+      "id": "f3bc6397-6db5-4154-8613-febe978c8d6b",
+      "name": "List data tables"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cfc18e06-54d6-461d-ab3d-8de19e5131c7",
+              "leftValue": "={{ $json.name }}",
+              "rightValue": "temp_table",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1264,
+        -2304
+      ],
+      "id": "27848156-66a0-4d6f-b344-6c29843ba1aa",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "delete",
+        "dataTableId": {
+          "__rl": true,
+          "value": "temp_table",
+          "mode": "name"
+        }
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1552,
+        -2368
+      ],
+      "id": "b4a25e2e-5d1d-46ad-8a4d-580a1c9697c5",
+      "name": "Delete a data table"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "Wi3NSR3GNgegcgkk",
+          "mode": "list",
+          "cachedResultName": "temp_table",
+          "cachedResultUrl": "/projects/LvKmgm98bbeTLZH9/datatables/Wi3NSR3GNgegcgkk"
+        }
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2672,
+        -2256
+      ],
+      "id": "16b16207-65c2-49bd-ad43-7acb29de344c",
+      "name": "Get row(s)"
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        2976,
+        -2224
+      ],
+      "id": "5d65e36f-6abf-4d6b-9ace-d05fa4cd1022",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "temp_table",
+        "columns": {
+          "column": [
+            {
+              "name": "output"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2048,
+        -2208
+      ],
+      "id": "25c08b04-00ba-46f9-a477-43f38573132b",
+      "name": "Create a data table"
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "delete",
+        "dataTableId": {
+          "__rl": true,
+          "value": "Wi3NSR3GNgegcgkk",
+          "mode": "list",
+          "cachedResultName": "temp_table",
+          "cachedResultUrl": "/projects/LvKmgm98bbeTLZH9/datatables/Wi3NSR3GNgegcgkk"
+        }
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        4048,
+        -2256
+      ],
+      "id": "b497fb57-0f0e-4599-9f15-7d5308eb2f0b",
+      "name": "Delete a data table1"
+    }
+  ],
+  "pinData": {
+    "Start": [
+      {
+        "json": {
+          "report_name": "StockPortfolio",
+          "report_agent_workflow": "Stocks",
+          "report_agent_prompt": "---\nname: signal-deck-portfolio\ndescription: Signal Deck portfolio suite. Handles $portfolio-analysis (full breakdown - total value, top holdings, concentration risk, deep research on top 5 via subagents, earnings calendar, risk flags), $portfolio-history (realized P/L, dividends/income, margin costs, cash flows, explicit data-driven trade criticism from History CSVs), $portfolio-download (fetch fresh Fidelity CSVs via Playwright browser with manual login + MFA). Also handles natural language like \"show my portfolio\", \"how's my account doing\", \"analyze my trade history\", \"what did I make in dividends\", \"refresh fidelity\", \"download my positions\". Paper trading education only.\n---\n\n# SIGNAL DECK \u2014 Portfolio Suite\n\nCommands: `$portfolio-analysis`, `$portfolio-history`, `$portfolio-download`.\n\n## PARSER RULE (critical \u2014 no exceptions)\n\n- NEVER parse `Portfolio_*.csv` / `History_*.csv` yourself; never inline Python or the `csv` module.\n- The ONLY interface is the dedicated parser via the `bash` tool:\n  ```bash\n  latest=$(ls -t Portfolio/Portfolio_Positions_*.csv 2>/dev/null | head -1)\n  python3 scripts/signal-deck/portfolio-csv-parser.py --positions \"$latest\" --json\n  # with history:\n  python3 scripts/signal-deck/portfolio-csv-parser.py --positions \"$latest\" \\\n      --history \"Portfolio/History_for_Account_*.csv\" --json\n  # history-only deep analysis:\n  python3 scripts/signal-deck/portfolio-csv-parser.py \\\n      --history \"Portfolio/History_for_Account_*.csv\" --analyze-history --json\n  ```\n- Parser JSON contract: `total_value`, `today_pnl`, `pending_cash`, `holdings{symbol: quantity, current_value, pct_of_account, today_pnl_dollar, avg_cost, accounts, baskets}`, `top_holdings`, `concentration_flags`, `recent_activity`.\n- Use ONLY that JSON for metrics. No CSV \u2192 output \"No portfolio loaded\", continue degraded.\n\n## CORE DATA RULES (condensed \u2014 full: `.opencode/skills/signal-deck/references/core-rules.md`)\n\n1. `$portfolio-analysis` / `$portfolio-history` are market-data commands: FIRST actions this turn = parallel discovery (`alphavantage_TOOL_LIST` + YH quote + Real-Time News + Seeking Alpha + `web-search_one_search` for market/macro/VIX context), then symbol-specific fetches. Never emit the final box on stale data.\n2. Alpha Vantage: LIST \u2192 GET(inner) \u2192 CALL, args from GET schema. Series: most recent row only.\n3. Cite every number \"Source: <provider> <timestamp>\". Degraded data \u2192 flag explicitly.\n4. `$portfolio-download` is LOCAL ONLY \u2014 skip MCP discovery entirely.\n5. Read settings early: `python3 scripts/signal-deck/signal-deck-state.py --get-settings`.\n\n---\n\n## $portfolio-analysis\n\n1. **Parse** positions CSV (parser rule above) \u2014 all metrics from parser JSON.\n2. **Discovery + market snapshot** (parallel): S&P 500, VIX via YH/SA day-watch; live quotes for top holdings.\n3. **Deep research (top 5 by weight)** \u2014 launch parallel `Task` subagents (`subagent_type=\"explore\"`, max 5, 45s timeout each):\n   `prompt: \"$analysis SYMBOL earnings technical sentiment news levels \u2014 return: earnings date, news sentiment counts, key levels, RSI/MA status, options P/C, top catalyst\"`.\n   On timeout/unavailable \u2192 \"Deep research unavailable\" and continue.\n4. **Earnings calendar**: Seeking Alpha for top 10 symbols; flag reports within 14 days.\n5. **Risk view**: concentration flags from parser + correlation/sector imbalance + estimated beta (see `.opencode/skills/signal-deck/references/strategy.md` \u00a77).\n6. Read `.opencode/skills/signal-deck-portfolio/templates/portfolio-analysis.md`, fill exactly. Offer `$portfolio-history` for the backward-looking report.\n\n#",
+          "id": 1,
+          "createdAt": "2026-07-03T18:40:08.489Z",
+          "updatedAt": "2026-07-03T18:48:28.035Z"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Single Stock Researcher",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RapidAPI Hub - Real-Time News Data": {
+      "ai_tool": [
+        [
+          {
+            "node": "Single Stock Researcher",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RapidAPI Hub - Seeking Alpha": {
+      "ai_tool": [
+        [
+          {
+            "node": "Single Stock Researcher",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RapidAPI Hub - YH Finance": {
+      "ai_tool": [
+        [
+          {
+            "node": "Single Stock Researcher",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RapidAPI Hub - Cryptocurrency News": {
+      "ai_tool": [
+        [
+          {
+            "node": "Single Stock Researcher",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "FTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Client": {
+      "ai_tool": [
+        [
+          {
+            "node": "Single Stock Researcher",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FTP": {
+      "main": [
+        [
+          {
+            "node": "Filter Portfolio Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Portfolio Files": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Portfolio Files",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "List data tables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Portfolio Files": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Portfolio Rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download Portfolio File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Portfolio File": {
+      "main": [
+        [
+          {
+            "node": "Extract Raw CSV Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Source File": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Portfolio Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Portfolio Rows": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Create a data table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Raw CSV Text": {
+      "main": [
+        [
+          {
+            "node": "Clean Trailing Commas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Trailing Commas": {
+      "main": [
+        [
+          {
+            "node": "Convert Cleaned Text to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Cleaned Text to File": {
+      "main": [
+        [
+          {
+            "node": "Parse Cleaned CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Cleaned CSV": {
+      "main": [
+        [
+          {
+            "node": "Tag Source File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Single Stock Researcher": {
+      "main": [
+        [
+          {
+            "node": "Insert row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Research to HTML": {
+      "main": [
+        [
+          {
+            "node": "Send Portfolio Research Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "FTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "FTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Get row(s)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Single Stock Researcher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List data tables": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Delete a data table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s)": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Convert Research to HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Portfolio Research Email": {
+      "main": [
+        [
+          {
+            "node": "Delete a data table1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert row": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "04e31246-3035-4e0d-958d-440b06e01719",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "nodeGroups": [],
+  "id": "kss1Pt89EnKixi95",
+  "tags": []
+}

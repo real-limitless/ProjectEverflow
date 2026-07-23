@@ -11,10 +11,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.users import current_active_user
 from app.config import Settings, get_settings
 from app.core.deps import get_project_for_member
 from app.db.session import get_async_session
 from app.models.project import Project
+from app.models.user import User
+from app.services.provider_inject import inject_project_provider_secrets
 from app.services.sandbox import mark_sandbox_missing
 from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
 
@@ -70,15 +73,47 @@ def _agent_http_error(exc: SandboxAgentError) -> HTTPException:
 async def ensure_opencode(
     body: OpenCodeEnsureBody = OpenCodeEnsureBody(),
     project: Project = Depends(get_project_for_member),
+    user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    """Ensure OpenCode server is running inside the project sandbox."""
+    """Ensure OpenCode server is running inside the project sandbox.
+
+    Also mints a project-scoped sandbox token and registers the Everflow MCP
+    server so Chat/OpenCode can create canvases and agents.
+    """
     name = _require_running_sandbox(project)
-    _ = settings  # client uses settings
     client = SandboxAgentClient(settings)
+
+    mcp_token: str | None = None
     try:
-        return await client.opencode_ensure(name, force_restart=body.force_restart)
+        from app.services.sandbox_tokens import mint_sandbox_token
+
+        _row, mcp_token = await mint_sandbox_token(
+            session,
+            project_id=project.id,
+            user_id=user.id,
+            label="opencode-mcp",
+            settings=settings,
+            revoke_existing=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sandbox token mint failed project=%s: %s", project.id, exc)
+
+    try:
+        # Prefer agent-reachable URL (compose DNS). Guest MCP uses reverse tunnel.
+        agent_api = (
+            settings.agent_platform_api_url or settings.public_api_url or ""
+        ).rstrip("/")
+        result = await client.opencode_ensure(
+            name,
+            force_restart=body.force_restart,
+            everflow_api_url=agent_api if mcp_token else None,
+            everflow_token=mcp_token,
+            everflow_project_id=str(project.id) if mcp_token else None,
+            everflow_mcp_command="everflow-mcp",
+        )
+
     except SandboxAgentError as exc:
         if exc.status_code == 404:
             await mark_sandbox_missing(session, project)
@@ -87,6 +122,35 @@ async def ensure_opencode(
                 detail="Sandbox missing on agent; recreate the sandbox",
             ) from exc
         raise _agent_http_error(exc) from exc
+
+    # Best-effort: inject vault keys into guest + OpenCode auth after ensure
+    try:
+        inject = await inject_project_provider_secrets(
+            session,
+            project,
+            user_id=user.id,
+            settings=settings,
+            client=client,
+            apply_opencode_auth=True,
+        )
+        if isinstance(result, dict):
+            result = {**result, "provider_inject": inject}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("provider inject after opencode ensure: %s", exc)
+
+    if isinstance(result, dict) and mcp_token:
+        # Never echo the raw token to the browser
+        result = {
+            **result,
+            "everflow_mcp_ready": bool(
+                (result.get("everflow_mcp") or {}).get("configured")
+                if isinstance(result.get("everflow_mcp"), dict)
+                else False
+            ),
+        }
+        result.pop("everflow_mcp", None)
+
+    return result
 
 
 @router.api_route(

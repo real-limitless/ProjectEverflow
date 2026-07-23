@@ -1,17 +1,21 @@
 """Project model scoped to an organization."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from fastapi_users_db_sqlalchemy.generics import GUID
 from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import JSON
 
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.agent import ProjectAgent
+    from app.models.knowledge import KnowledgeCanvas
     from app.models.organization import Organization
+    from app.models.workflow import Workflow
 
 
 class Project(Base):
@@ -28,6 +32,10 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Catalog of attached git remotes (cloned into sandbox workspace after provision).
+    # List of dicts: id, label, url, branch, provider, local_path, clone_status, clone_error
+    repos: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True, default=list)
 
     # microsandbox lifecycle (provisioned via internal sandbox-agent)
     sandbox_name: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
@@ -49,3 +57,18 @@ class Project(Base):
     )
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="projects")
+    knowledge_canvases: Mapped[list["KnowledgeCanvas"]] = relationship(
+        "KnowledgeCanvas",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    agents: Mapped[list["ProjectAgent"]] = relationship(
+        "ProjectAgent",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    workflows: Mapped[list["Workflow"]] = relationship(
+        "Workflow",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )

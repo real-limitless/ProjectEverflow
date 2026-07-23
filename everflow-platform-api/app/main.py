@@ -27,7 +27,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_db(settings)
     # Warm engine
     get_engine()
+    # Workflow schedule arming (no-op when disabled / test)
+    from app.services.workflows.scheduler import start_scheduler, stop_scheduler
+
+    start_scheduler(
+        enabled=settings.workflows_scheduler_enabled and settings.environment != "test",
+        interval_s=settings.workflows_scheduler_interval_seconds,
+    )
     yield
+    await stop_scheduler()
     await dispose_db()
 
 

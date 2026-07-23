@@ -11,13 +11,18 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from app.config import get_settings
 from app.db.base import Base
 from app.models import (  # noqa: F401 — register metadata
+    KnowledgeCanvas,
     OAuthAccount,
     Organization,
     OrganizationMember,
     PreviewEndpoint,
     Project,
+    ProjectAgent,
+    ProviderCredential,
+    SandboxAccessToken,
     User,
 )
+
 
 config = context.config
 if config.config_file_name is not None:

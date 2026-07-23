@@ -135,11 +135,60 @@ class SandboxAgentClient:
         name: str,
         *,
         force_restart: bool = False,
+        everflow_api_url: str | None = None,
+        everflow_token: str | None = None,
+        everflow_project_id: str | None = None,
+        everflow_mcp_command: str | None = "everflow-mcp",
     ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"force_restart": force_restart}
+        if everflow_token and everflow_api_url and everflow_project_id:
+            payload["everflow_api_url"] = everflow_api_url
+            payload["everflow_token"] = everflow_token
+            payload["everflow_project_id"] = everflow_project_id
+            if everflow_mcp_command:
+                payload["everflow_mcp_command"] = everflow_mcp_command
         return await self._request(
             "POST",
             f"/v1/sandboxes/{name}/opencode/ensure",
-            json={"force_restart": force_restart},
+            json=payload,
+        )
+
+    async def get_opencode_harness(self, name: str) -> dict[str, Any]:
+        return await self._request("GET", f"/v1/sandboxes/{name}/harness/opencode")
+
+    async def put_opencode_harness(self, name: str, pack: dict[str, Any]) -> dict[str, Any]:
+        return await self._request(
+            "PUT",
+            f"/v1/sandboxes/{name}/harness/opencode",
+            json=pack,
+        )
+
+    async def inject_provider_secrets(
+        self,
+        name: str,
+        *,
+        env: dict[str, str] | None = None,
+        providers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Write provider secrets into the sandbox (never log values)."""
+        return await self._request(
+            "POST",
+            f"/v1/sandboxes/{name}/secrets/providers",
+            json={"env": env or {}, "providers": providers or {}},
+        )
+
+    async def opencode_set_auth(
+        self,
+        name: str,
+        provider_id: str,
+        api_key: str,
+    ) -> Any:
+        """PUT OpenCode provider auth via agent proxy."""
+        return await self._request(
+            "PUT",
+            f"/v1/sandboxes/{name}/opencode/auth/{provider_id}",
+            json={"type": "api", "key": api_key},
+            expected=(200, 201, 204),
         )
 
     async def opencode_proxy_stream(

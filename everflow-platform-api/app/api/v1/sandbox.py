@@ -81,12 +81,31 @@ async def get_sandbox_status(
 
 
 async def _bg_recreate(project_id: UUID) -> None:
+    from app.api.v1.projects import _clone_repos_for_project
     from app.config import get_settings
     from app.db.session import get_session_factory
 
+    settings = get_settings()
     factory = get_session_factory()
     async with factory() as bg_session:
-        await recreate_project_sandbox(bg_session, project_id, settings=get_settings())
+        project = await recreate_project_sandbox(bg_session, project_id, settings=settings)
+        if project.sandbox_status == "running":
+            # Reset clone status so recreate re-pulls remotes into the new workspace
+            repos = list(project.repos or [])
+            if repos:
+                reset: list[dict] = []
+                for r in repos:
+                    if not isinstance(r, dict):
+                        continue
+                    item = dict(r)
+                    if item.get("url"):
+                        item["clone_status"] = "pending"
+                        item["clone_error"] = None
+                    reset.append(item)
+                project.repos = reset
+                await bg_session.commit()
+                await bg_session.refresh(project)
+                await _clone_repos_for_project(bg_session, project, settings)
 
 
 @router.post("/projects/{project_id}/sandbox/retry", response_model=SandboxStatusRead)
@@ -103,6 +122,18 @@ async def recreate_sandbox(
 
     project.sandbox_status = "pending"
     project.sandbox_error = None
+    # Mark remotes pending so UI knows clone will re-run
+    if project.repos:
+        reset = []
+        for r in project.repos:
+            if not isinstance(r, dict):
+                continue
+            item = dict(r)
+            if item.get("url"):
+                item["clone_status"] = "pending"
+                item["clone_error"] = None
+            reset.append(item)
+        project.repos = reset
     await session.commit()
     await session.refresh(project)
 

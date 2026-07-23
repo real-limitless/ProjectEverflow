@@ -69,6 +69,28 @@ class FakeAgentClient:
     async def write_fs(self, name: str, path: str, content: str) -> None:
         return None
 
+    async def inject_provider_secrets(
+        self,
+        name: str,
+        *,
+        env: dict[str, str] | None = None,
+        providers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        if name not in self.sandboxes:
+            raise SandboxAgentError("not found", status_code=404)
+        return {
+            "sandbox_name": name,
+            "written": True,
+            "env_keys": sorted((env or {}).keys()),
+            "opencode_providers": sorted((providers or {}).keys()),
+            "path": ".everflow/secrets/providers.env",
+        }
+
+    async def opencode_set_auth(self, name: str, provider_id: str, api_key: str) -> Any:
+        if name not in self.sandboxes:
+            raise SandboxAgentError("not found", status_code=404)
+        return True
+
     async def opencode_ensure(self, name: str, **kwargs: Any) -> dict[str, Any]:
         if name not in self.sandboxes:
             raise SandboxAgentError("not found", status_code=404)
@@ -285,3 +307,121 @@ async def test_make_sandbox_name() -> None:
     long_slug = "x" * 200
     name = sandbox_service.make_sandbox_name("org", long_slug)
     assert len(name) <= 128
+
+
+def test_normalize_agent_status() -> None:
+    assert sandbox_service.normalize_agent_status("running") == "running"
+    assert sandbox_service.normalize_agent_status("stopped") == "stopped"
+    assert sandbox_service.normalize_agent_status("crashed") == "error"
+    assert sandbox_service.normalize_agent_status("exited") == "error"
+    assert sandbox_service.normalize_agent_status("failed") == "error"
+    assert sandbox_service.normalize_agent_status("weird-state") == "error"
+    assert sandbox_service.normalize_agent_status(None, fallback="running") == "running"
+
+
+@pytest.mark.asyncio
+async def test_refresh_maps_crashed_to_error(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    fake = FakeAgentClient()
+    org_id = await _create_org(client, auth_headers, slug="sbx-crash")
+    create = await client.post(
+        f"/api/v1/orgs/{org_id}/projects",
+        headers=auth_headers,
+        json={"name": "Crashy", "slug": "crashy"},
+    )
+    project_id = UUID(create.json()["id"])
+
+    settings = Settings(
+        environment="test",
+        secret_key="test-secret-key-for-jwt-signing-not-for-prod",
+        database_url="sqlite+aiosqlite:///:memory:",
+        sandbox_enabled=True,
+        sandbox_agent_url="http://fake",
+        sandbox_agent_token="t",
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        proj = await sandbox_service._load_project(session, project_id, with_org=True)
+        proj.sandbox_name = sandbox_service.make_sandbox_name(proj.organization.slug, proj.slug)
+        await session.commit()
+        await sandbox_service.provision_project_sandbox(
+            session,
+            project_id,
+            settings=settings,
+            client=fake,  # type: ignore[arg-type]
+        )
+        name = (await sandbox_service._load_project(session, project_id)).sandbox_name
+        assert name is not None
+        # Simulate agent restart leaving a dead microVM record
+        fake.sandboxes[name]["status"] = "crashed"
+
+        refreshed = await sandbox_service.refresh_sandbox_status(
+            session,
+            await sandbox_service._load_project(session, project_id),
+            settings=settings,
+            client=fake,  # type: ignore[arg-type]
+        )
+        assert refreshed.sandbox_status == "error"
+        assert "not running" in (refreshed.sandbox_error or "").lower() or "crashed" in (
+            refreshed.sandbox_error or ""
+        ).lower()
+
+
+@pytest.mark.asyncio
+async def test_refresh_creating_adopts_running_keeps_404(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    fake = FakeAgentClient()
+    org_id = await _create_org(client, auth_headers, slug="sbx-create-sync")
+    create = await client.post(
+        f"/api/v1/orgs/{org_id}/projects",
+        headers=auth_headers,
+        json={"name": "Creating", "slug": "creating-box"},
+    )
+    project_id = UUID(create.json()["id"])
+
+    settings = Settings(
+        environment="test",
+        secret_key="test-secret-key-for-jwt-signing-not-for-prod",
+        database_url="sqlite+aiosqlite:///:memory:",
+        sandbox_enabled=True,
+        sandbox_agent_url="http://fake",
+        sandbox_agent_token="t",
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        proj = await sandbox_service._load_project(session, project_id, with_org=True)
+        name = sandbox_service.make_sandbox_name(proj.organization.slug, proj.slug)
+        proj.sandbox_name = name
+        proj.sandbox_status = "creating"
+        await session.commit()
+
+        # 404 while creating → stay creating (not mark missing)
+        missing = await sandbox_service.refresh_sandbox_status(
+            session,
+            await sandbox_service._load_project(session, project_id),
+            settings=settings,
+            client=fake,  # type: ignore[arg-type]
+        )
+        assert missing.sandbox_status == "creating"
+
+        # Agent already running → promote so UI unblocks if provision commit lags
+        fake.sandboxes[name] = {
+            "name": name,
+            "status": "running",
+            "image": "img",
+            "labels": {},
+            "harnesses": [],
+        }
+        promoted = await sandbox_service.refresh_sandbox_status(
+            session,
+            await sandbox_service._load_project(session, project_id),
+            settings=settings,
+            client=fake,  # type: ignore[arg-type]
+        )
+        assert promoted.sandbox_status == "running"

@@ -1,5 +1,6 @@
 """Project CRUD under organizations."""
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -14,7 +15,11 @@ from app.models.organization import Organization, OrganizationMember
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
+from app.services.repo_clone import clone_project_repos, repos_to_storage
 from app.services.sandbox import destroy_project_sandbox, make_sandbox_name, provision_project_sandbox
+from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["projects"])
 
@@ -44,12 +49,65 @@ async def _require_project_admin(
     return membership
 
 
+async def _clone_repos_for_project(session: AsyncSession, project: Project, settings: Settings) -> Project:
+    """Clone stored remotes into the running sandbox and persist status on project.repos."""
+    repos = list(project.repos or [])
+    if not repos or not project.sandbox_name or project.sandbox_status != "running":
+        return project
+    # Clone when any remote is not yet ready/skipped (pending, error, cloning, or unset)
+    needs = any(
+        isinstance(r, dict) and r.get("url") and r.get("clone_status") not in ("ready", "skipped")
+        for r in repos
+    )
+    if not needs:
+        return project
+
+    client = SandboxAgentClient(settings)
+    try:
+        updated = await clone_project_repos(client, project.sandbox_name, repos)
+        project.repos = updated
+        await session.commit()
+        await session.refresh(project)
+    except SandboxAgentError as exc:
+        logger.warning("repo clone agent error project=%s: %s", project.id, exc)
+        # Mark pending clones as error without failing sandbox
+        marked: list[dict] = []
+        for r in repos:
+            if not isinstance(r, dict):
+                continue
+            item = dict(r)
+            if item.get("url") and item.get("clone_status") not in ("ready", "skipped"):
+                item["clone_status"] = "error"
+                item["clone_error"] = str(exc)[:1500]
+            marked.append(item)
+        project.repos = marked
+        await session.commit()
+        await session.refresh(project)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("repo clone failed project=%s", project.id)
+        marked = []
+        for r in repos:
+            if not isinstance(r, dict):
+                continue
+            item = dict(r)
+            if item.get("url") and item.get("clone_status") not in ("ready", "skipped"):
+                item["clone_status"] = "error"
+                item["clone_error"] = str(exc)[:1500]
+            marked.append(item)
+        project.repos = marked
+        await session.commit()
+        await session.refresh(project)
+    return project
+
+
 async def _bg_provision(project_id: UUID) -> None:
-    """Background task: provision sandbox with a fresh DB session."""
+    """Background task: provision sandbox, then clone project repos into workspace."""
     settings = get_settings()
     factory = get_session_factory()
     async with factory() as session:
-        await provision_project_sandbox(session, project_id, settings=settings)
+        project = await provision_project_sandbox(session, project_id, settings=settings)
+        if project.sandbox_status == "running":
+            await _clone_repos_for_project(session, project, settings)
 
 
 @router.get("/orgs/{org_id}/projects", response_model=list[ProjectRead])
@@ -81,11 +139,13 @@ async def create_project(
     org = org_result.scalar_one()
 
     sandbox_name = make_sandbox_name(org.slug, body.slug) if settings.sandbox_enabled else None
+    stored_repos = repos_to_storage(body.repos)
     project = Project(
         organization_id=org_id,
         name=body.name,
         slug=body.slug,
         description=body.description,
+        repos=stored_repos,
         sandbox_name=sandbox_name,
         sandbox_status="pending" if settings.sandbox_enabled else "destroyed",
         sandbox_image=settings.sandbox_default_image if settings.sandbox_enabled else None,
@@ -131,6 +191,8 @@ async def update_project(
         project.slug = body.slug
     if body.description is not None:
         project.description = body.description
+    if body.repos is not None:
+        project.repos = repos_to_storage(body.repos)
 
     try:
         await session.commit()

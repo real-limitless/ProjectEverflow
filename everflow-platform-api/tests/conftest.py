@@ -11,7 +11,22 @@ from app.config import Settings, get_settings
 from app.db.base import Base
 from app.db.session import get_async_session, init_db
 from app.main import create_app
-from app.models import OAuthAccount, Organization, OrganizationMember, Project, User  # noqa: F401
+from app.models import (  # noqa: F401
+    KnowledgeCanvas,
+    OAuthAccount,
+    Organization,
+    OrganizationMember,
+    Project,
+    ProjectAgent,
+    ProviderCredential,
+    SandboxAccessToken,
+    User,
+    Workflow,
+    WorkflowCredential,
+    WorkflowDataTable,
+    WorkflowDataTableRow,
+    WorkflowRun,
+)
 
 
 @pytest.fixture(scope="session")

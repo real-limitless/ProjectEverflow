@@ -74,3 +74,36 @@ async def test_duplicate_project_slug(client: AsyncClient, auth_headers: dict[st
         json={"name": "Two", "slug": "same"},
     )
     assert second.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_create_project_with_repos(client: AsyncClient, auth_headers: dict[str, str]) -> None:
+    org_id = await _create_org(client, auth_headers, slug="repo-proj-org")
+    create = await client.post(
+        f"/api/v1/orgs/{org_id}/projects",
+        headers=auth_headers,
+        json={
+            "name": "With Repo",
+            "slug": "with-repo",
+            "repos": [
+                {
+                    "id": "main",
+                    "label": "app",
+                    "url": "https://github.com/example/app.git",
+                    "branch": "main",
+                    "provider": "github",
+                    "active": True,
+                }
+            ],
+        },
+    )
+    assert create.status_code == 201, create.text
+    body = create.json()
+    assert isinstance(body.get("repos"), list)
+    assert len(body["repos"]) == 1
+    assert body["repos"][0]["url"] == "https://github.com/example/app.git"
+    assert body["repos"][0]["clone_status"] == "pending"
+
+    got = await client.get(f"/api/v1/projects/{body['id']}", headers=auth_headers)
+    assert got.status_code == 200
+    assert got.json()["repos"][0]["label"] == "app"

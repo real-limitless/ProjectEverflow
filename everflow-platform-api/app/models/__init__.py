@@ -5,6 +5,17 @@ from app.models.user import OAuthAccount, User
 from app.models.organization import Organization, OrganizationMember
 from app.models.project import Project
 from app.models.preview import PreviewEndpoint
+from app.models.provider_credential import ProviderCredential
+from app.models.knowledge import KnowledgeCanvas
+from app.models.agent import ProjectAgent
+from app.models.sandbox_token import SandboxAccessToken
+from app.models.workflow import (
+    Workflow,
+    WorkflowCredential,
+    WorkflowDataTable,
+    WorkflowDataTableRow,
+    WorkflowRun,
+)
 
 __all__ = [
     "User",
@@ -13,4 +24,13 @@ __all__ = [
     "OrganizationMember",
     "Project",
     "PreviewEndpoint",
+    "ProviderCredential",
+    "KnowledgeCanvas",
+    "ProjectAgent",
+    "SandboxAccessToken",
+    "Workflow",
+    "WorkflowRun",
+    "WorkflowCredential",
+    "WorkflowDataTable",
+    "WorkflowDataTableRow",
 ]

@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = True
     secret_key: str = "change-me-in-production-use-a-long-random-string"
+    # Fernet key material for provider API keys; falls back to secret_key if empty
+    credentials_encryption_key: str = ""
     database_url: str = "sqlite+aiosqlite:///./data/everflow.db"
     cors_origins: StrList = Field(default_factory=lambda: ["http://localhost:5173"])
     access_token_expire_minutes: int = 60
@@ -75,6 +77,13 @@ class Settings(BaseSettings):
         default_factory=lambda: ["agent-claude-code", "agent-opencode"],
     )
     sandbox_agent_timeout_seconds: float = 120.0
+    # Project-scoped tokens for in-sandbox Everflow MCP (seconds)
+    sandbox_token_ttl_seconds: int = 60 * 60 * 24  # 24h
+    # Browser / external base for the API
+    public_api_url: str = "http://localhost:8000"
+    # Platform API URL as seen by sandbox-agent (compose service DNS). Used for
+    # reverse-tunnel dial from agent → API when injecting Everflow MCP in guests.
+    agent_platform_api_url: str = "http://backend:8000"
 
     # Live Preview edge: {endpoint_id}.{preview_base_domain}
     # Local default includes :8000 so browsers never hit implicit :80/:443.
@@ -87,6 +96,10 @@ class Settings(BaseSettings):
     preview_public_port: int | None = None
     preview_ticket_ttl_seconds: int = 1200
     preview_cookie_name: str = "ef_preview_auth"
+
+    # In-process workflow schedule arming (disable in multi-replica unless leader-only)
+    workflows_scheduler_enabled: bool = True
+    workflows_scheduler_interval_seconds: float = 60.0
 
     @property
     def is_sqlite(self) -> bool:
