@@ -57,6 +57,40 @@ async def test_auth_required(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_inject_provider_secrets(client: AsyncClient) -> None:
+    create = await client.post(
+        "/v1/sandboxes",
+        headers=HEADERS,
+        json={"name": "ef-secrets", "harnesses": []},
+    )
+    assert create.status_code == 201, create.text
+
+    res = await client.post(
+        "/v1/sandboxes/ef-secrets/secrets/providers",
+        headers=HEADERS,
+        json={
+            "env": {"OPENAI_API_KEY": "sk-test-secret-value"},
+            "providers": {"openai": "sk-test-secret-value"},
+        },
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["written"] is True
+    assert "OPENAI_API_KEY" in body["env_keys"]
+    assert "sk-test-secret-value" not in res.text
+
+    # Env file readable via FS
+    content = await client.get(
+        "/v1/sandboxes/ef-secrets/fs/content",
+        headers=HEADERS,
+        params={"path": ".everflow/secrets/providers.env"},
+    )
+    assert content.status_code == 200
+    assert "OPENAI_API_KEY=" in content.text
+    assert "sk-test-secret-value" in content.text
+
+
+@pytest.mark.asyncio
 async def test_sandbox_lifecycle(client: AsyncClient) -> None:
     create = await client.post(
         "/v1/sandboxes",
@@ -306,6 +340,70 @@ async def test_opencode_guest_proxy_via_exec() -> None:
     )
     assert res.status_code == 200
     assert b"Guest session" in res.body
+
+
+@pytest.mark.asyncio
+async def test_opencode_harness_pack(client: AsyncClient) -> None:
+    create = await client.post(
+        "/v1/sandboxes",
+        headers=HEADERS,
+        json={"name": "ef-harness", "harnesses": ["agent-opencode"]},
+    )
+    assert create.status_code == 201, create.text
+
+    empty = await client.get(
+        "/v1/sandboxes/ef-harness/harness/opencode",
+        headers=HEADERS,
+    )
+    assert empty.status_code == 200, empty.text
+    assert empty.json()["agents"] == []
+
+    put = await client.put(
+        "/v1/sandboxes/ef-harness/harness/opencode",
+        headers=HEADERS,
+        json={
+            "agents": [
+                {
+                    "id": "security-reviewer",
+                    "description": "Security-focused review",
+                    "mode": "subagent",
+                    "model": "anthropic/claude-sonnet-4",
+                    "prompt": "Review for security issues only.",
+                    "permission": {"edit": "deny"},
+                    "mcpIds": ["github"],
+                }
+            ],
+            "skills": [
+                {
+                    "id": "pr-review",
+                    "description": "Review pull requests",
+                    "body": "Check diff carefully.",
+                }
+            ],
+            "mcp": {
+                "github": {
+                    "type": "remote",
+                    "url": "https://example.com/mcp",
+                    "enabled": True,
+                }
+            },
+        },
+    )
+    assert put.status_code == 200, put.text
+    body = put.json()
+    assert any(a["id"] == "security-reviewer" for a in body["agents"])
+    assert any(s["id"] == "pr-review" for s in body["skills"])
+    assert body["mcp"]["github"]["enabled"] is True
+    assert "security-reviewer" in (body.get("written") or {}).get("agents", [])
+
+    got = await client.get(
+        "/v1/sandboxes/ef-harness/harness/opencode",
+        headers=HEADERS,
+    )
+    assert got.status_code == 200
+    assert any(a["id"] == "security-reviewer" for a in got.json()["agents"])
+
+    await client.post("/v1/sandboxes/ef-harness/remove", headers=HEADERS)
 
 
 @pytest.mark.asyncio

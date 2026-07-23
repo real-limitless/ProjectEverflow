@@ -1040,23 +1040,60 @@ class MicrosandboxBackend(SandboxBackend):
         return stdout.encode("utf-8")
 
     async def write_fs(self, name: str, path: str, content: bytes) -> None:
-        sb = await self._connect(name)
-        guest_path = normalize_guest_path(path, allow_tmp=True)
-        if hasattr(sb, "fs"):
-            await sb.fs.write(guest_path, content)
-            return
-        # fallback: base64 pipe
-        import base64
+        """Write a file in the guest workspace, creating parent directories first.
 
-        b64 = base64.b64encode(content).decode("ascii")
-        q = shlex_quote(guest_path)
-        code, _, stderr = await self.exec(
-            name,
-            "sh",
-            ["-c", f"mkdir -p \"$(dirname {q})\" && echo {b64} | base64 -d > {q}"],
-        )
-        if code != 0:
-            raise RuntimeError(stderr or "write failed")
+        ``sb.fs.write`` does not mkdir parents (ENOENT on fresh workspaces when
+        writing e.g. ``.opencode/agents/<slug>.md``). Always ensure the parent
+        exists; fall back to an exec/base64 write if the fs API still fails.
+        """
+        import base64
+        from pathlib import PurePosixPath
+
+        guest_path = normalize_guest_path(path, allow_tmp=True)
+        parent = str(PurePosixPath(guest_path).parent)
+
+        async def _ensure_parent() -> None:
+            if parent in ("", ".", "/"):
+                return
+            code, _, stderr = await self.exec(
+                name,
+                "mkdir",
+                ["-p", parent],
+                timeout_seconds=30,
+            )
+            if code != 0:
+                raise RuntimeError(stderr or f"mkdir -p failed for {parent}")
+
+        async def _write_via_exec() -> None:
+            await _ensure_parent()
+            b64 = base64.b64encode(content).decode("ascii")
+            q = shlex_quote(guest_path)
+            code, _, stderr = await self.exec(
+                name,
+                "sh",
+                ["-c", f"echo {b64} | base64 -d > {q}"],
+                timeout_seconds=120,
+            )
+            if code != 0:
+                raise RuntimeError(stderr or "write failed")
+
+        sb = await self._connect(name)
+        if hasattr(sb, "fs"):
+            try:
+                await _ensure_parent()
+                await sb.fs.write(guest_path, content)
+                return
+            except Exception as exc:
+                logger.warning(
+                    "sb.fs.write failed name=%s path=%s: %s; using exec fallback",
+                    name,
+                    guest_path,
+                    exc,
+                )
+                await _write_via_exec()
+                return
+
+        await _write_via_exec()
 
     async def bootstrap(self, name: str, harnesses: list[str]) -> SandboxRecord:
         script_path = Path(__file__).resolve().parent / "bootstrap" / "install_harnesses.sh"

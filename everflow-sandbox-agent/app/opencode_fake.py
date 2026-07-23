@@ -48,6 +48,7 @@ class _Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "all": [
+                        {"id": "openrouter", "name": "OpenRouter"},
                         {"id": "openai", "name": "OpenAI"},
                         {"id": "anthropic", "name": "Anthropic"},
                         {"id": "xai", "name": "xAI"},
@@ -62,6 +63,16 @@ class _Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "providers": [
+                        {
+                            "id": "openrouter",
+                            "name": "OpenRouter",
+                            "models": {
+                                "openrouter/auto": {
+                                    "id": "openrouter/auto",
+                                    "name": "OpenRouter Auto",
+                                }
+                            },
+                        },
                         {
                             "id": "openai",
                             "name": "OpenAI",
@@ -140,6 +151,14 @@ class _Handler(BaseHTTPRequestHandler):
             self.messages[sid] = []
             self._json(200, sess)
             return
+        # POST /session/:id/permissions/:permissionID
+        if "/permissions/" in path and path.startswith("/session/"):
+            self._json(200, True)
+            return
+        # POST /permission/:id/reply (alternate)
+        if path.startswith("/permission/") and path.endswith("/reply"):
+            self._json(200, True)
+            return
         if path.startswith("/session/") and path.endswith("/prompt_async"):
             sid = path.split("/")[2]
             parts = body.get("parts") or []
@@ -147,19 +166,39 @@ class _Handler(BaseHTTPRequestHandler):
             for p in parts:
                 if isinstance(p, dict) and p.get("type") == "text":
                     text = str(p.get("text") or "")
+            agent = str(body.get("agent") or "")
+            tools = body.get("tools") if isinstance(body.get("tools"), dict) else {}
             user_msg = {
                 "info": {"id": f"u-{len(self.messages.get(sid, []))}", "role": "user"},
                 "parts": [{"type": "text", "text": text}],
             }
+            asst_parts: list[dict[str, Any]] = [
+                {"type": "reasoning", "text": "Thinking…"},
+                {
+                    "type": "text",
+                    "text": f"Echo: {text}"
+                    + (f" (agent={agent})" if agent else "")
+                    + (f" tools={tools}" if tools else ""),
+                },
+            ]
+            # Simulate a permission request when edit tools are not denied
+            if tools.get("edit") is not False and tools.get("bash") is not False:
+                asst_parts.append(
+                    {
+                        "type": "permission",
+                        "permissionID": f"perm-{sid[:8]}",
+                        "permission": "bash",
+                        "title": "bash",
+                        "patterns": ["ls *"],
+                    }
+                )
             asst = {
                 "info": {
                     "id": f"a-{len(self.messages.get(sid, []))}",
                     "role": "assistant",
+                    "agent": agent or None,
                 },
-                "parts": [
-                    {"type": "reasoning", "text": "Thinking…"},
-                    {"type": "text", "text": f"Echo: {text}"},
-                ],
+                "parts": asst_parts,
             }
             self.messages.setdefault(sid, []).extend([user_msg, asst])
             self.send_response(204)

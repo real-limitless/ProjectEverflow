@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     workspace_root: str = "/workspaces"
     host: str = "0.0.0.0"
     port: int = 8090
+    # Platform API URL as reachable FROM the agent (compose: http://backend:8000).
+    # Guest everflow-mcp uses a reverse tunnel to 127.0.0.1; agent dials this URL.
+    platform_api_url: str = "http://backend:8000"
+    # Guest-local port for the reverse tunnel listener
+    everflow_mcp_tunnel_port: int = 18765
 
     def resolve_mock(self) -> bool:
         """Only mock when explicitly enabled."""

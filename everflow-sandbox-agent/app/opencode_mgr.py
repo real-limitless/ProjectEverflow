@@ -8,6 +8,7 @@ inbound HTTP is unavailable.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -324,24 +325,102 @@ class OpenCodeManager:
         )
         return self._status_dict(inst, healthy=True)
 
-    def _write_server_config(self, workspace: Path, port: int) -> None:
-        """Best-effort opencode.json so serve binds consistently."""
+    def _write_server_config(
+        self,
+        workspace: Path,
+        port: int,
+        *,
+        mcp: dict[str, Any] | None = None,
+    ) -> None:
+        """Best-effort opencode.json so serve binds consistently; merge Everflow MCP."""
         cfg = workspace / "opencode.json"
+        data: dict[str, Any] = {
+            "$schema": "https://opencode.ai/config.json",
+            "server": {
+                "port": port,
+                "hostname": OPENCODE_HOSTNAME,
+            },
+        }
         if cfg.exists():
-            return
+            try:
+                existing = json.loads(cfg.read_text(encoding="utf-8"))
+                if isinstance(existing, dict):
+                    data = existing
+                    server = data.get("server") if isinstance(data.get("server"), dict) else {}
+                    server = dict(server)
+                    server.setdefault("port", port)
+                    server.setdefault("hostname", OPENCODE_HOSTNAME)
+                    data["server"] = server
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.debug("could not read existing opencode.json: %s", exc)
+
+        if mcp:
+            mcp_block = data.get("mcp") if isinstance(data.get("mcp"), dict) else {}
+            mcp_block = dict(mcp_block)
+            mcp_block["everflow"] = mcp
+            data["mcp"] = mcp_block
+
         try:
-            cfg.write_text(
-                "{\n"
-                '  "$schema": "https://opencode.ai/config.json",\n'
-                '  "server": {\n'
-                f'    "port": {port},\n'
-                f'    "hostname": "{OPENCODE_HOSTNAME}"\n'
-                "  }\n"
-                "}\n",
-                encoding="utf-8",
-            )
+            cfg.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         except OSError as exc:
             logger.debug("could not write opencode.json: %s", exc)
+
+    def write_everflow_mcp_credentials(
+        self,
+        workspace: Path,
+        *,
+        api_url: str,
+        token: str,
+        project_id: str,
+        command: str = "everflow-mcp",
+    ) -> dict[str, Any]:
+        """Write MCP env + opencode.json entry. Returns status for ensure response."""
+        ws = Path(workspace)
+        ef = ws / ".everflow"
+        ef.mkdir(parents=True, exist_ok=True)
+        env_path = ef / "mcp.env"
+        try:
+            env_path.write_text(
+                f'EVERFLOW_API_URL="{api_url}"\n'
+                f'EVERFLOW_TOKEN="{token}"\n'
+                f'EVERFLOW_PROJECT_ID="{project_id}"\n',
+                encoding="utf-8",
+            )
+            try:
+                os.chmod(env_path, 0o600)
+            except OSError:
+                pass
+        except OSError as exc:
+            return {"configured": False, "error": f"write mcp.env failed: {exc}"}
+
+        mcp_cfg = {
+            "type": "local",
+            "command": [command],
+            "enabled": True,
+            "environment": {
+                "EVERFLOW_API_URL": api_url,
+                "EVERFLOW_TOKEN": token,
+                "EVERFLOW_PROJECT_ID": project_id,
+            },
+        }
+        # Preserve existing server port if present
+        port = DEFAULT_OPENCODE_PORT_BASE
+        cfg_path = ws / "opencode.json"
+        if cfg_path.exists():
+            try:
+                existing = json.loads(cfg_path.read_text(encoding="utf-8"))
+                if isinstance(existing, dict) and isinstance(existing.get("server"), dict):
+                    port = int(existing["server"].get("port") or port)
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                pass
+        self._write_server_config(ws, port, mcp=mcp_cfg)
+        return {
+            "configured": True,
+            "command": command,
+            "env_path": str(env_path),
+            "project_id": project_id,
+            "api_url": api_url,
+        }
 
     def _status_dict(self, inst: OpenCodeInstance, *, healthy: bool) -> dict[str, Any]:
         host_url = (
@@ -365,6 +444,7 @@ class OpenCodeManager:
         exec_fn: Any,
         workspace_guest: str = "/workspace",
         port: int = 4096,
+        force_restart: bool = False,
     ) -> dict[str, Any]:
         """Start opencode serve inside a guest via backend.exec (best-effort)."""
         async def _guest_health() -> dict[str, Any] | None:
@@ -395,7 +475,7 @@ class OpenCodeManager:
                 return None
 
         health = await _guest_health()
-        if health is not None:
+        if health is not None and not force_restart:
             inst = OpenCodeInstance(
                 sandbox_name=name,
                 port=port,
@@ -406,6 +486,24 @@ class OpenCodeManager:
             self._instances[name] = inst
             logger.info("guest opencode already healthy name=%s port=%s", name, port)
             return self._status_dict(inst, healthy=True)
+
+        if force_restart:
+            # Best-effort kill existing serve so MCP config is reloaded
+            try:
+                await exec_fn(
+                    name,
+                    "sh",
+                    [
+                        "-c",
+                        f"pkill -f 'opencode serve' 2>/dev/null || "
+                        f"fuser -k {port}/tcp 2>/dev/null || true; sleep 0.5",
+                    ],
+                    cwd=workspace_guest,
+                    timeout_seconds=15,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("guest opencode kill ignored name=%s: %s", name, exc)
+            self._instances.pop(name, None)
 
         # Start detached serve (PATH may include .everflow/bin)
         start_cmd = (

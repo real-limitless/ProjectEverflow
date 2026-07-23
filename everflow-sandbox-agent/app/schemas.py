@@ -69,6 +69,31 @@ class HealthResponse(BaseModel):
 
 class OpenCodeEnsureRequest(BaseModel):
     force_restart: bool = False
+    # Everflow MCP bootstrap (platform mints sandbox token and passes these)
+    # everflow_api_url: platform URL as seen by the *agent* (for reverse tunnel dial).
+    # Guest MCP process uses http://127.0.0.1:<tunnel_port> instead.
+    everflow_api_url: str | None = None
+    everflow_token: str | None = None
+    everflow_project_id: str | None = None
+    everflow_mcp_command: str | None = "everflow-mcp"
+
+
+class ProvidersSecretsRequest(BaseModel):
+    """Inject LLM provider API keys into the sandbox (never log values)."""
+
+    # Environment map: OPENAI_API_KEY -> secret, etc.
+    env: dict[str, str] = Field(default_factory=dict)
+    # Optional OpenCode provider id -> api key (openai, anthropic, openrouter, xai)
+    providers: dict[str, str] = Field(default_factory=dict)
+
+
+class ProvidersSecretsResponse(BaseModel):
+    sandbox_name: str
+    written: bool
+    env_keys: list[str] = Field(default_factory=list)
+    opencode_providers: list[str] = Field(default_factory=list)
+    path: str | None = None
+    error: str | None = None
 
 
 class OpenCodeEnsureResponse(BaseModel):
@@ -79,6 +104,7 @@ class OpenCodeEnsureResponse(BaseModel):
     version: str | None = None
     mode: str | None = None
     pid: int | None = None
+    everflow_mcp: dict[str, Any] | None = None
     workspace: str | None = None
     error: str | None = None
 
@@ -95,3 +121,30 @@ class ListeningPortInfo(BaseModel):
 class PortsListResponse(BaseModel):
     sandbox_name: str
     ports: list[ListeningPortInfo] = Field(default_factory=list)
+
+
+class OpenCodeHarnessPack(BaseModel):
+    """Partial pack applied to the sandbox workspace for OpenCode agents/skills/MCP."""
+
+    agents: list[dict[str, Any]] | None = None
+    skills: list[dict[str, Any]] | None = None
+    mcp: dict[str, Any] | None = None
+    remove_agents: list[str] = Field(default_factory=list)
+    remove_skills: list[str] = Field(default_factory=list)
+    replace_all_agents: bool = False
+    replace_all_skills: bool = False
+    model: str | None = None
+    small_model: str | None = None
+    default_agent: str | None = None
+    manifest: dict[str, Any] | None = None
+    agent_meta: dict[str, Any] | None = None
+
+
+class OpenCodeHarnessResponse(BaseModel):
+    sandbox_name: str
+    agents: list[dict[str, Any]] = Field(default_factory=list)
+    skills: list[dict[str, Any]] = Field(default_factory=list)
+    mcp: dict[str, Any] = Field(default_factory=dict)
+    manifest: dict[str, Any] = Field(default_factory=dict)
+    opencode_json: dict[str, Any] = Field(default_factory=dict)
+    written: dict[str, Any] | None = None

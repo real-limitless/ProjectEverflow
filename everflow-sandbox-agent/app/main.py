@@ -13,6 +13,9 @@ from app.routes import router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    import logging
+
+    log = logging.getLogger("everflow.sandbox_agent")
     settings = get_settings()
     Path(settings.workspace_root).mkdir(parents=True, exist_ok=True)
     backend = build_backend(settings)
@@ -23,11 +26,38 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         get_tunnel_manager().bind_backend(backend)
     except Exception:
         pass
+    try:
+        from app.api_tunnel import get_api_tunnel_manager
+
+        get_api_tunnel_manager().bind_backend(backend)
+    except Exception:
+        pass
+    # Reconcile: after agent restart, microsandbox often leaves crashed records.
+    # Log them so operators know platform clients will recreate on open.
+    try:
+        recs = await backend.list()
+        stale = [r for r in recs if str(getattr(r, "status", "")).lower() not in ("running", "stopped")]
+        if stale:
+            log.warning(
+                "sandbox reconcile: %d non-running sandbox(es) after startup: %s",
+                len(stale),
+                ", ".join(f"{r.name}={r.status}" for r in stale[:20]),
+            )
+        else:
+            log.info("sandbox reconcile: %d sandbox(es) known to runtime", len(recs))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("sandbox reconcile skipped: %s", exc)
     yield
     try:
         from app.guest_tunnel import get_tunnel_manager
 
         await get_tunnel_manager().close_all()
+    except Exception:
+        pass
+    try:
+        from app.api_tunnel import get_api_tunnel_manager
+
+        await get_api_tunnel_manager().close_all()
     except Exception:
         pass
 

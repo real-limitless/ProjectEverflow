@@ -18,6 +18,12 @@ from app.opencode_proxy import proxy_to_opencode, proxy_to_opencode_guest
 from app.guest_tunnel import resolve_dial_target
 from app.ports import list_listening_ports
 from app.preview_proxy import proxy_http_to_port, proxy_websocket_to_port, ws_requested_subprotocol
+from app.opencode_harness import (
+    apply_pack_to_workspace,
+    apply_pack_via_backend,
+    read_pack_from_workspace,
+    read_pack_via_backend,
+)
 from app.schemas import (
     BootstrapRequest,
     ExecRequest,
@@ -28,10 +34,18 @@ from app.schemas import (
     ListeningPortInfo,
     OpenCodeEnsureRequest,
     OpenCodeEnsureResponse,
+    OpenCodeHarnessPack,
+    OpenCodeHarnessResponse,
     PortsListResponse,
+    ProvidersSecretsRequest,
+    ProvidersSecretsResponse,
     SandboxCreateRequest,
     SandboxInfo,
 )
+
+# Relative paths inside the sandbox workspace (never log secret values)
+_PROVIDERS_ENV_PATH = ".everflow/secrets/providers.env"
+_PROVIDERS_JSON_PATH = ".everflow/secrets/providers.json"
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -338,6 +352,103 @@ async def _require_running_sandbox(
     return rec
 
 
+def _format_env_file(env: dict[str, str]) -> str:
+    lines = [
+        "# Managed by Everflow — do not commit. Provider API keys for this sandbox.",
+        "# Sourced by knowledge worker / tooling. Values are never logged by the agent.",
+    ]
+    for key in sorted(env.keys()):
+        val = env[key]
+        if not key or val is None:
+            continue
+        # Escape for double-quoted shell assignment
+        safe = (
+            str(val)
+            .replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "")
+            .replace("\r", "")
+        )
+        lines.append(f'{key}="{safe}"')
+    lines.append("")
+    return "\n".join(lines)
+
+
+@router.post(
+    "/v1/sandboxes/{name}/secrets/providers",
+    response_model=ProvidersSecretsResponse,
+    dependencies=[Depends(require_agent_token)],
+)
+async def inject_provider_secrets(
+    name: str,
+    body: ProvidersSecretsRequest,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> ProvidersSecretsResponse:
+    """Write provider secrets into the sandbox workspace (env file + JSON).
+
+    Does not log secret values. Optional OpenCode auth is applied by the platform
+    via the OpenCode proxy after ensure.
+    """
+    await _require_running_sandbox(name, backend)
+
+    env = {k: v for k, v in (body.env or {}).items() if k and v}
+    # Merge providers map into standard env names when env key missing
+    provider_to_env = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "xai": "XAI_API_KEY",
+        "custom": "CUSTOM_API_KEY",
+    }
+    for pid, key in (body.providers or {}).items():
+        if not key:
+            continue
+        env_name = provider_to_env.get(pid.lower())
+        if env_name and env_name not in env:
+            env[env_name] = key
+
+    if not env and not (body.providers or {}):
+        return ProvidersSecretsResponse(
+            sandbox_name=name,
+            written=False,
+            env_keys=[],
+            opencode_providers=[],
+            path=None,
+            error="No secrets provided",
+        )
+
+    try:
+        import json
+
+        await backend.write_fs(name, _PROVIDERS_ENV_PATH, _format_env_file(env).encode("utf-8"))
+        payload = json.dumps({"env": env, "providers": body.providers or {}}, indent=2)
+        await backend.write_fs(name, _PROVIDERS_JSON_PATH, payload.encode("utf-8"))
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found") from None
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("inject provider secrets failed name=%s", name)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to write provider secrets",
+        ) from exc
+
+    logger.info(
+        "provider secrets written name=%s env_keys=%s providers=%s",
+        name,
+        sorted(env.keys()),
+        sorted((body.providers or {}).keys()),
+    )
+    return ProvidersSecretsResponse(
+        sandbox_name=name,
+        written=True,
+        env_keys=sorted(env.keys()),
+        opencode_providers=sorted((body.providers or {}).keys()),
+        path=_PROVIDERS_ENV_PATH,
+    )
+
+
 @router.post(
     "/v1/sandboxes/{name}/opencode/ensure",
     response_model=OpenCodeEnsureResponse,
@@ -346,33 +457,231 @@ async def _require_running_sandbox(
 async def opencode_ensure(
     name: str,
     backend: Annotated[SandboxBackend, Depends(get_backend)],
+    settings: Annotated[Settings, Depends(get_settings)],
     body: OpenCodeEnsureRequest | None = None,
 ) -> OpenCodeEnsureResponse:
-    """Start (or reuse) opencode serve for this sandbox workspace."""
+    """Start (or reuse) opencode serve for this sandbox workspace.
+
+    Always injects Everflow MCP into the workspace used by OpenCode (host path
+    and/or guest FS). For real microVMs, starts a reverse tunnel so everflow-mcp
+    can reach the platform API via 127.0.0.1 inside the guest.
+    """
+    from app.api_tunnel import get_api_tunnel_manager
+    from app.everflow_mcp_inject import write_everflow_mcp_guest, write_everflow_mcp_host
+
     rec = await _require_running_sandbox(name, backend)
     mgr = get_opencode_manager()
     force = bool(body.force_restart) if body else False
     workspace = rec.workspace_path or ""
+    mcp_status: dict[str, Any] | None = None
+    cfg = settings
+
+    async def _configure_everflow_mcp(*, guest: bool, host_ws: Path | None) -> None:
+        nonlocal mcp_status, force
+        if not body:
+            return
+        if not (body.everflow_token and body.everflow_project_id):
+            return
+
+        # Agent dials platform via compose DNS (not guest-visible host IPs).
+        agent_platform_url = (cfg.platform_api_url or body.everflow_api_url or "").rstrip("/")
+        # Prefer non-localhost URL for agent-side dial when body only has localhost.
+        if body.everflow_api_url and "localhost" not in body.everflow_api_url and "127.0.0.1" not in body.everflow_api_url:
+            agent_platform_url = body.everflow_api_url.rstrip("/")
+        elif cfg.platform_api_url:
+            agent_platform_url = cfg.platform_api_url.rstrip("/")
+
+        guest_api_url = agent_platform_url
+        tunnel_info: dict[str, Any] | None = None
+
+        if guest and agent_platform_url:
+            async def _kill_guest_port(sandbox_name: str, listen_port: int) -> None:
+                await backend.exec(
+                    sandbox_name,
+                    "sh",
+                    [
+                        "-c",
+                        f"fuser -k {listen_port}/tcp 2>/dev/null || "
+                        f"python3 -c \"import os,signal,subprocess; "
+                        f"subprocess.run(['sh','-c',"
+                        f"'for p in $(ls /proc | grep -E \\\"^[0-9]+$\\\"); do "
+                        f"grep -qa {listen_port} /proc/$p/cmdline 2>/dev/null && kill -9 $p; done'],"
+                        f"check=False)\" 2>/dev/null || true",
+                    ],
+                    cwd="/workspace",
+                    timeout_seconds=10,
+                )
+
+            try:
+                tunnel_info = await get_api_tunnel_manager().ensure(
+                    name,
+                    target_url=agent_platform_url,
+                    listen_port=int(cfg.everflow_mcp_tunnel_port),
+                    force=True,
+                    kill_guest_port=_kill_guest_port,
+                )
+                if tunnel_info.get("ok") and tunnel_info.get("api_url"):
+                    guest_api_url = str(tunnel_info["api_url"])
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("api tunnel ensure failed name=%s: %s", name, exc)
+                tunnel_info = {"ok": False, "error": str(exc)}
+
+        # Host-mode OpenCode runs on agent host — use body URL or agent platform URL.
+        host_api_url = (body.everflow_api_url or agent_platform_url).rstrip("/")
+        command = body.everflow_mcp_command or "everflow-mcp"
+
+        if guest:
+            mcp_status = await write_everflow_mcp_guest(
+                backend,
+                name,
+                api_url=guest_api_url,
+                token=body.everflow_token,
+                project_id=body.everflow_project_id,
+                command=command,
+            )
+        elif host_ws is not None:
+            mcp_status = write_everflow_mcp_host(
+                host_ws,
+                api_url=host_api_url,
+                token=body.everflow_token,
+                project_id=body.everflow_project_id,
+                command=command,
+            )
+        if mcp_status is not None and tunnel_info is not None:
+            mcp_status = {**mcp_status, "tunnel": tunnel_info}
+        # Config changed — force OpenCode restart so it reloads MCP servers.
+        if mcp_status and mcp_status.get("configured"):
+            force = True
 
     try:
         # Host path available → run OpenCode as host process against workspace
         if workspace and not workspace.startswith("named:") and workspace != "(guest-only)":
             ws_path = Path(workspace)
             if ws_path.is_dir():
+                await _configure_everflow_mcp(guest=False, host_ws=ws_path)
                 status_dict = await mgr.ensure_host(name, str(ws_path), force_restart=force)
-                return OpenCodeEnsureResponse(**status_dict)
+                resp = OpenCodeEnsureResponse(**status_dict)
+                resp.everflow_mcp = mcp_status
+                return resp
 
-        # Guest-only: start inside VM (proxy may be limited)
+        # Guest-only microVM: write MCP into guest FS + reverse tunnel
+        await _configure_everflow_mcp(guest=True, host_ws=_host_workspace_path(rec))
+        # Also mirror to host path if present (best-effort)
+        host_ws = _host_workspace_path(rec)
+        if host_ws is not None and host_ws.is_dir() and body and body.everflow_token:
+            try:
+                write_everflow_mcp_host(
+                    host_ws,
+                    api_url=(body.everflow_api_url or cfg.platform_api_url or "").rstrip("/"),
+                    token=body.everflow_token,
+                    project_id=body.everflow_project_id or "",
+                    command=body.everflow_mcp_command or "everflow-mcp",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("host mirror mcp write ignored: %s", exc)
+
         status_dict = await mgr.ensure_guest_via_exec(
             name,
             exec_fn=backend.exec,
             workspace_guest="/workspace",
+            force_restart=force,
         )
-        return OpenCodeEnsureResponse(**status_dict)
+        resp = OpenCodeEnsureResponse(**status_dict)
+        resp.everflow_mcp = mcp_status
+        return resp
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found") from None
+
+
+def _host_workspace_path(rec: Any) -> Path | None:
+    """Return a host-accessible workspace Path, or None for guest-only sandboxes."""
+    workspace = getattr(rec, "workspace_path", None) or ""
+    if not workspace or workspace.startswith("named:") or workspace == "(guest-only)":
+        return None
+    ws_path = Path(workspace)
+    if not ws_path.is_dir():
+        return None
+    return ws_path
+
+
+@router.get(
+    "/v1/sandboxes/{name}/harness/opencode",
+    response_model=OpenCodeHarnessResponse,
+    dependencies=[Depends(require_agent_token)],
+)
+async def get_opencode_harness(
+    name: str,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> OpenCodeHarnessResponse:
+    """Read OpenCode agents/skills/MCP pack from the sandbox workspace."""
+    rec = await _require_running_sandbox(name, backend)
+    ws = _host_workspace_path(rec)
+    if ws is not None:
+        pack = read_pack_from_workspace(ws)
+    else:
+        # Named volume / guest-only: scan via backend list_fs + read_fs
+        pack = await read_pack_via_backend(backend, name)
+    return OpenCodeHarnessResponse(
+        sandbox_name=name,
+        agents=list(pack.get("agents") or []),
+        skills=list(pack.get("skills") or []),
+        mcp=dict(pack.get("mcp") or {}),
+        manifest=dict(pack.get("manifest") or {}),
+        opencode_json=dict(pack.get("opencode_json") or {}),
+    )
+
+
+@router.put(
+    "/v1/sandboxes/{name}/harness/opencode",
+    response_model=OpenCodeHarnessResponse,
+    dependencies=[Depends(require_agent_token)],
+)
+async def put_opencode_harness(
+    name: str,
+    body: OpenCodeHarnessPack,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> OpenCodeHarnessResponse:
+    """Write/merge OpenCode agents, skills, and MCP into the sandbox workspace."""
+    rec = await _require_running_sandbox(name, backend)
+    ws = _host_workspace_path(rec)
+    payload = body.model_dump(exclude_none=True)
+    try:
+        if ws is not None:
+            pack = apply_pack_to_workspace(ws, payload)
+        else:
+            pack = await apply_pack_via_backend(backend, name, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Guest harness write failed: {exc}",
+        ) from exc
+    except OSError as exc:
+        # Includes microsandbox FilesystemError (ENOENT when parent dirs missing, etc.)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Guest harness write failed: {exc}",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("put_opencode_harness failed name=%s", name)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Guest harness write failed: {exc}",
+        ) from exc
+    return OpenCodeHarnessResponse(
+        sandbox_name=name,
+        agents=list(pack.get("agents") or []),
+        skills=list(pack.get("skills") or []),
+        mcp=dict(pack.get("mcp") or {}),
+        manifest=dict(pack.get("manifest") or {}),
+        opencode_json=dict(pack.get("opencode_json") or {}),
+        written=pack.get("written"),
+    )
 
 
 @router.api_route(
