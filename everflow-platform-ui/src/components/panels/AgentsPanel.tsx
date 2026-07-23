@@ -52,7 +52,7 @@ const emptyAgentForm = (): AgentDefinition => ({
   desc: '',
   prompt: '',
   systemPrompt: '',
-  mode: 'subagent',
+  mode: 'all',
   model: '',
   modelsPreferred: [],
   permission: {
@@ -380,7 +380,8 @@ export function AgentsPanel() {
       })
       setPack(res)
 
-      // Restart OpenCode so markdown agents are discovered
+      // Restart OpenCode so markdown agents are discovered; only notify Chat after ensure succeeds
+      let ensured = false
       try {
         await ensureOpenCode(projectId, true)
         const agents = await listAgents(projectId).catch(() => [])
@@ -391,13 +392,16 @@ export function AgentsPanel() {
             description: a.description,
           })),
         )
+        ensured = true
       } catch {
-        /* ensure optional */
+        /* ensure failed — pack is saved but Chat refresh waits for a successful ensure */
       }
 
       pushToast(`Agent “${slug}” synced to OpenCode`, { kind: 'success' })
       setAgentOpen(false)
-      window.dispatchEvent(new CustomEvent('everflow:harness-updated', { detail: { projectId } }))
+      if (ensured) {
+        window.dispatchEvent(new CustomEvent('everflow:harness-updated', { detail: { projectId } }))
+      }
     } catch (e) {
       pushToast(e instanceof Error ? e.message : 'Failed to save agent', { kind: 'danger' })
     } finally {
@@ -813,7 +817,7 @@ export function AgentsPanel() {
         <FormGroup label="Mode" fieldId="ag-mode">
           <FormSelect
             id="ag-mode"
-            value={form.mode || 'subagent'}
+            value={form.mode || 'all'}
             onChange={(_e, v) => setForm((f) => ({ ...f, mode: v as AgentMode }))}
           >
             <FormSelectOption value="primary" label="primary (Tab-switchable main agent)" />

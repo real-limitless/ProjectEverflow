@@ -445,7 +445,7 @@ export function normalizeMessageList(data: unknown): OcMessageBundle[] {
 
 /** UI placeholders — must NOT count as a real model reply (would stop polling early). */
 const REPLY_PLACEHOLDER_RE =
-  /^_?(Thinking|Generating response|No response content|Working)[.…_]*_?$/i
+  /^_?(Thinking|Generating response|No response content|Working(?: on it)?)[.…_]*_?$/i
 
 function isReplyPlaceholder(text: string | undefined): boolean {
   const t = (text || '').trim()

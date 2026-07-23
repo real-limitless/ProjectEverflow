@@ -16,6 +16,9 @@ from app.models.sandbox_token import TOKEN_PREFIX, SandboxAccessToken
 DEFAULT_SCOPES = [
     "knowledge:rw",
     "agents:rw",
+    "tests:rw",
+    "http_tools:rw",
+    "deploy:rw",
     "project:read",
 ]
 

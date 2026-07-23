@@ -59,6 +59,30 @@ services:
       retries: 8
       start_period: 40s
 
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-everflow-dev-searxng-change-me}
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:Z,ro
+      - ./deploy/searxng/limiter.toml:/etc/searxng/limiter.toml:Z,ro
+    expose:
+      - "8080"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://127.0.0.1:8080/healthz",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   backend:
     build:
       context: .
@@ -81,6 +105,7 @@ services:
       PREVIEW_BASE_DOMAIN: ${PREVIEW_BASE_DOMAIN:-preview.localhost:8000}
       PREVIEW_PUBLIC_SCHEME: ${PREVIEW_PUBLIC_SCHEME:-http}
       PREVIEW_TICKET_TTL_SECONDS: ${PREVIEW_TICKET_TTL_SECONDS:-1200}
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
       UVICORN_RELOAD: "true"
     volumes:
       - everflow_db:/data
@@ -93,6 +118,8 @@ services:
     depends_on:
       sandbox-agent:
         condition: service_healthy
+      searxng:
+        condition: service_started
     healthcheck:
       test:
         [

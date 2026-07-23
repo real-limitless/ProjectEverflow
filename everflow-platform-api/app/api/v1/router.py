@@ -4,17 +4,23 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     agents,
+    deploy,
+    deploy_runs,
     harness,
     health,
+    http_tools,
+    jobs,
     knowledge,
     opencode,
     orgs,
     preview,
+    project_database,
     projects,
     providers,
     sandbox,
     sandbox_shell,
     sandbox_tokens,
+    tests,
     workflows,
 )
 from app.auth.oauth import build_github_client, build_google_client
@@ -29,11 +35,17 @@ api_router.include_router(orgs.router)
 api_router.include_router(projects.router)
 api_router.include_router(knowledge.router)
 api_router.include_router(agents.router)
+api_router.include_router(tests.router)
+api_router.include_router(http_tools.router)
+api_router.include_router(deploy.router)
 api_router.include_router(workflows.router)
 api_router.include_router(sandbox_tokens.router)
 api_router.include_router(providers.router)
 api_router.include_router(sandbox.router)
 api_router.include_router(sandbox_shell.router)
+api_router.include_router(jobs.router)
+api_router.include_router(deploy_runs.router)
+api_router.include_router(project_database.router)
 api_router.include_router(opencode.router)
 api_router.include_router(harness.router)
 api_router.include_router(preview.router)

@@ -1,6 +1,7 @@
 export const PANEL_TYPES = [
   'chat',
   'preview',
+  'desktop',
   'knowledge',
   'code',
   'repository',

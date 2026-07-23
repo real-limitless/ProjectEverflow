@@ -1,0 +1,24 @@
+# Traefik static config (file provider + Docker optional).
+# Mount this as /etc/traefik/traefik.yml inside the Traefik container.
+
+api:
+  dashboard: true
+  insecure: true  # MVP only — put behind auth / disable in production
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  file:
+    directory: /etc/everflow/dynamic
+    watch: true
+  # Optional: docker provider for label-based discovery on the same host
+  # docker:
+  #   endpoint: "unix:///var/run/docker.sock"
+  #   exposedByDefault: false
+
+log:
+  level: INFO

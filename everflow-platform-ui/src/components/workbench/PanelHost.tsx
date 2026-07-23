@@ -5,6 +5,7 @@ import { ChatPanel } from '@/components/panels/ChatPanel'
 import { CodePanel } from '@/components/panels/CodePanel'
 import { DatabasePanel } from '@/components/panels/DatabasePanel'
 import { DeployPanel } from '@/components/panels/DeployPanel'
+import { DesktopPanel } from '@/components/panels/DesktopPanel'
 import { EnvPanel } from '@/components/panels/EnvPanel'
 import { JobsPanel } from '@/components/panels/JobsPanel'
 import { KnowledgePanel } from '@/components/panels/KnowledgePanel'
@@ -37,6 +38,7 @@ export function PanelHost({ panelKey }: PanelHostProps) {
     >
       {type === 'chat' && <ChatPanel panelKey={panelKey} />}
       {type === 'preview' && <PreviewPanel />}
+      {type === 'desktop' && <DesktopPanel />}
       {type === 'knowledge' && <KnowledgePanel />}
       {type === 'code' && <CodePanel panelKey={panelKey} />}
       {type === 'repository' && <RepositoryPanel />}

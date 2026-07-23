@@ -23,6 +23,9 @@ harness_present() {
     agent-opencode|opencode)
       command -v opencode >/dev/null 2>&1
       ;;
+    db-postgres|postgres)
+      command -v psql >/dev/null 2>&1 && [ -f "$MARKER_DIR/database.json" ]
+      ;;
     *)
       # unknown harness: not "present"
       return 1
@@ -123,6 +126,45 @@ EOF
   echo "agent-opencode" >>"$MARKER_DIR/bootstrapped"
 }
 
+install_db_postgres() {
+  # Prefer companion script when present (copied alongside this file in guest).
+  self_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || echo "")
+  companion=""
+  for candidate in \
+    "${self_dir}/install_db_postgres.sh" \
+    "/tmp/install_db_postgres.sh" \
+    "$MARKER_DIR/install_db_postgres.sh"
+  do
+    if [ -f "$candidate" ]; then
+      companion="$candidate"
+      break
+    fi
+  done
+  if [ -n "$companion" ]; then
+    sh "$companion"
+    return 0
+  fi
+  # Inline fallback if companion script was not copied into the guest.
+  if ! command -v psql >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq
+      apt-get install -y -qq postgresql-client || true
+    fi
+  fi
+  if [ ! -f "$MARKER_DIR/database.json" ]; then
+    cat >"$MARKER_DIR/database.json" <<'EOF'
+{
+  "engine": "postgres",
+  "database_url": "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+  "status": "not_provisioned",
+  "message": "Set DATABASE_URL in the sandbox env, update database_url below, or start Postgres (e.g. docker) then re-check status."
+}
+EOF
+  fi
+  echo "db-postgres" >>"$MARKER_DIR/bootstrapped"
+}
+
 for h in "$@"; do
   case "$h" in
     agent-claude-code|claude-code|claude)
@@ -130,6 +172,9 @@ for h in "$@"; do
       ;;
     agent-opencode|opencode)
       install_opencode
+      ;;
+    db-postgres|postgres)
+      install_db_postgres
       ;;
     *)
       echo "unknown harness: $h" >&2

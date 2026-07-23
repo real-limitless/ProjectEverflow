@@ -152,6 +152,16 @@ async def test_sandbox_lifecycle(client: AsyncClient) -> None:
     assert get_file.status_code == 200
     assert "print" in get_file.text
 
+    missing = await client.get(
+        "/v1/sandboxes/ef-test-proj/fs/content",
+        headers=HEADERS,
+        params={"path": ".everflow/database.json"},
+    )
+    assert missing.status_code == 404, missing.text
+    detail = missing.json().get("detail", "")
+    assert "not found" in detail.lower()
+    assert ".everflow/database.json" in detail
+
     listing = await client.get(
         "/v1/sandboxes/ef-test-proj/fs",
         headers=HEADERS,

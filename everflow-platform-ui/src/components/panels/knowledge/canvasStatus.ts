@@ -73,7 +73,23 @@ export function sidebarMetaLine(
 
 export function knowledgeActionLabel(status: EmbedStatus): string {
   if (status === 'indexed') return 'Re-index'
-  if (status === 'stale') return 'Update chatbot knowledge'
-  if (isPipelineBusy(status)) return 'Preparing…'
-  return 'Add to chatbot knowledge'
+  if (status === 'stale') return 'Update'
+  return 'Index'
+}
+
+export function statusToneColor(
+  tone: StatusTone,
+): 'green' | 'blue' | 'orange' | 'red' | 'grey' {
+  switch (tone) {
+    case 'ok':
+      return 'green'
+    case 'warn':
+      return 'orange'
+    case 'info':
+      return 'blue'
+    case 'danger':
+      return 'red'
+    default:
+      return 'grey'
+  }
 }

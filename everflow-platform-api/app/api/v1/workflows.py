@@ -571,6 +571,23 @@ async def execute_workflow(
     bindings = {str(k): str(v) for k, v in bindings_raw.items()}
     mocks = dict(body.mocks or {})
 
+    # Live execute: gate on preflight (dry-run may proceed without credentials)
+    if not body.dry_run:
+        report = preflight_workflow(
+            doc,
+            credential_bindings=bindings_raw,
+            available_credential_keys=set(stored.keys()),
+            available_by_type={k for k in stored if ":" not in k and len(k) < 64},
+        )
+        if not report.get("ok"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": "Workflow preflight failed",
+                    "preflight": report,
+                },
+            )
+
     # Dry-run: capture email + allow missing live services
     # Live: only capture when SMTP not configured
     if body.dry_run:

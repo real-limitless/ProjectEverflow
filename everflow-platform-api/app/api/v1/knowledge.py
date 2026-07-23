@@ -1,11 +1,16 @@
-"""Project-scoped knowledge canvas CRUD."""
+"""Project-scoped knowledge canvas CRUD + web search."""
 
+from __future__ import annotations
+
+from hashlib import sha1
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings, get_settings
 from app.core.principal import Principal, get_principal, get_project_for_principal
 from app.db.session import get_async_session
 from app.models.knowledge import KnowledgeCanvas
@@ -15,9 +20,70 @@ from app.schemas.knowledge import (
     KnowledgeCanvasRead,
     KnowledgeCanvasSummary,
     KnowledgeCanvasUpdate,
+    WebSearchHit,
 )
 
 router = APIRouter(tags=["knowledge"])
+
+
+async def _searxng_web_search(base_url: str, q: str) -> list[WebSearchHit]:
+    """Call SearXNG JSON search; raise HTTPException 503 if unavailable."""
+    root = (base_url or "").rstrip("/")
+    if not root:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Web search unavailable: SEARXNG_URL is not configured",
+        )
+    url = f"{root}/search"
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(url, params={"q": q, "format": "json"})
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Web search unavailable: cannot reach SearXNG ({exc})",
+        ) from exc
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Web search unavailable: SearXNG returned HTTP {resp.status_code}",
+        )
+
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Web search unavailable: SearXNG returned invalid JSON",
+        ) from exc
+
+    raw_results = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(raw_results, list):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Web search unavailable: unexpected SearXNG response",
+        )
+
+    hits: list[WebSearchHit] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        link = str(item.get("url") or "").strip()
+        snippet = str(item.get("content") or item.get("snippet") or "").strip()
+        if not title and not link:
+            continue
+        hit_id = sha1(f"{link}\0{title}".encode("utf-8")).hexdigest()[:16]
+        hits.append(
+            WebSearchHit(
+                id=hit_id,
+                title=title or link,
+                url=link,
+                snippet=snippet,
+            )
+        )
+    return hits
 
 
 async def _get_canvas_for_project(
@@ -35,6 +101,21 @@ async def _get_canvas_for_project(
     if canvas is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Canvas not found")
     return canvas
+
+
+@router.get(
+    "/projects/{project_id}/knowledge/web-search",
+    response_model=list[WebSearchHit],
+)
+async def knowledge_web_search(
+    q: str = Query(..., min_length=1, max_length=500),
+    _project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
+    settings: Settings = Depends(get_settings),
+) -> list[WebSearchHit]:
+    """Proxy web search via SearXNG for the knowledge panel."""
+    principal.require_scope("knowledge:read")
+    return await _searxng_web_search(settings.searxng_url, q.strip())
 
 
 @router.get(

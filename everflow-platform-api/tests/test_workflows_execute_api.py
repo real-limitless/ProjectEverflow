@@ -50,6 +50,8 @@ async def test_execute_stock_agent_via_api(
         headers=auth_headers,
         json={
             "trigger": "manual",
+            # dry_run skips preflight credential gate (live execute requires bindings)
+            "dry_run": True,
             "mocks": {
                 "ftp_files": {
                     "/home/chen/Portfolio_Positions.csv": portfolio_csv,

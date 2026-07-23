@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Label, Spinner } from '@patternfly/react-core'
+import { Button, Spinner } from '@patternfly/react-core'
 import { getProject } from '@/data/projects'
 import {
   ApiError,
@@ -28,15 +28,6 @@ function newSessionMeta(index: number, cmd?: string): SessionMeta {
     name: cmd ? cmd.split(/\s+/)[0] || `shell-${index + 1}` : index === 0 ? 'shell' : `shell-${index + 1}`,
     cmd,
   }
-}
-
-const STATUS_COLOR: Record<string, 'blue' | 'green' | 'orange' | 'red' | 'grey' | 'purple'> = {
-  pending: 'blue',
-  creating: 'purple',
-  running: 'green',
-  stopped: 'grey',
-  error: 'red',
-  destroyed: 'grey',
 }
 
 /**
@@ -196,22 +187,6 @@ export function TerminalPanel() {
           {sessions.length} session{sessions.length === 1 ? '' : 's'}
           {wsStatus ? ` · ${wsStatus}` : ''}
         </span>
-        {isApiProject ? (
-          <Label
-            color={STATUS_COLOR[status] || 'grey'}
-            isCompact
-            title={p?.sandboxError || status}
-          >
-            {status}
-          </Label>
-        ) : (
-          <Label color="grey" isCompact>
-            local demo
-          </Label>
-        )}
-        <Label color={useInteractive && sandboxReady ? 'green' : 'grey'} isCompact>
-          {useInteractive && sandboxReady ? 'pty' : useInteractive ? 'wait' : 'line'}
-        </Label>
         <Button variant="link" size="sm" onClick={clearActive}>
           Clear
         </Button>

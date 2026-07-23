@@ -1,0 +1,50 @@
+# Sample Traefik + everflow-edge on a deploy host.
+# Install sketch: scripts/everflow-edge-install.sh copies this under /opt/everflow-edge.
+#
+# Usage:
+#   mkdir -p /etc/everflow/dynamic
+#   cp dynamic/routes.yml.example /etc/everflow/dynamic/routes.yml
+#   docker compose up -d
+
+services:
+  traefik:
+    image: traefik:v3.3
+    container_name: everflow-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # dashboard (MVP insecure)
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - /etc/everflow/dynamic:/etc/everflow/dynamic:ro
+      # Uncomment for Docker label provider:
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - everflow
+
+  edge:
+    image: python:3.12-slim
+    container_name: everflow-edge
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      EVERFLOW_EDGE_HOST: "0.0.0.0"
+      EVERFLOW_EDGE_PORT: "9100"
+      EVERFLOW_EDGE_TAGS: "docker,traefik"
+    volumes:
+      - ../:/app:ro
+    command: ["sh", "-c", "pip install -q fastapi 'uvicorn[standard]' && python -m uvicorn app.main:app --host 0.0.0.0 --port 9100"]
+    ports:
+      - "9100:9100"
+    networks:
+      - everflow
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.everflow-edge.rule=Host(`edge.localhost`)"
+      - "traefik.http.routers.everflow-edge.entrypoints=web"
+      - "traefik.http.services.everflow-edge.loadbalancer.server.port=9100"
+
+networks:
+  everflow:
+    name: everflow

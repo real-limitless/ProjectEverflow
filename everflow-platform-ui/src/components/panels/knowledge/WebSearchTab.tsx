@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Button, TextInput } from '@patternfly/react-core'
 import { EmptySplash } from '@/components/studio/EmptySplash'
+import { ApiError, searchKnowledgeWeb } from '@/lib/api'
 import { pushToast } from '@/lib/studioToast'
 import { useStudioDemoStore } from '@/store/studioDemoStore'
 import type { WebSearchHit } from '@/types/studio'
-import { DEMO_SEARCH } from './demoKnowledge'
 import { ReaderMode } from './ReaderMode'
 
 interface WebSearchTabProps {
@@ -18,25 +18,37 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
   const [searchQ, setSearchQ] = useState('')
   const [hits, setHits] = useState<WebSearchHit[]>([])
   const [readerId, setReaderId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const reader = hits.find((h) => h.id === readerId) ?? null
 
-  const runSearch = () => {
-    const q = searchQ.trim().toLowerCase()
+  const runSearch = async () => {
+    const q = searchQ.trim()
     if (!q) {
       setHits([])
+      setError(null)
       setReaderId(null)
       return
     }
-    const filtered = DEMO_SEARCH.filter(
-      (h) =>
-        h.title.toLowerCase().includes(q) ||
-        h.snippet.toLowerCase().includes(q) ||
-        h.url.toLowerCase().includes(q) ||
-        q.split(/\s+/).some((w) => w.length > 2 && h.snippet.toLowerCase().includes(w)),
-    )
-    setHits(filtered.length ? filtered : DEMO_SEARCH)
+    setLoading(true)
+    setError(null)
     setReaderId(null)
+    try {
+      const results = await searchKnowledgeWeb(projectId, q)
+      setHits(results)
+    } catch (e) {
+      setHits([])
+      setError(
+        e instanceof ApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : 'Web search failed',
+      )
+    } finally {
+      setLoading(false)
+    }
   }
 
   const addToKnowledge = (hit: WebSearchHit) => {
@@ -79,22 +91,30 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
         <TextInput
           value={searchQ}
           onChange={(_e, v) => setSearchQ(v)}
-          placeholder="Search the web (demo results)…"
+          placeholder="Search the web…"
           onKeyDown={(e) => {
-            if (e.key === 'Enter') runSearch()
+            if (e.key === 'Enter') void runSearch()
           }}
           aria-label="Web search query"
+          isDisabled={loading}
         />
-        <Button variant="primary" onClick={runSearch}>
+        <Button variant="primary" onClick={() => void runSearch()} isLoading={loading}>
           Search
         </Button>
       </div>
-      {hits.length === 0 ? (
+      {error ? (
+        <div className="lc-meta" role="alert" style={{ marginBottom: 12, color: 'var(--pf-t--global--text--color--status--danger--default, #c9190b)' }}>
+          {error}
+        </div>
+      ) : null}
+      {!loading && hits.length === 0 && !error ? (
         <EmptySplash
           title="Web search"
           body="Run a query, open a hit in Reader mode (clean Markdown, no ads), then summarize, research, or pin it to Knowledge for the main chatbot."
         />
-      ) : (
+      ) : null}
+      {loading ? <div className="lc-meta">Searching…</div> : null}
+      {!loading &&
         hits.map((h) => (
           <div className="list-card" key={h.id}>
             <div className="lc-title">{h.title}</div>
@@ -118,8 +138,7 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
               </Button>
             </div>
           </div>
-        ))
-      )}
+        ))}
     </div>
   )
 }

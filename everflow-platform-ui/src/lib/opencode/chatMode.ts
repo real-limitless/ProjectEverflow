@@ -72,3 +72,21 @@ export function modePolicyHint(mode: ChatMode): string {
       return ''
   }
 }
+
+/**
+ * Best-effort per-prompt MCP filter for OpenCode `tools` map.
+ * Unchecked servers are denied via `{server}_*` wildcards (same pattern as
+ * agent harness permissions). Checked servers inherit agent/harness allow rules.
+ */
+export function mcpToolsDenyMap(
+  liveMcpIds: string[],
+  enabledMcpIds: string[],
+): Record<string, boolean> {
+  const enabled = new Set(enabledMcpIds)
+  const out: Record<string, boolean> = {}
+  for (const id of liveMcpIds) {
+    if (!id || enabled.has(id)) continue
+    out[`${id}_*`] = false
+  }
+  return out
+}

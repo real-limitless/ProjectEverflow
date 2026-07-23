@@ -70,12 +70,38 @@ const PALETTE: { kind: WfNodeKind; label: string; n8nType: string }[] = [
   { kind: 'trigger', label: 'Schedule', n8nType: 'n8n-nodes-base.scheduleTrigger' },
   { kind: 'http', label: 'FTP', n8nType: 'n8n-nodes-base.ftp' },
   { kind: 'code', label: 'Code', n8nType: 'n8n-nodes-base.code' },
+  { kind: 'transform', label: 'Set', n8nType: 'n8n-nodes-base.set' },
+  { kind: 'transform', label: 'Split Out', n8nType: 'n8n-nodes-base.splitOut' },
+  { kind: 'logic', label: 'Split In Batches', n8nType: 'n8n-nodes-base.splitInBatches' },
   { kind: 'condition', label: 'If', n8nType: 'n8n-nodes-base.if' },
   { kind: 'condition', label: 'Filter', n8nType: 'n8n-nodes-base.filter' },
-  { kind: 'llm', label: 'AI Agent', n8nType: '@n8n/n8n-nodes-langchain.agent' },
+  { kind: 'ai', label: 'AI Agent', n8nType: '@n8n/n8n-nodes-langchain.agent' },
+  { kind: 'ai', label: 'OpenAI Chat Model', n8nType: '@n8n/n8n-nodes-langchain.lmChatOpenAi' },
+  { kind: 'ai', label: 'MCP Client Tool', n8nType: '@n8n/n8n-nodes-langchain.mcpClientTool' },
   { kind: 'notify', label: 'Email', n8nType: 'n8n-nodes-base.emailSend' },
   { kind: 'http', label: 'Data Table', n8nType: 'n8n-nodes-base.dataTable' },
 ]
+
+function connectionTypeFromHandles(connection: Connection): string {
+  const th = connection.targetHandle || ''
+  const sh = connection.sourceHandle || ''
+  if (th.startsWith('ai_')) return th.split(':')[0] || th
+  if (sh.startsWith('ai_')) return sh.split(':')[0] || 'main'
+  return 'main'
+}
+
+function edgeVisuals(connectionType: string): Partial<Edge> {
+  const isAi = connectionType !== 'main'
+  return {
+    className: isAi ? 'wf-edge-ai' : 'wf-edge-main',
+    animated: isAi,
+    style: isAi
+      ? { stroke: 'var(--pf-t--global--color--purple--300, #a18fff)', strokeDasharray: '4 3' }
+      : undefined,
+    label: isAi ? connectionType.replace('ai_', '') : undefined,
+    labelStyle: isAi ? { fontSize: 9, fill: '#888' } : undefined,
+  }
+}
 
 const MULTI_OUTPUT: Record<string, { id: string; label: string }[]> = {
   'n8n-nodes-base.if': [
@@ -517,6 +543,7 @@ export function WorkflowsPanel() {
             (edge.data as { connectionType?: string } | undefined)?.connectionType || 'main',
           ),
           sourceHandle: edge.sourceHandle ?? undefined,
+          targetHandle: edge.targetHandle ?? undefined,
         }))
         if (!isApi) {
           setWorkflowGraph(projectId, wf.id, mappedNodes, mappedEdges)
@@ -576,13 +603,14 @@ export function WorkflowsPanel() {
 
   const onConnect = useCallback(
     (connection: Connection) => {
+      const connectionType = connectionTypeFromHandles(connection)
       setEdges((eds) => {
         const next = addEdge(
           {
             ...connection,
             markerEnd: { type: MarkerType.ArrowClosed },
-            className: 'wf-edge-main',
-            data: { connectionType: 'main' },
+            ...edgeVisuals(connectionType),
+            data: { connectionType },
           },
           eds,
         )
@@ -636,6 +664,7 @@ export function WorkflowsPanel() {
                 (edge.data as { connectionType?: string } | undefined)?.connectionType || 'main',
               ),
               sourceHandle: edge.sourceHandle ?? undefined,
+              targetHandle: edge.targetHandle ?? undefined,
             })),
             {
               name: wf.name,
@@ -682,6 +711,43 @@ export function WorkflowsPanel() {
       return next
     })
   }
+
+  const patchSelectedParameters = (patch: Record<string, unknown>) => {
+    if (!selectedId) return
+    setNodes((ns) => {
+      const next = ns.map((n) => {
+        if (n.id !== selectedId) return n
+        const prev = (n.data.parameters || {}) as Record<string, unknown>
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            parameters: { ...prev, ...patch },
+          },
+        }
+      })
+      persist(next, edgesRef.current)
+      return next
+    })
+  }
+
+  const selectedN8n = String(selected?.data.n8nType || '')
+  const selectedParams = (selected?.data.parameters || {}) as Record<string, unknown>
+  const selectedOptions =
+    selectedParams.options && typeof selectedParams.options === 'object'
+      ? (selectedParams.options as Record<string, unknown>)
+      : {}
+  const selectedModelRaw = selectedParams.model
+  const selectedModel =
+    typeof selectedModelRaw === 'string'
+      ? selectedModelRaw
+      : selectedModelRaw && typeof selectedModelRaw === 'object'
+        ? String(
+            (selectedModelRaw as { value?: unknown; cachedResultName?: unknown }).value ??
+              (selectedModelRaw as { cachedResultName?: unknown }).cachedResultName ??
+              '',
+          )
+        : ''
 
   const pollRunUntilDone = async (runId: string) => {
     setActiveRunId(runId)
@@ -1166,6 +1232,65 @@ export function WorkflowsPanel() {
                   <div>Retry on fail (max {selected.data.maxTries ?? '?'})</div>
                 )}
               </div>
+              {selectedN8n.includes('agent') && (
+                <>
+                  <FormGroup label="Prompt" fieldId="wf-agent-prompt" style={{ marginTop: 8 }}>
+                    <TextArea
+                      id="wf-agent-prompt"
+                      rows={4}
+                      resizeOrientation="vertical"
+                      value={String(selectedParams.text ?? '')}
+                      onChange={(_e, v) => patchSelectedParameters({ text: v })}
+                    />
+                  </FormGroup>
+                  <FormGroup label="System message" fieldId="wf-agent-sys" style={{ marginTop: 8 }}>
+                    <TextArea
+                      id="wf-agent-sys"
+                      rows={3}
+                      resizeOrientation="vertical"
+                      value={String(selectedOptions.systemMessage ?? '')}
+                      onChange={(_e, v) =>
+                        patchSelectedParameters({
+                          options: { ...selectedOptions, systemMessage: v },
+                        })
+                      }
+                    />
+                  </FormGroup>
+                </>
+              )}
+              {selectedN8n.includes('lmChatOpenAi') && (
+                <FormGroup label="Model" fieldId="wf-lm-model" style={{ marginTop: 8 }}>
+                  <TextInput
+                    id="wf-lm-model"
+                    value={selectedModel}
+                    onChange={(_e, v) => {
+                      const prev = selectedParams.model
+                      if (prev && typeof prev === 'object') {
+                        patchSelectedParameters({
+                          model: {
+                            ...(prev as Record<string, unknown>),
+                            value: v,
+                            cachedResultName: v,
+                          },
+                        })
+                      } else {
+                        patchSelectedParameters({
+                          model: { __rl: true, mode: 'list', value: v, cachedResultName: v },
+                        })
+                      }
+                    }}
+                  />
+                </FormGroup>
+              )}
+              {(selectedN8n.includes('mcpClientTool') || selectedN8n.includes('mcpClient')) && (
+                <FormGroup label="Endpoint URL" fieldId="wf-mcp-url" style={{ marginTop: 8 }}>
+                  <TextInput
+                    id="wf-mcp-url"
+                    value={String(selectedParams.endpointUrl ?? '')}
+                    onChange={(_e, v) => patchSelectedParameters({ endpointUrl: v })}
+                  />
+                </FormGroup>
+              )}
               {selected.data.credentials && (
                 <div className="lc-meta" style={{ marginTop: 8 }}>
                   <strong>Credentials</strong>

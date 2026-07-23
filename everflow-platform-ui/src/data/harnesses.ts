@@ -57,7 +57,8 @@ export const HARNESS_CATALOG: HarnessDef[] = [
   {
     id: 'db-postgres',
     name: 'Postgres harness',
-    description: 'Managed Postgres for the Database panel and migrations.',
+    description:
+      'Installs psql and .everflow/database.json for the Database panel. Point DATABASE_URL at a reachable Postgres.',
     category: 'data',
   },
 ]
@@ -85,6 +86,27 @@ export function enabledHarnessIds(
 ): string[] {
   if (!harnesses?.length) return []
   return harnesses.filter((h) => h.enabled).map((h) => h.id)
+}
+
+/** Normalize API harness payload (ids or objects) into project harness rows. */
+export function harnessesFromApi(
+  raw: Array<string | { id: string; label?: string; enabled?: boolean }> | null | undefined,
+): { id: string; label: string; enabled: boolean }[] {
+  if (!raw?.length) return []
+  const ids: string[] = []
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      if (item.trim()) ids.push(item.trim())
+      continue
+    }
+    if (item?.enabled === false) continue
+    if (item?.id?.trim()) ids.push(item.id.trim())
+  }
+  return harnessesFromIds(listUnique(ids))
+}
+
+function listUnique(ids: string[]): string[] {
+  return [...new Set(ids)]
 }
 
 /** Shell command to launch a harness CLI inside the sandbox. */

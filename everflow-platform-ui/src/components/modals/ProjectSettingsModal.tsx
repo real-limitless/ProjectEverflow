@@ -27,6 +27,8 @@ import { enabledHarnessIds, harnessesFromIds } from '@/data/harnesses'
 import { getProject } from '@/data/projects'
 import { ProvidersManager } from '@/components/providers/ProvidersManager'
 import { HarnessPicker } from '@/components/project-settings/HarnessPicker'
+import { updateProject as apiUpdateProject, isDemoMode } from '@/lib/api'
+import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import type {
   ProjectEnvironment,
@@ -67,6 +69,8 @@ export function ProjectSettingsModal() {
   const [tab, setTab] = useState<SettingsTab>('general')
   const [draft, setDraft] = useState<SettingsDraft | null>(null)
   const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [initialHarnessIds, setInitialHarnessIds] = useState<string[]>([])
 
   // Reset draft whenever the modal opens or target project changes
   useEffect(() => {
@@ -74,11 +78,15 @@ export function ProjectSettingsModal() {
       setDraft(null)
       setError('')
       setTab('general')
+      setSaving(false)
       return
     }
-    setDraft(draftFromProject(projectId))
+    const next = draftFromProject(projectId)
+    setDraft(next)
+    setInitialHarnessIds(next?.harnessIds ? [...next.harnessIds] : [])
     setError('')
     setTab('general')
+    setSaving(false)
   }, [isOpen, projectId])
 
   const project = projectId ? getProject(projectId) : undefined
@@ -92,7 +100,7 @@ export function ProjectSettingsModal() {
     if (error) setError('')
   }
 
-  const onSave = () => {
+  const onSave = async () => {
     if (!projectId || !draft) return
     const name = draft.name.trim()
     if (!name) {
@@ -100,14 +108,72 @@ export function ProjectSettingsModal() {
       setTab('general')
       return
     }
-    const ok = updateProject(projectId, {
+    const harnesses = harnessesFromIds(draft.harnessIds)
+    const harnessesChanged =
+      draft.harnessIds.length !== initialHarnessIds.length ||
+      draft.harnessIds.some((id) => !initialHarnessIds.includes(id)) ||
+      initialHarnessIds.some((id) => !draft.harnessIds.includes(id))
+
+    const localPatch = {
       name,
       description: draft.description.trim(),
       environment: draft.environment,
       visibility: draft.visibility,
       layoutMode: draft.layoutMode,
-      harnesses: harnessesFromIds(draft.harnessIds),
-    })
+      harnesses,
+    }
+
+    const useApi = Boolean(project?.fromApi) && !isDemoMode()
+    if (useApi) {
+      setSaving(true)
+      try {
+        const apiProject = await apiUpdateProject(projectId, {
+          name,
+          description: draft.description.trim() || null,
+          ...(harnessesChanged
+            ? { harnesses: draft.harnessIds, reconfigure_sandbox: true }
+            : { reconfigure_sandbox: false }),
+        })
+        const ok = updateProject(projectId, {
+          ...localPatch,
+          sandboxStatus: apiProject.sandbox_status,
+          sandboxError: apiProject.sandbox_error,
+          sandboxName: apiProject.sandbox_name,
+        })
+        if (!ok) {
+          setError('Could not update project.')
+          setSaving(false)
+          return
+        }
+        usePlaygroundStore.getState().ingestApiProject(apiProject, localPatch)
+        if (harnessesChanged) {
+          const mode = apiProject.sandbox_status === 'pending' ? 'recreate' : 'bootstrap'
+          pushToast(
+            mode === 'recreate'
+              ? 'Sandbox recreating with updated harnesses'
+              : 'Sandbox reconfiguring with updated harnesses',
+            {
+              kind: 'info',
+              description:
+                mode === 'recreate'
+                  ? 'The sandbox will restart to apply removals or a cold start.'
+                  : 'Harness install is running inside the current sandbox.',
+            },
+          )
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Failed to save project'
+        setError(msg)
+        setSaving(false)
+        if (harnessesChanged) setTab('harnesses')
+        return
+      }
+      setSaving(false)
+      close()
+      return
+    }
+
+    const ok = updateProject(projectId, localPatch)
     if (!ok) {
       setError('Could not update project.')
       return
@@ -270,8 +336,9 @@ export function ProjectSettingsModal() {
                   onChange={(harnessIds) => patch({ harnessIds })}
                   lead={
                     <>
-                      Enable the harnesses this project should use. Changes apply when you
-                      save — they are not limited to what you chose at create time.
+                      Enable the harnesses this project should use. Saving applies the
+                      selection to the sandbox (bootstrap for new harnesses, or recreate
+                      when harnesses are removed).
                     </>
                   }
                 />
@@ -330,10 +397,15 @@ export function ProjectSettingsModal() {
         ) : null}
       </ModalBody>
       <ModalFooter>
-        <Button variant="primary" onClick={onSave} isDisabled={!draft}>
+        <Button
+          variant="primary"
+          onClick={() => void onSave()}
+          isDisabled={!draft || saving}
+          isLoading={saving}
+        >
           Save
         </Button>
-        <Button variant="link" onClick={close}>
+        <Button variant="link" onClick={close} isDisabled={saving}>
           Cancel
         </Button>
       </ModalFooter>

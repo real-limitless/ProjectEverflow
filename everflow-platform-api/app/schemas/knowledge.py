@@ -75,3 +75,12 @@ class KnowledgeCanvasSummary(BaseModel):
     created_by: UUID | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class WebSearchHit(BaseModel):
+    """Mapped SearXNG result for knowledge web search."""
+
+    id: str
+    title: str
+    url: str
+    snippet: str

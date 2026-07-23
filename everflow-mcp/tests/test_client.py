@@ -68,3 +68,45 @@ def test_api_error() -> None:
 def test_missing_env() -> None:
     with pytest.raises(EverflowApiError):
         EverflowClient(base_url="", token=TOKEN, project_id=PID)
+
+
+@respx.mock
+def test_list_and_call_http_tool() -> None:
+    tool_id = "55555555-5555-5555-5555-555555555555"
+    respx.get(f"{BASE}/api/v1/projects/{PID}/http-tools").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": tool_id,
+                    "project_id": PID,
+                    "name": "status",
+                    "method": "GET",
+                    "url_template": "https://example.com/health",
+                    "enabled": True,
+                }
+            ],
+        )
+    )
+    respx.post(f"{BASE}/api/v1/projects/{PID}/http-tools/{tool_id}/execute").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "status_code": 200,
+                "url": "https://example.com/health",
+                "method": "GET",
+                "headers": {},
+                "body": "ok",
+                "truncated": False,
+                "error": None,
+                "elapsed_ms": 12,
+            },
+        )
+    )
+    c = _client()
+    tools = c.list_http_tools()
+    assert tools[0]["name"] == "status"
+    result = c.call_http_tool(tool_id)
+    assert result["ok"] is True
+    assert result["status_code"] == 200

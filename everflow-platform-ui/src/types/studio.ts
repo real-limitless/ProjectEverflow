@@ -233,6 +233,10 @@ export interface BackgroundJob {
   status: JobStatus
   progress: string
   schedule?: string
+  /** Detached command (API jobs) */
+  command?: string
+  cwd?: string
+  pid?: number
 }
 
 /** Permission action for OpenCode tools / MCP / skills. */

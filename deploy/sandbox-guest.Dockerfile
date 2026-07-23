@@ -35,12 +35,24 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PATH="/usr/local/bin:${PATH}"
 
+ARG NOVNC_VERSION=1.5.0
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         git \
         bash \
+        procps \
+        # Lean noVNC webtop (HTTP + websockify on :6080); avoid apt novnc (pulls nodejs)
+        xvfb \
+        openbox \
+        x11vnc \
+        websockify \
+    && curl -fsSL "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VERSION}.tar.gz" \
+        | tar -xz -C /opt \
+    && ln -sfn "/opt/noVNC-${NOVNC_VERSION}" /usr/share/novnc \
+    && test -f /usr/share/novnc/vnc.html \
     && rm -rf /var/lib/apt/lists/*
 
 # Node/npm from official image (reliable PATH under /usr/local)
@@ -72,7 +84,14 @@ RUN pip install --no-cache-dir /opt/everflow-mcp \
     && command -v everflow-mcp \
     && printf 'everflow_mcp=%s\n' "$(command -v everflow-mcp)" >> /etc/everflow/prebaked
 
+# Desktop / noVNC stack (started by entrypoint; disable with EF_DESKTOP_ENABLE=0)
+COPY deploy/sandbox-guest-desktop.sh /usr/local/bin/everflow-desktop.sh
+COPY deploy/sandbox-guest-entrypoint.sh /usr/local/bin/sandbox-guest-entrypoint.sh
+RUN chmod +x /usr/local/bin/everflow-desktop.sh /usr/local/bin/sandbox-guest-entrypoint.sh \
+    && printf 'novnc=6080\n' >> /etc/everflow/prebaked
+
 WORKDIR /workspace
 
 # Microsandbox supplies the guest process model; keep a harmless default.
+ENTRYPOINT ["/usr/local/bin/sandbox-guest-entrypoint.sh"]
 CMD ["sleep", "infinity"]

@@ -1,4 +1,11 @@
-"""LangChain agent / OpenAI chat / MCP tool executors."""
+"""LangChain agent / OpenAI chat / MCP tool executors.
+
+MCP Client Tool limits (stub):
+- Tools with an HTTP ``endpointUrl`` (RapidAPI-style) are invoked via POST JSON.
+- True MCP protocol (STDIO / ``mcpClientApi``, listPrompts, SSE sessions) is
+  **not** implemented — those nodes only register a name for the agent loop.
+- Tool schemas exposed to the model are a generic ``{query: string}`` function.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +23,28 @@ if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_rl_value(param: Any, default: str = "") -> str:
+    """Unwrap n8n resource-locator (``__rl``) / plain string model fields."""
+    if param is None:
+        return default
+    if isinstance(param, (str, int, float, bool)):
+        s = str(param).strip()
+        return s if s else default
+    if isinstance(param, dict):
+        for key in ("value", "cachedResultName", "name", "id", "model"):
+            inner = param.get(key)
+            if inner is None or isinstance(inner, (dict, list)):
+                continue
+            s = str(inner).strip()
+            if s:
+                return s
+        # Nested locator occasionally wraps again
+        nested = param.get("value")
+        if isinstance(nested, dict):
+            return _extract_rl_value(nested, default)
+    return default
 
 
 async def exec_lm_chat_openai(
@@ -40,15 +69,25 @@ async def exec_mcp_tool_stub(
     *,
     ctx: EngineContext,
 ) -> list[tuple[int, list[ExecutionItem]]]:
-    """Register tool definition for agent (ai_tool sub-node)."""
+    """Register tool definition for agent (ai_tool sub-node).
+
+    See module docstring for MCP stub limits. HTTP ``endpointUrl`` tools are
+    called at runtime; STDIO MCP credentials are registration-only.
+    """
     del items
     params = node.parameters or {}
+    endpoint = (
+        params.get("endpointUrl")
+        or params.get("sseEndpoint")
+        or params.get("url")
+        or params.get("endpoint")
+    )
     ctx.tool_configs[node.id] = {
         "name": node.name,
         "type": node.type,
         "parameters": params,
         "credentials": node.credentials,
-        "endpointUrl": params.get("endpointUrl"),
+        "endpointUrl": endpoint,
         "operation": params.get("operation"),
     }
     return [(0, [])]
@@ -95,12 +134,13 @@ async def exec_agent(
             lm = lm_nodes[0]
             lm_cred = ctx.resolve_credential(lm, "openAiApi") or {}
             mparam = (lm.parameters or {}).get("model")
-            if isinstance(mparam, dict):
-                model = str(mparam.get("value") or model)
-            elif mparam:
-                model = str(mparam)
+            model = _extract_rl_value(mparam, model)
 
-        api_key = lm_cred.get("apiKey") or lm_cred.get("api_key") or ctx.mocks.get("openai_api_key") if ctx.mocks else None
+        api_key = (
+            lm_cred.get("apiKey")
+            or lm_cred.get("api_key")
+            or (ctx.mocks.get("openai_api_key") if ctx.mocks else None)
+        )
         base_url = (
             lm_cred.get("url")
             or lm_cred.get("baseUrl")
@@ -167,6 +207,7 @@ async def exec_agent(
 
 
 def _tools_for_openai(tool_nodes: list[ExecNode], ctx: EngineContext) -> list[dict[str, Any]]:
+    del ctx
     tools = []
     for tn in tool_nodes:
         name = tn.name.replace(" ", "_").replace("-", "_")[:64]
@@ -186,6 +227,14 @@ def _tools_for_openai(tool_nodes: list[ExecNode], ctx: EngineContext) -> list[di
             }
         )
     return tools
+
+
+def _tool_endpoint(params: dict[str, Any]) -> str | None:
+    for key in ("endpointUrl", "sseEndpoint", "url", "endpoint"):
+        v = params.get(key)
+        if v:
+            return str(v)
+    return None
 
 
 async def _run_tool_call(
@@ -220,12 +269,20 @@ async def _run_tool_call(
     if node is None:
         return json.dumps({"error": "no tool", "name": name})
 
-    # HTTP MCP / RapidAPI style
+    # HTTP MCP / RapidAPI style — keep HTTP call when endpoint is present
     params = node.parameters or {}
-    endpoint = params.get("endpointUrl")
+    endpoint = _tool_endpoint(params)
+    cfg = ctx.tool_configs.get(node.id) or {}
+    if not endpoint and cfg.get("endpointUrl"):
+        endpoint = str(cfg["endpointUrl"])
+
     if endpoint:
         headers: dict[str, str] = {}
-        cred = ctx.resolve_credential(node, "httpMultipleHeadersAuth") or {}
+        cred = (
+            ctx.resolve_credential(node, "httpMultipleHeadersAuth")
+            or ctx.resolve_credential(node, "mcpClientApi")
+            or {}
+        )
         # headers may be JSON string or dict
         raw_headers = cred.get("headers") or cred.get("header") or {}
         if isinstance(raw_headers, str):
@@ -248,7 +305,17 @@ async def _run_tool_call(
         except Exception as exc:
             return json.dumps({"error": str(exc), "tool": node.name})
 
-    return json.dumps({"tool": node.name, "args": args, "note": "no endpoint configured"})
+    # STDIO / protocol MCP without HTTP endpoint — stub only
+    return json.dumps(
+        {
+            "tool": node.name,
+            "args": args,
+            "note": (
+                "MCP stub: no HTTP endpointUrl configured; "
+                "STDIO/mcpClientApi protocol is not executed"
+            ),
+        }
+    )
 
 
 def _offline_research(prompt: Any, item_json: dict[str, Any], tool_nodes: list[ExecNode]) -> str:

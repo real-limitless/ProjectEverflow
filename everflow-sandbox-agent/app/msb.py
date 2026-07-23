@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import os
 import subprocess
@@ -43,6 +44,17 @@ def remember_volume_strategy(label: str) -> None:
 
 
 WORKSPACE_GUEST = "/workspace"
+
+
+def is_missing_path_error(exc: BaseException) -> bool:
+    """True when an fs/backend error means the guest path does not exist."""
+    if isinstance(exc, FileNotFoundError):
+        return True
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.ENOENT:
+        return True
+    msg = str(exc).lower()
+    # microsandbox.errors.FilesystemError: "open: No such file or directory (os error 2)"
+    return "no such file" in msg or "os error 2" in msg
 
 
 def normalize_guest_path(path: str | None, *, allow_tmp: bool = False) -> str:
@@ -279,6 +291,7 @@ class MockSandboxBackend(SandboxBackend):
 
     async def _mock_bootstrap(self, ws: Path, harnesses: list[str]) -> None:
         bin_dir = ws / ".everflow" / "bin"
+        marker_dir = ws / ".everflow"
         bin_dir.mkdir(parents=True, exist_ok=True)
         for h in harnesses:
             if h in ("agent-claude-code", "claude-code"):
@@ -295,7 +308,19 @@ class MockSandboxBackend(SandboxBackend):
                     encoding="utf-8",
                 )
                 stub.chmod(0o755)
-        marker = ws / ".everflow" / "bootstrapped"
+            if h in ("db-postgres", "postgres"):
+                db_json = marker_dir / "database.json"
+                if not db_json.exists():
+                    db_json.write_text(
+                        "{\n"
+                        '  "engine": "postgres",\n'
+                        '  "database_url": "postgresql://postgres:postgres@127.0.0.1:5432/postgres",\n'
+                        '  "status": "not_provisioned",\n'
+                        '  "message": "Set DATABASE_URL or update database_url, then ensure Postgres is reachable."\n'
+                        "}\n",
+                        encoding="utf-8",
+                    )
+        marker = marker_dir / "bootstrapped"
         marker.write_text(",".join(harnesses) + "\n", encoding="utf-8")
 
     async def get(self, name: str) -> SandboxRecord | None:
@@ -1032,8 +1057,14 @@ class MicrosandboxBackend(SandboxBackend):
         sb = await self._connect(name)
         guest_path = normalize_guest_path(path, allow_tmp=True)
         if hasattr(sb, "fs"):
-            data = await sb.fs.read(guest_path)
-            return bytes(data)
+            try:
+                data = await sb.fs.read(guest_path)
+                return bytes(data)
+            except Exception as exc:
+                # SDK raises FilesystemError (not FileNotFoundError) for ENOENT.
+                if is_missing_path_error(exc):
+                    raise FileNotFoundError(path) from exc
+                raise
         code, stdout, stderr = await self.exec(name, "cat", [guest_path])
         if code != 0:
             raise FileNotFoundError(stderr or path)
@@ -1096,10 +1127,20 @@ class MicrosandboxBackend(SandboxBackend):
         await _write_via_exec()
 
     async def bootstrap(self, name: str, harnesses: list[str]) -> SandboxRecord:
-        script_path = Path(__file__).resolve().parent / "bootstrap" / "install_harnesses.sh"
+        bootstrap_dir = Path(__file__).resolve().parent / "bootstrap"
+        script_path = bootstrap_dir / "install_harnesses.sh"
         if script_path.exists():
             script = script_path.read_text(encoding="utf-8")
             await self.write_fs(name, "/tmp/install_harnesses.sh", script.encode("utf-8"))
+            # Companion harness installers (e.g. db-postgres) live next to the main script.
+            for companion in bootstrap_dir.glob("install_*.sh"):
+                if companion.name == "install_harnesses.sh":
+                    continue
+                await self.write_fs(
+                    name,
+                    f"/tmp/{companion.name}",
+                    companion.read_text(encoding="utf-8").encode("utf-8"),
+                )
             args = " ".join(shlex_quote(h) for h in harnesses)
             code, stdout, stderr = await self.exec(
                 name,

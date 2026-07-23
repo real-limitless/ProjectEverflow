@@ -1,7 +1,20 @@
 /** Map platform API studio resources ↔ UI studio types. */
 
-import type { ApiKnowledgeCanvas, ApiProjectAgent } from '@/lib/api'
-import type { AgentDefinition, KnowledgeCanvas } from '@/types/studio'
+import type {
+  ApiKnowledgeCanvas,
+  ApiProjectAgent,
+  ApiTestCase,
+  ApiTestSuite,
+  ApiTestSuiteRunResult,
+} from '@/lib/api'
+import type {
+  AgentDefinition,
+  KnowledgeCanvas,
+  TestCase,
+  TestCaseType,
+  TestRunSummary,
+  TestSuite,
+} from '@/types/studio'
 
 export function mapApiCanvas(c: ApiKnowledgeCanvas): KnowledgeCanvas {
   return {
@@ -31,5 +44,44 @@ export function mapApiAgent(a: ApiProjectAgent): AgentDefinition {
     active: a.active,
     source: 'everflow',
     managed: true,
+  }
+}
+
+function mapCaseStatus(status: string | null | undefined): TestCase['lastStatus'] {
+  if (status === 'passed' || status === 'failed' || status === 'skipped') return status
+  return undefined
+}
+
+export function mapApiTestCase(c: ApiTestCase): TestCase {
+  const type = (c.type === 'e2e' || c.type === 'smoke' ? c.type : 'unit') as TestCaseType
+  return {
+    id: c.id,
+    name: c.name,
+    type,
+    command: c.command || '',
+    lastStatus: mapCaseStatus(c.last_status),
+    error: c.last_error ?? undefined,
+  }
+}
+
+export function mapApiTestSuite(s: ApiTestSuite): TestSuite {
+  return {
+    id: s.id,
+    name: s.name,
+    cases: (s.cases || []).map(mapApiTestCase),
+  }
+}
+
+export function mapApiTestRun(r: ApiTestSuiteRunResult): TestRunSummary {
+  const failedNames = (r.results || [])
+    .filter((x) => x.status === 'failed')
+    .map((x) => x.name)
+  return {
+    suiteId: r.suite_id,
+    status: r.status,
+    summary: r.summary,
+    passed: r.passed,
+    failedN: r.failed,
+    failed: failedNames,
   }
 }

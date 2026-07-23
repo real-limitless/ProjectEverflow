@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Button,
+  Dropdown,
+  DropdownItem,
+  DropdownList,
   FormGroup,
+  Label,
   TextInput,
+  ToggleGroup,
+  ToggleGroupItem,
 } from '@patternfly/react-core'
+import EllipsisVIcon from '@patternfly/react-icons/dist/esm/icons/ellipsis-v-icon'
 import PencilAltIcon from '@patternfly/react-icons/dist/esm/icons/pencil-alt-icon'
 import { CreateResourceModal } from '@/components/studio/CreateResourceModal'
 import { EmptySplash } from '@/components/studio/EmptySplash'
@@ -16,6 +23,7 @@ import {
   kindLabel,
   knowledgeActionLabel,
   sidebarMetaLine,
+  statusToneColor,
 } from './canvasStatus'
 import { EmbedPipeline } from './EmbedPipeline'
 import { MarkdownWorkbench, type MarkdownViewMode } from './MarkdownWorkbench'
@@ -48,6 +56,7 @@ export function CanvasTab({ projectId, canvases }: CanvasTabProps) {
   const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle')
   const [renaming, setRenaming] = useState(false)
   const [renameDraft, setRenameDraft] = useState('')
+  const [overflowOpen, setOverflowOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const savedTimer = useRef<number | null>(null)
   const draftRef = useRef({ name: '', md: '', baselineName: '', baselineMd: '' })
@@ -346,7 +355,7 @@ export function CanvasTab({ projectId, canvases }: CanvasTabProps) {
     ? knowledgeActionLabel(
         canvas.status === 'indexed' && bodyDirty ? 'stale' : canvas.status,
       )
-    : 'Add to chatbot knowledge'
+    : 'Index'
 
   return (
     <div className="canvas-shell">
@@ -472,65 +481,92 @@ export function CanvasTab({ projectId, canvases }: CanvasTabProps) {
                 >
                   {dirty ? 'Unsaved changes' : saveState === 'saved' ? 'Saved' : 'Up to date'}
                 </span>
+                <div className="canvas-doc-status">
+                  {kind && (
+                    <Label isCompact color="grey" variant="outline">
+                      {kind}
+                    </Label>
+                  )}
+                  <Label
+                    isCompact
+                    color={statusToneColor(knowledgeDisplay.tone)}
+                    variant="outline"
+                  >
+                    {knowledgeDisplay.label}
+                  </Label>
+                  {canvas.status === 'indexed' && canvas.chunks != null && (
+                    <span className="canvas-doc-sub-meta">{canvas.chunks} chunks</span>
+                  )}
+                  {canvas.sizeLabel && (
+                    <span className="canvas-doc-sub-meta">{canvas.sizeLabel}</span>
+                  )}
+                </div>
               </div>
 
               <div className="canvas-doc-actions">
-                <div className="canvas-mode-toggle" role="group" aria-label="Editor mode">
-                  <button
-                    type="button"
-                    className={`editor-ctrl-btn${mode === 'edit' ? ' active' : ''}`}
-                    onClick={() => setMode('edit')}
+                <ToggleGroup className="canvas-mode-toggle" aria-label="Editor mode">
+                  <ToggleGroupItem
+                    text="Edit"
+                    buttonId="canvas-mode-edit"
+                    isSelected={mode === 'edit'}
+                    onChange={() => setMode('edit')}
+                  />
+                  <ToggleGroupItem
+                    text="Preview"
+                    buttonId="canvas-mode-preview"
+                    isSelected={mode === 'preview'}
+                    onChange={() => setMode('preview')}
+                  />
+                </ToggleGroup>
+                <div className="canvas-doc-action-group">
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    isDisabled={!dirty}
+                    onClick={() => saveCanvas()}
+                    title="Save notes (Ctrl/⌘+S)"
                   >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    className={`editor-ctrl-btn${mode === 'preview' ? ' active' : ''}`}
-                    onClick={() => setMode('preview')}
+                    Save
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={reindex}
+                    isDisabled={isPipelineBusy(canvas.status)}
                   >
-                    Preview
-                  </button>
+                    {actionLabel}
+                  </Button>
+                  <Dropdown
+                    isOpen={overflowOpen}
+                    onOpenChange={setOverflowOpen}
+                    onSelect={() => setOverflowOpen(false)}
+                    popperProps={{ position: 'right' }}
+                    toggle={(toggleRef) => (
+                      <Button
+                        ref={toggleRef}
+                        size="sm"
+                        variant="plain"
+                        aria-label="Canvas actions"
+                        aria-expanded={overflowOpen}
+                        onClick={() => setOverflowOpen((open) => !open)}
+                        icon={<EllipsisVIcon />}
+                      />
+                    )}
+                  >
+                    <DropdownList>
+                      <DropdownItem
+                        key="delete"
+                        isDanger
+                        onClick={() => {
+                          deleteCanvas(projectId, canvas.id)
+                          pushToast('Canvas deleted', { kind: 'info' })
+                        }}
+                      >
+                        Delete
+                      </DropdownItem>
+                    </DropdownList>
+                  </Dropdown>
                 </div>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  isDisabled={!dirty}
-                  onClick={() => saveCanvas()}
-                  title="Save notes (Ctrl/⌘+S)"
-                >
-                  Save
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={reindex}
-                  isDisabled={isPipelineBusy(canvas.status)}
-                >
-                  {actionLabel}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="danger"
-                  onClick={() => {
-                    deleteCanvas(projectId, canvas.id)
-                    pushToast('Canvas deleted', { kind: 'info' })
-                  }}
-                >
-                  Delete
-                </Button>
-              </div>
-
-              <div className="canvas-doc-sub">
-                {kind && <span className="canvas-chip canvas-chip--kind">{kind}</span>}
-                <span className={`canvas-chip canvas-chip--${knowledgeDisplay.tone}`}>
-                  {knowledgeDisplay.label}
-                </span>
-                {canvas.status === 'indexed' && canvas.chunks != null && (
-                  <span className="canvas-doc-sub-meta">{canvas.chunks} chunks</span>
-                )}
-                {canvas.sizeLabel && (
-                  <span className="canvas-doc-sub-meta">{canvas.sizeLabel}</span>
-                )}
               </div>
               {showPipeline && (
                 <EmbedPipeline

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Button,
   Checkbox,
@@ -9,6 +9,7 @@ import {
   Tabs,
   Tab,
   TabTitleText,
+  TextArea,
   TextInput,
 } from '@patternfly/react-core'
 import { CreateResourceModal } from '@/components/studio/CreateResourceModal'
@@ -18,6 +19,24 @@ import {
   composeSnippet,
   defaultComposeForEnv,
 } from '@/components/panels/deploy/composeSnippets'
+import { getProject } from '@/data/projects'
+import { isDemoMode } from '@/lib/api'
+import {
+  createDeployNode,
+  createDeployRoute,
+  createDeployRun,
+  createDeployRunStub,
+  deleteDeployNode,
+  deleteDeployRoute,
+  generateDeployKey,
+  listComposeFiles,
+  listDeployKeys,
+  listDeployNodes,
+  listDeployRoutes,
+  type ApiDeployNode,
+  type ApiDeployRoute,
+  type ApiDeploySshKey,
+} from '@/lib/deployApi'
 import { runDeploySimulation } from '@/lib/deploySimulation'
 import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
@@ -25,6 +44,7 @@ import { useProjectStudio, useStudioDemoStore } from '@/store/studioDemoStore'
 import { StatusLabel } from './statusLabel'
 import type {
   DeployAction,
+  DeployHost,
   DeployPipelineStage,
   DeployRun,
   DeployRunStatus,
@@ -34,26 +54,62 @@ function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 }
 
-function hostLabel(h: { user?: string; host: string; port?: number }) {
-  const user = h.user ?? 'everflow'
+function hostLabel(h: { user?: string; host: string; port?: number; ssh_user?: string }) {
+  const user = h.user ?? h.ssh_user ?? 'everflow'
   const port = h.port ?? 22
   return `${user}@${h.host}${port !== 22 ? `:${port}` : ''}`
 }
 
+function apiNodeToHost(n: ApiDeployNode): DeployHost {
+  const status =
+    n.status === 'online' || n.status === 'offline' ? n.status : ('unknown' as const)
+  return {
+    id: n.id,
+    name: n.name,
+    host: n.host,
+    status,
+    user: n.ssh_user,
+    port: n.port,
+    tags: n.tags ?? [],
+    orchestrator: 'podman-compose',
+  }
+}
+
 export function DeployPanel() {
   const projectId = usePlaygroundStore((s) => s.currentProjectId) || 'default'
+  const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
+  const project = getProject(projectId === 'default' ? null : projectId)
+  void catalogVersion
+
+  const useApi = Boolean(project?.fromApi) && !isDemoMode()
+  const sandboxRunning = project?.sandboxStatus === 'running'
+
   const state = useProjectStudio(projectId)
   const addHost = useStudioDemoStore((s) => s.addHost)
   const removeHost = useStudioDemoStore((s) => s.removeHost)
   const saveDeployRun = useStudioDemoStore((s) => s.saveDeployRun)
   const finalizeDeployRun = useStudioDemoStore((s) => s.finalizeDeployRun)
 
-  const hosts = state.deployHosts
-  const composeFiles = state.composeFiles
+  const demoHosts = state.deployHosts
+  const demoComposeFiles = state.composeFiles
   const envEntries = state.envEntries
   const deployRuns = state.deployRuns ?? []
   const deployServices = state.deployServices ?? []
   const deploys = state.deploys
+
+  const [apiNodes, setApiNodes] = useState<ApiDeployNode[]>([])
+  const [apiKeys, setApiKeys] = useState<ApiDeploySshKey[]>([])
+  const [apiCompose, setApiCompose] = useState<string[]>([])
+  const [apiRoutes, setApiRoutes] = useState<ApiDeployRoute[]>([])
+  const [apiLoading, setApiLoading] = useState(false)
+  const [keyBusy, setKeyBusy] = useState(false)
+
+  const hosts = useApi ? apiNodes.map(apiNodeToHost) : demoHosts
+  const composeFiles = useApi
+    ? apiCompose.length
+      ? apiCompose
+      : ['docker-compose.yml']
+    : demoComposeFiles
 
   const [hostId, setHostId] = useState(hosts[0]?.id ?? '')
   const [env, setEnv] = useState<string>('Preview')
@@ -63,12 +119,18 @@ export function DeployPanel() {
   const [attachedIds, setAttachedIds] = useState<string[]>(() =>
     envEntries.filter((e) => e.kind === 'secret' || e.key.includes('API')).map((e) => e.id).slice(0, 2),
   )
-  const [ctxTab, setCtxTab] = useState<'services' | 'env' | 'history' | 'compose'>('services')
+  const [ctxTab, setCtxTab] = useState<'services' | 'env' | 'history' | 'compose' | 'routes'>(
+    useApi ? 'routes' : 'services',
+  )
 
   const [stages, setStages] = useState<DeployPipelineStage[]>([])
   const [logLines, setLogLines] = useState<string[]>([
-    'Ready. Select a host and run Deploy, Validate, Redeploy, or Stop.',
-    'Demo only — no real SSH or podman-compose execution.',
+    useApi
+      ? 'Ready. Generate an SSH key, add a node, map domains, then Deploy over SSH.'
+      : 'Ready. Select a host and run Deploy, Validate, Redeploy, or Stop.',
+    useApi
+      ? 'API mode: keys/nodes/routes persist; Deploy runs docker compose via SSH + Traefik routes.'
+      : 'Pipeline runs are simulated until a remote host is connected.',
   ])
   const [runStatus, setRunStatus] = useState<DeployRunStatus | 'idle'>('idle')
   const [running, setRunning] = useState(false)
@@ -83,7 +145,53 @@ export function DeployPanel() {
   const [hostPort, setHostPort] = useState('22')
   const [hostTags, setHostTags] = useState('')
 
+  const [routeHost, setRouteHost] = useState('')
+  const [routeService, setRouteService] = useState('')
+  const [routePort, setRoutePort] = useState('80')
+  const [routePrefix, setRoutePrefix] = useState('/')
+
   const selectedHost = hosts.find((h) => h.id === hostId) ?? hosts[0]
+  const latestKey = apiKeys[0] ?? null
+
+  const refreshApi = useCallback(async () => {
+    if (!useApi || !projectId) return
+    const [keys, nodes, composeRes] = await Promise.all([
+      listDeployKeys(projectId).catch(() => [] as ApiDeploySshKey[]),
+      listDeployNodes(projectId).catch(() => [] as ApiDeployNode[]),
+      listComposeFiles(projectId).catch(() => ({ files: [] as string[] })),
+    ])
+    setApiKeys(keys)
+    setApiNodes(nodes)
+    setApiCompose(composeRes.files ?? [])
+    setHostId((prev) => {
+      if (prev && nodes.some((n) => n.id === prev)) return prev
+      return nodes[0]?.id ?? ''
+    })
+  }, [useApi, projectId])
+
+  const refreshRoutes = useCallback(async () => {
+    if (!useApi || !projectId || !selectedHost?.id) {
+      setApiRoutes([])
+      return
+    }
+    try {
+      const routes = await listDeployRoutes(projectId, selectedHost.id)
+      setApiRoutes(routes)
+    } catch {
+      setApiRoutes([])
+    }
+  }, [useApi, projectId, selectedHost?.id])
+
+  useEffect(() => {
+    if (!useApi) return
+    setApiLoading(true)
+    void refreshApi().finally(() => setApiLoading(false))
+  }, [useApi, refreshApi])
+
+  useEffect(() => {
+    if (!useApi) return
+    void refreshRoutes()
+  }, [useApi, refreshRoutes])
 
   useEffect(() => {
     if (selectedHost && selectedHost.id !== hostId) setHostId(selectedHost.id)
@@ -111,7 +219,125 @@ export function DeployPanel() {
 
   const historyFiltered = deployRuns
 
+  const onGenerateKey = async () => {
+    if (!useApi || !projectId) return
+    if (!sandboxRunning) {
+      pushToast('Start the sandbox first', {
+        description: 'SSH keys are generated inside the project sandbox.',
+        kind: 'warning',
+      })
+      return
+    }
+    setKeyBusy(true)
+    try {
+      const key = await generateDeployKey(projectId)
+      setApiKeys((prev) => [key, ...prev.filter((k) => k.id !== key.id)])
+      setLogLines((prev) => [
+        ...prev,
+        `Generated deploy key ${key.fingerprint}`,
+        'Install the public key on each host (~/.ssh/authorized_keys).',
+      ])
+      pushToast('Deploy key generated', {
+        description: key.fingerprint,
+        kind: 'success',
+      })
+    } catch (e) {
+      pushToast('Key generation failed', {
+        description: e instanceof Error ? e.message : 'Unknown error',
+        kind: 'danger',
+      })
+    } finally {
+      setKeyBusy(false)
+    }
+  }
+
+  const startApiDeploy = async (action: DeployAction) => {
+    if (!selectedHost) {
+      pushToast('Select a remote node', { kind: 'warning' })
+      return
+    }
+    if (!composeFile) {
+      pushToast('Select a compose file', { kind: 'warning' })
+      return
+    }
+    if (apiRoutes.length === 0) {
+      pushToast('Add at least one domain→service route', { kind: 'warning' })
+      setCtxTab('routes')
+      return
+    }
+    setRunning(true)
+    setRunStatus('running')
+    setStages([
+      { id: 'validate', name: 'Validate', status: 'running' },
+      { id: 'ssh', name: 'SSH deploy', status: 'idle' },
+    ])
+    setLogLines([
+      `Deploying to ${selectedHost.name} (${action})…`,
+      `compose=${composeFile}`,
+      `routes=${apiRoutes.length}`,
+    ])
+    try {
+      // Validate first via stub record, then execute SSH compose-up.
+      await createDeployRunStub(projectId, {
+        node_id: selectedHost.id,
+        compose_file: composeFile,
+        action,
+      })
+      setStages([
+        { id: 'validate', name: 'Validate', status: 'ok' },
+        { id: 'ssh', name: 'SSH deploy', status: 'running' },
+      ])
+      const result = await createDeployRun(projectId, {
+        node_id: selectedHost.id,
+        compose_file: composeFile,
+        dry_run: action === 'validate',
+      })
+      setLogLines((prev) => [...prev, ...(result.log_lines || [])])
+      if (result.ok) {
+        setStages([
+          { id: 'validate', name: 'Validate', status: 'ok' },
+          { id: 'ssh', name: 'SSH deploy', status: 'ok' },
+        ])
+        setRunStatus('ok')
+        pushToast(action === 'validate' ? 'Validate completed' : 'Deploy completed', {
+          description: result.remote_dir,
+          kind: 'success',
+        })
+      } else {
+        setStages([
+          { id: 'validate', name: 'Validate', status: 'ok' },
+          { id: 'ssh', name: 'SSH deploy', status: 'err' },
+        ])
+        setRunStatus('err')
+        pushToast('Deploy failed', {
+          description: result.error || 'Remote compose failed',
+          kind: 'danger',
+        })
+      }
+    } catch (e) {
+      setStages([
+        { id: 'validate', name: 'Validate', status: 'err' },
+        { id: 'ssh', name: 'SSH deploy', status: 'err' },
+      ])
+      setLogLines((prev) => [
+        ...prev,
+        `ERROR: ${e instanceof Error ? e.message : 'deploy failed'}`,
+      ])
+      setRunStatus('err')
+      pushToast('Deploy failed', {
+        description: e instanceof Error ? e.message : 'Unknown error',
+        kind: 'danger',
+      })
+    } finally {
+      setRunning(false)
+    }
+  }
+
   const startRun = async (action: DeployAction) => {
+    if (useApi) {
+      await startApiDeploy(action)
+      return
+    }
     if (!selectedHost) {
       pushToast('Select a remote host', { kind: 'warning' })
       return
@@ -186,13 +412,13 @@ export function DeployPanel() {
               ? 'Compose valid'
               : 'Deploy complete',
           {
-            description: result.url ?? `${action} on ${selectedHost.name} (demo)`,
+            description: result.url ?? `${action} on ${selectedHost.name}`,
             kind: 'success',
           },
         )
         if (result.services.length) setCtxTab('services')
       } else if (result.status === 'err') {
-        pushToast('Pipeline failed', { description: 'See log for details (demo)', kind: 'danger' })
+        pushToast('Pipeline failed', { description: 'See log for details.', kind: 'danger' })
       } else if (result.status === 'cancelled') {
         pushToast('Pipeline cancelled', { kind: 'warning' })
       }
@@ -231,6 +457,95 @@ export function DeployPanel() {
     setAttachedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
 
+  const submitHost = async () => {
+    if (!hostName.trim() || !hostAddr.trim()) return
+    const tags = hostTags
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean)
+    if (useApi) {
+      try {
+        const node = await createDeployNode(projectId, {
+          name: hostName.trim(),
+          host: hostAddr.trim(),
+          ssh_user: hostUser.trim() || 'everflow',
+          port: Number(hostPort) || 22,
+          tags,
+        })
+        setApiNodes((prev) => [node, ...prev])
+        setHostId(node.id)
+        pushToast('Node added', { kind: 'success' })
+      } catch (e) {
+        pushToast('Failed to add node', {
+          description: e instanceof Error ? e.message : 'Unknown error',
+          kind: 'danger',
+        })
+        return
+      }
+    } else {
+      addHost(projectId, {
+        name: hostName.trim(),
+        host: hostAddr.trim(),
+        user: hostUser.trim() || 'everflow',
+        port: Number(hostPort) || 22,
+        tags,
+        orchestrator: 'podman-compose',
+      })
+      pushToast('Host added', { kind: 'success' })
+    }
+    setHostName('')
+    setHostAddr('')
+    setHostUser('everflow')
+    setHostPort('22')
+    setHostTags('')
+    setHostOpen(false)
+  }
+
+  const onRemoveHost = async (id: string) => {
+    if (useApi) {
+      try {
+        await deleteDeployNode(projectId, id)
+        setApiNodes((prev) => prev.filter((n) => n.id !== id))
+        if (hostId === id) setHostId('')
+        pushToast('Node removed', { kind: 'warning' })
+      } catch (e) {
+        pushToast('Failed to remove node', {
+          description: e instanceof Error ? e.message : 'Unknown error',
+          kind: 'danger',
+        })
+      }
+      return
+    }
+    removeHost(projectId, id)
+    if (hostId === id) setHostId('')
+    pushToast('Host removed', { kind: 'warning' })
+  }
+
+  const submitRoute = async () => {
+    if (!useApi || !selectedHost || !routeHost.trim() || !routeService.trim()) return
+    try {
+      const route = await createDeployRoute(projectId, selectedHost.id, {
+        host_header: routeHost.trim(),
+        service_name: routeService.trim(),
+        service_port: Number(routePort) || 80,
+        path_prefix: routePrefix.trim() || '/',
+      })
+      setApiRoutes((prev) => [...prev, route])
+      setRouteHost('')
+      setRouteService('')
+      setRoutePort('80')
+      setRoutePrefix('/')
+      pushToast('Route saved', { kind: 'success' })
+    } catch (e) {
+      pushToast('Failed to save route', {
+        description: e instanceof Error ? e.message : 'Unknown error',
+        kind: 'danger',
+      })
+    }
+  }
+
+  const showEmpty = hosts.length === 0
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div className="panel-toolbar">
@@ -239,11 +554,30 @@ export function DeployPanel() {
             Remote deploy
           </span>
           <div className="lc-meta" style={{ marginTop: 2 }}>
-            podman-compose on another host · demo pipeline (no live SSH)
+            {useApi
+              ? apiLoading
+                ? 'Loading deploy config…'
+                : hosts.length === 0
+                  ? 'Generate an SSH key and add a remote node'
+                  : 'Keys & nodes from API · Deploy runs SSH compose + Traefik routes'
+              : hosts.length === 0
+                ? 'Connect a remote host to deploy'
+                : 'podman-compose on another host · simulated pipeline (no live SSH yet)'}
           </div>
         </div>
         <div className="deploy-actions">
-          {running && (
+          {useApi && (
+            <Button
+              variant="secondary"
+              size="sm"
+              isLoading={keyBusy}
+              isDisabled={keyBusy || !sandboxRunning}
+              onClick={() => void onGenerateKey()}
+            >
+              Generate key
+            </Button>
+          )}
+          {running && !useApi && (
             <Button
               variant="secondary"
               size="sm"
@@ -252,75 +586,160 @@ export function DeployPanel() {
               Cancel
             </Button>
           )}
-          <Button
-            variant="secondary"
-            size="sm"
-            isDisabled={running || !selectedHost}
-            onClick={() => startRun('validate')}
-          >
-            Validate
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            isDisabled={running || !selectedHost}
-            onClick={() => startRun('down')}
-          >
-            Stop
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            isDisabled={running || !selectedHost}
-            onClick={() => startRun('redeploy')}
-          >
-            Redeploy
-          </Button>
+          {!useApi && (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                isDisabled={running || !selectedHost}
+                onClick={() => startRun('validate')}
+              >
+                Validate
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                isDisabled={running || !selectedHost}
+                onClick={() => startRun('down')}
+              >
+                Stop
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                isDisabled={running || !selectedHost}
+                onClick={() => startRun('redeploy')}
+              >
+                Redeploy
+              </Button>
+            </>
+          )}
           <Button
             variant="primary"
             size="sm"
             isLoading={running}
             isDisabled={running || !selectedHost}
-            onClick={() => startRun('up')}
+            onClick={() => void startRun('up')}
           >
             Deploy
           </Button>
         </div>
       </div>
 
-      {hosts.length === 0 ? (
-        <EmptySplash
-          title="No remote hosts"
-          body="Add a host where Everflow can run podman-compose (demo)."
-          primaryLabel="Add host"
-          onPrimary={() => setHostOpen(true)}
-        />
+      {showEmpty ? (
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <EmptySplash
+            title={useApi ? 'No deploy nodes' : 'No remote hosts'}
+            body={
+              useApi
+                ? latestKey
+                  ? `Key ready (${latestKey.fingerprint}). Install the public key on the host, then add a node.`
+                  : 'Generate an SSH deploy key in the sandbox, then add a remote node. Install the public key on the host before deploying.'
+                : 'Add a remote host where Everflow can run podman-compose stacks.'
+            }
+            primaryLabel={useApi ? (latestKey ? 'Add node' : 'Generate key') : 'Add host'}
+            onPrimary={() => {
+              if (useApi) {
+                if (latestKey) setHostOpen(true)
+                else void onGenerateKey()
+              } else setHostOpen(true)
+            }}
+            secondaryLabel={
+              useApi ? (latestKey ? 'Generate new key' : 'Add node') : undefined
+            }
+            onSecondary={
+              useApi
+                ? () => {
+                    if (latestKey) void onGenerateKey()
+                    else setHostOpen(true)
+                  }
+                : undefined
+            }
+          />
+          {useApi && latestKey && (
+            <div style={{ padding: '0 24px 24px', maxWidth: 720, margin: '0 auto' }}>
+              <div className="section-label">Install this public key</div>
+              <TextArea
+                aria-label="Deploy public key"
+                value={latestKey.public_key}
+                readOnly
+                resizeOrientation="vertical"
+                rows={3}
+                style={{ fontFamily: 'var(--mono)', fontSize: 11 }}
+              />
+              <Button
+                variant="link"
+                size="sm"
+                style={{ paddingInline: 0 }}
+                onClick={() => {
+                  void navigator.clipboard?.writeText(latestKey.public_key)
+                  pushToast('Public key copied', { kind: 'info' })
+                }}
+              >
+                Copy for ~/.ssh/authorized_keys
+              </Button>
+            </div>
+          )}
+        </div>
       ) : (
         <div className="deploy-workbench">
-          {/* LEFT */}
           <aside className="deploy-sidebar">
             <div className="deploy-sidebar-scroll">
-              <div className="section-label" style={{ marginTop: 0 }}>
-                Environment
-              </div>
-              <div className="deploy-env-chips">
-                {DEPLOY_ENVS.map((e) => (
+              {!useApi && (
+                <>
+                  <div className="section-label" style={{ marginTop: 0 }}>
+                    Environment
+                  </div>
+                  <div className="deploy-env-chips">
+                    {DEPLOY_ENVS.map((e) => (
+                      <Button
+                        key={e}
+                        size="sm"
+                        variant={env === e ? 'primary' : 'secondary'}
+                        onClick={() => {
+                          setEnv(e)
+                          setComposeFile(defaultComposeForEnv(e, composeFiles))
+                        }}
+                      >
+                        {e}
+                      </Button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {useApi && latestKey && (
+                <>
+                  <div className="section-label" style={{ marginTop: 0 }}>
+                    Deploy public key
+                  </div>
+                  <p className="lc-meta" style={{ marginTop: 0 }}>
+                    Fingerprint: {latestKey.fingerprint}
+                  </p>
+                  <TextArea
+                    aria-label="Deploy public key"
+                    value={latestKey.public_key}
+                    readOnly
+                    resizeOrientation="vertical"
+                    rows={4}
+                    style={{ fontFamily: 'var(--mono)', fontSize: 11 }}
+                  />
                   <Button
-                    key={e}
+                    variant="link"
                     size="sm"
-                    variant={env === e ? 'primary' : 'secondary'}
+                    style={{ paddingInline: 0 }}
                     onClick={() => {
-                      setEnv(e)
-                      setComposeFile(defaultComposeForEnv(e, composeFiles))
+                      void navigator.clipboard?.writeText(latestKey.public_key)
+                      pushToast('Public key copied', { kind: 'info' })
                     }}
                   >
-                    {e}
+                    Copy for authorized_keys
                   </Button>
-                ))}
-              </div>
+                </>
+              )}
 
               <div className="section-label">
-                Hosts
+                {useApi ? 'Nodes' : 'Hosts'}
                 <Button
                   variant="link"
                   size="sm"
@@ -359,7 +778,7 @@ export function DeployPanel() {
                     ))}
                     <span className="deploy-tag">{h.orchestrator ?? 'podman-compose'}</span>
                   </div>
-                  {h.status === 'online' && (
+                  {!useApi && h.status === 'online' && (
                     <>
                       <div className="lc-meta" style={{ marginTop: 4 }}>
                         CPU {h.cpuPct ?? 0}%
@@ -375,18 +794,18 @@ export function DeployPanel() {
                       </div>
                     </>
                   )}
-                  <div className="lc-meta" style={{ marginTop: 4 }}>
-                    last seen {h.lastSeen ?? '—'}
-                  </div>
+                  {!useApi && (
+                    <div className="lc-meta" style={{ marginTop: 4 }}>
+                      last seen {h.lastSeen ?? '—'}
+                    </div>
+                  )}
                   <Button
                     variant="link"
                     isDanger
                     size="sm"
                     onClick={(e) => {
                       e.stopPropagation()
-                      removeHost(projectId, h.id)
-                      if (hostId === h.id) setHostId('')
-                      pushToast('Host removed', { kind: 'warning' })
+                      void onRemoveHost(h.id)
                     }}
                   >
                     Remove
@@ -394,25 +813,28 @@ export function DeployPanel() {
                 </div>
               ))}
 
-              <div className="section-label">Live environments</div>
-              {deploys.map((d) => (
-                <div className="deploy-svc-row" key={d.id}>
-                  <div className="lc-row">
-                    <strong>{d.env}</strong>
-                    <StatusLabel status={d.status} />
-                  </div>
-                  <div className="lc-meta" style={{ fontFamily: 'var(--mono)', fontSize: 10 }}>
-                    {d.url}
-                  </div>
-                  <div className="lc-meta">
-                    {d.composeFile} · {d.when}
-                  </div>
-                </div>
-              ))}
+              {!useApi && (
+                <>
+                  <div className="section-label">Live environments</div>
+                  {deploys.map((d) => (
+                    <div className="deploy-svc-row" key={d.id}>
+                      <div className="lc-row">
+                        <strong>{d.env}</strong>
+                        <StatusLabel status={d.status} />
+                      </div>
+                      <div className="lc-meta" style={{ fontFamily: 'var(--mono)', fontSize: 10 }}>
+                        {d.url}
+                      </div>
+                      <div className="lc-meta">
+                        {d.composeFile} · {d.when}
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           </aside>
 
-          {/* CENTER */}
           <section className="deploy-main">
             <div className="deploy-config-bar">
               <div className="cfg-field">
@@ -432,7 +854,9 @@ export function DeployPanel() {
                 <label>Target</label>
                 <div className="lc-meta" style={{ fontFamily: 'var(--mono)', paddingBlock: 6 }}>
                   {selectedHost
-                    ? `${selectedHost.name} · ${env} · ${attachedIds.length} env attach`
+                    ? useApi
+                      ? `${selectedHost.name} · ${apiRoutes.length} routes`
+                      : `${selectedHost.name} · ${env} · ${attachedIds.length} env attach`
                     : '—'}
                 </div>
               </div>
@@ -526,7 +950,6 @@ export function DeployPanel() {
             </div>
           </section>
 
-          {/* RIGHT */}
           <aside className="deploy-inspector">
             <Tabs
               activeKey={ctxTab}
@@ -534,13 +957,102 @@ export function DeployPanel() {
               variant="secondary"
               className="panel-pf-tabs"
             >
-              <Tab eventKey="services" title={<TabTitleText>Services</TabTitleText>} />
-              <Tab eventKey="env" title={<TabTitleText>Env</TabTitleText>} />
-              <Tab eventKey="history" title={<TabTitleText>History</TabTitleText>} />
+              {useApi ? (
+                <Tab eventKey="routes" title={<TabTitleText>Routes</TabTitleText>} />
+              ) : (
+                <Tab eventKey="services" title={<TabTitleText>Services</TabTitleText>} />
+              )}
+              {!useApi && <Tab eventKey="env" title={<TabTitleText>Env</TabTitleText>} />}
+              {!useApi && <Tab eventKey="history" title={<TabTitleText>History</TabTitleText>} />}
               <Tab eventKey="compose" title={<TabTitleText>Compose</TabTitleText>} />
             </Tabs>
             <div className="deploy-inspector-body">
-              {ctxTab === 'services' && (
+              {ctxTab === 'routes' && useApi && (
+                <>
+                  <p className="lc-meta" style={{ marginTop: 0 }}>
+                    Map a domain (Host header) to a compose service on this node.
+                  </p>
+                  <FormGroup label="Domain / host header" fieldId="dr-host">
+                    <TextInput
+                      id="dr-host"
+                      value={routeHost}
+                      onChange={(_e, v) => setRouteHost(v)}
+                      placeholder="app.example.com"
+                    />
+                  </FormGroup>
+                  <FormGroup label="Service name" fieldId="dr-svc" style={{ marginTop: 8 }}>
+                    <TextInput
+                      id="dr-svc"
+                      value={routeService}
+                      onChange={(_e, v) => setRouteService(v)}
+                      placeholder="web"
+                    />
+                  </FormGroup>
+                  <FormGroup label="Service port" fieldId="dr-port" style={{ marginTop: 8 }}>
+                    <TextInput
+                      id="dr-port"
+                      value={routePort}
+                      onChange={(_e, v) => setRoutePort(v)}
+                    />
+                  </FormGroup>
+                  <FormGroup label="Path prefix" fieldId="dr-path" style={{ marginTop: 8 }}>
+                    <TextInput
+                      id="dr-path"
+                      value={routePrefix}
+                      onChange={(_e, v) => setRoutePrefix(v)}
+                    />
+                  </FormGroup>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    style={{ marginTop: 10 }}
+                    isDisabled={!routeHost.trim() || !routeService.trim() || !selectedHost}
+                    onClick={() => void submitRoute()}
+                  >
+                    Add route
+                  </Button>
+                  <div style={{ marginTop: 12 }}>
+                    {apiRoutes.length === 0 ? (
+                      <p className="lc-meta">No routes yet.</p>
+                    ) : (
+                      apiRoutes.map((r) => (
+                        <div className="deploy-svc-row" key={r.id}>
+                          <div className="lc-row">
+                            <strong style={{ fontFamily: 'var(--mono)' }}>{r.host_header}</strong>
+                            <Button
+                              variant="link"
+                              isDanger
+                              size="sm"
+                              onClick={() => {
+                                if (!selectedHost) return
+                                void deleteDeployRoute(projectId, selectedHost.id, r.id)
+                                  .then(() =>
+                                    setApiRoutes((prev) => prev.filter((x) => x.id !== r.id)),
+                                  )
+                                  .catch((e) =>
+                                    pushToast('Failed to delete route', {
+                                      description:
+                                        e instanceof Error ? e.message : 'Unknown error',
+                                      kind: 'danger',
+                                    }),
+                                  )
+                              }}
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                          <div className="lc-meta" style={{ fontFamily: 'var(--mono)' }}>
+                            → {r.service_name}:{r.service_port}
+                            {r.path_prefix !== '/' ? ` ${r.path_prefix}` : ''}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+
+              {ctxTab === 'services' && !useApi && (
                 <>
                   {servicesForView.length === 0 ? (
                     <p className="lc-meta">
@@ -566,7 +1078,7 @@ export function DeployPanel() {
                 </>
               )}
 
-              {ctxTab === 'env' && (
+              {ctxTab === 'env' && !useApi && (
                 <>
                   <p className="lc-meta" style={{ marginTop: 0 }}>
                     Attach project env / secrets for injection during Deploy (values stay masked in
@@ -596,7 +1108,7 @@ export function DeployPanel() {
                 </>
               )}
 
-              {ctxTab === 'history' && (
+              {ctxTab === 'history' && !useApi && (
                 <>
                   {historyFiltered.length === 0 ? (
                     <p className="lc-meta">No runs yet.</p>
@@ -632,7 +1144,13 @@ export function DeployPanel() {
               )}
 
               {ctxTab === 'compose' && (
-                <pre className="deploy-compose-pre">{composeSnippet(composeFile)}</pre>
+                <pre className="deploy-compose-pre">
+                  {useApi
+                    ? composeFile
+                      ? `# discovered\n${composeFile}\n`
+                      : 'No compose files discovered under /workspace.'
+                    : composeSnippet(composeFile)}
+                </pre>
               )}
             </div>
           </aside>
@@ -641,30 +1159,9 @@ export function DeployPanel() {
 
       <CreateResourceModal
         isOpen={hostOpen}
-        title="Add remote host"
+        title={useApi ? 'Add deploy node' : 'Add remote host'}
         onClose={() => setHostOpen(false)}
-        onSubmit={() => {
-          if (!hostName.trim() || !hostAddr.trim()) return
-          const tags = hostTags
-            .split(',')
-            .map((t) => t.trim())
-            .filter(Boolean)
-          addHost(projectId, {
-            name: hostName.trim(),
-            host: hostAddr.trim(),
-            user: hostUser.trim() || 'everflow',
-            port: Number(hostPort) || 22,
-            tags,
-            orchestrator: 'podman-compose',
-          })
-          pushToast('Host added', { kind: 'success' })
-          setHostName('')
-          setHostAddr('')
-          setHostUser('everflow')
-          setHostPort('22')
-          setHostTags('')
-          setHostOpen(false)
-        }}
+        onSubmit={() => void submitHost()}
         isSubmitDisabled={!hostName.trim() || !hostAddr.trim()}
       >
         <FormGroup label="Display name" isRequired fieldId="dh-name">

@@ -372,55 +372,18 @@ class OpenCodeManager:
         api_url: str,
         token: str,
         project_id: str,
-        command: str = "everflow-mcp",
+        command: str | list[str] | None = None,
     ) -> dict[str, Any]:
         """Write MCP env + opencode.json entry. Returns status for ensure response."""
-        ws = Path(workspace)
-        ef = ws / ".everflow"
-        ef.mkdir(parents=True, exist_ok=True)
-        env_path = ef / "mcp.env"
-        try:
-            env_path.write_text(
-                f'EVERFLOW_API_URL="{api_url}"\n'
-                f'EVERFLOW_TOKEN="{token}"\n'
-                f'EVERFLOW_PROJECT_ID="{project_id}"\n',
-                encoding="utf-8",
-            )
-            try:
-                os.chmod(env_path, 0o600)
-            except OSError:
-                pass
-        except OSError as exc:
-            return {"configured": False, "error": f"write mcp.env failed: {exc}"}
+        from app.everflow_mcp_inject import write_everflow_mcp_host
 
-        mcp_cfg = {
-            "type": "local",
-            "command": [command],
-            "enabled": True,
-            "environment": {
-                "EVERFLOW_API_URL": api_url,
-                "EVERFLOW_TOKEN": token,
-                "EVERFLOW_PROJECT_ID": project_id,
-            },
-        }
-        # Preserve existing server port if present
-        port = DEFAULT_OPENCODE_PORT_BASE
-        cfg_path = ws / "opencode.json"
-        if cfg_path.exists():
-            try:
-                existing = json.loads(cfg_path.read_text(encoding="utf-8"))
-                if isinstance(existing, dict) and isinstance(existing.get("server"), dict):
-                    port = int(existing["server"].get("port") or port)
-            except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                pass
-        self._write_server_config(ws, port, mcp=mcp_cfg)
-        return {
-            "configured": True,
-            "command": command,
-            "env_path": str(env_path),
-            "project_id": project_id,
-            "api_url": api_url,
-        }
+        return write_everflow_mcp_host(
+            workspace,
+            api_url=api_url,
+            token=token,
+            project_id=project_id,
+            command=command,
+        )
 
     def _status_dict(self, inst: OpenCodeInstance, *, healthy: bool) -> dict[str, Any]:
         host_url = (

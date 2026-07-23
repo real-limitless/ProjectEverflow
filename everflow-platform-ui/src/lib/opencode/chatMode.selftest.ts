@@ -1,7 +1,7 @@
 /**
  * Run: npx tsx src/lib/opencode/chatMode.selftest.ts
  */
-import { modePolicyHint, openCodePromptForMode } from './chatMode'
+import { mcpToolsDenyMap, modePolicyHint, openCodePromptForMode } from './chatMode'
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg)
@@ -32,5 +32,12 @@ assert(!('agent' in auto), 'auto mode must not set agent')
 assert(modePolicyHint('ask').toLowerCase().includes('read'), 'ask hint')
 assert(modePolicyHint('edit').toLowerCase().includes('edit'), 'edit hint')
 assert(modePolicyHint('auto').toLowerCase().includes('auto'), 'auto hint')
+
+// --- MCP deny map ---
+const deny = mcpToolsDenyMap(['everflow', 'github', 'slack'], ['everflow'])
+assert(deny['github_*'] === false, 'denies unchecked github')
+assert(deny['slack_*'] === false, 'denies unchecked slack')
+assert(deny['everflow_*'] === undefined, 'does not deny checked everflow')
+assert(Object.keys(mcpToolsDenyMap(['everflow'], ['everflow'])).length === 0, 'all enabled → empty')
 
 console.log('chatMode.selftest: ok')

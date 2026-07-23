@@ -235,6 +235,47 @@ class SandboxAgentClient:
             params={"probe": "true" if probe else "false"},
         )
 
+    async def create_job(
+        self,
+        name: str,
+        *,
+        title: str,
+        command: str,
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"title": title, "command": command}
+        if cwd is not None:
+            payload["cwd"] = cwd
+        return await self._request(
+            "POST",
+            f"/v1/sandboxes/{name}/jobs",
+            json=payload,
+            expected=(201, 200),
+        )
+
+    async def list_jobs(self, name: str) -> list[dict[str, Any]]:
+        data = await self._request("GET", f"/v1/sandboxes/{name}/jobs")
+        return list(data) if isinstance(data, list) else []
+
+    async def get_job_logs(
+        self,
+        name: str,
+        job_id: str,
+        *,
+        tail: int = 200,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            f"/v1/sandboxes/{name}/jobs/{job_id}/logs",
+            params={"tail": tail},
+        )
+
+    async def kill_job(self, name: str, job_id: str) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/v1/sandboxes/{name}/jobs/{job_id}/kill",
+        )
+
     async def preview_proxy_stream(
         self,
         name: str,

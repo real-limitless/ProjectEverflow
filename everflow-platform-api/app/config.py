@@ -101,6 +101,15 @@ class Settings(BaseSettings):
     workflows_scheduler_enabled: bool = True
     workflows_scheduler_interval_seconds: float = 60.0
 
+    # SearXNG (compose service DNS; local default for host-run API)
+    searxng_url: str = "http://localhost:8080"
+
+    # HTTP tools: outbound fetch SSRF policy
+    # When true, allow RFC1918 / loopback (docker/sandbox-internal). Link-local +
+    # cloud metadata (169.254.169.254) remain blocked either way.
+    http_tools_allow_sandbox_internal: bool = False
+    http_tools_request_timeout_seconds: float = 30.0
+
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")

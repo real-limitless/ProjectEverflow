@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Button,
   FormGroup,
@@ -9,6 +9,15 @@ import {
 } from '@patternfly/react-core'
 import { CreateResourceModal } from '@/components/studio/CreateResourceModal'
 import { EmptySplash } from '@/components/studio/EmptySplash'
+import { getProject } from '@/data/projects'
+import {
+  createTestCase as createApiTestCase,
+  createTestSuite,
+  isDemoMode,
+  listTestSuites,
+  runTestSuite,
+} from '@/lib/api'
+import { mapApiTestRun, mapApiTestSuite } from '@/lib/studioMap'
 import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { useProjectStudio, useStudioDemoStore } from '@/store/studioDemoStore'
@@ -16,9 +25,13 @@ import type { TestCaseType } from '@/types/studio'
 
 export function TestsPanel() {
   const projectId = usePlaygroundStore((s) => s.currentProjectId) || 'default'
+  const project = getProject(projectId === 'default' ? null : projectId)
+  const useApi = Boolean(project?.fromApi) && !isDemoMode()
+
   const studio = useProjectStudio(projectId)
   const suites = studio.testSuites
   const lastRun = studio.lastTestRun
+  const replaceSuites = useStudioDemoStore((s) => s.update)
   const createSuite = useStudioDemoStore((s) => s.createSuite)
   const createTestCase = useStudioDemoStore((s) => s.createTestCase)
   const runSuite = useStudioDemoStore((s) => s.runSuite)
@@ -30,6 +43,136 @@ export function TestsPanel() {
   const [caseName, setCaseName] = useState('')
   const [caseType, setCaseType] = useState<TestCaseType>('unit')
   const [caseCmd, setCaseCmd] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [running, setRunning] = useState(false)
+
+  const refreshApi = useCallback(async () => {
+    if (!useApi) return
+    setLoading(true)
+    try {
+      const list = await listTestSuites(projectId)
+      const mapped = list.map(mapApiTestSuite)
+      replaceSuites(projectId, (s) => ({ ...s, testSuites: mapped }))
+      setActiveSuite((prev) => {
+        if (prev && mapped.some((x) => x.id === prev)) return prev
+        return mapped[0]?.id ?? ''
+      })
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Failed to load test suites', {
+        kind: 'danger',
+      })
+    } finally {
+      setLoading(false)
+    }
+  }, [projectId, replaceSuites, useApi])
+
+  useEffect(() => {
+    void refreshApi()
+  }, [refreshApi])
+
+  useEffect(() => {
+    if (!useApi) return
+
+    const prev = useStudioDemoStore.getState()
+    const prevCreateSuite = prev.createSuite
+    const prevCreateCase = prev.createTestCase
+    const prevRunSuite = prev.runSuite
+
+    useStudioDemoStore.setState({
+      createSuite: (pid, name) => {
+        if (pid !== projectId) {
+          prevCreateSuite(pid, name)
+          return
+        }
+        prevCreateSuite(pid, name)
+        void (async () => {
+          try {
+            const created = await createTestSuite(pid, { name })
+            const mapped = mapApiTestSuite(created)
+            useStudioDemoStore.getState().update(pid, (s) => {
+              // Replace optimistic local suite (uid prefix) with API row
+              let replaced = false
+              const next = s.testSuites.map((x) => {
+                if (
+                  !replaced &&
+                  x.name === name &&
+                  x.cases.length === 0 &&
+                  !/^[0-9a-f-]{36}$/i.test(x.id)
+                ) {
+                  replaced = true
+                  return mapped
+                }
+                return x
+              })
+              return {
+                ...s,
+                testSuites: replaced ? next : [...next.filter((x) => x.id !== mapped.id), mapped],
+              }
+            })
+            setActiveSuite(mapped.id)
+          } catch (e) {
+            await refreshApi()
+            pushToast(e instanceof Error ? e.message : 'Create suite failed', { kind: 'danger' })
+          }
+        })()
+      },
+      createTestCase: (pid, suiteId, data) => {
+        if (pid !== projectId) {
+          prevCreateCase(pid, suiteId, data)
+          return
+        }
+        prevCreateCase(pid, suiteId, data)
+        void (async () => {
+          try {
+            await createApiTestCase(pid, suiteId, {
+              name: data.name,
+              type: data.type,
+              command: data.command,
+            })
+            await refreshApi()
+          } catch (e) {
+            await refreshApi()
+            pushToast(e instanceof Error ? e.message : 'Create test case failed', {
+              kind: 'danger',
+            })
+          }
+        })()
+      },
+      runSuite: (pid, suiteId) => {
+        if (pid !== projectId) {
+          prevRunSuite(pid, suiteId)
+          return
+        }
+        void (async () => {
+          setRunning(true)
+          try {
+            const result = await runTestSuite(pid, suiteId)
+            await refreshApi()
+            useStudioDemoStore.getState().update(pid, (s) => ({
+              ...s,
+              lastTestRun: mapApiTestRun(result),
+            }))
+            pushToast('Suite run finished', {
+              description: result.summary,
+              kind: result.status === 'passed' ? 'success' : 'warning',
+            })
+          } catch (e) {
+            pushToast(e instanceof Error ? e.message : 'Suite run failed', { kind: 'danger' })
+          } finally {
+            setRunning(false)
+          }
+        })()
+      },
+    })
+
+    return () => {
+      useStudioDemoStore.setState({
+        createSuite: prevCreateSuite,
+        createTestCase: prevCreateCase,
+        runSuite: prevRunSuite,
+      })
+    }
+  }, [projectId, refreshApi, useApi])
 
   const suite = suites.find((s) => s.id === activeSuite) ?? suites[0]
 
@@ -37,7 +180,7 @@ export function TestsPanel() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div className="panel-toolbar">
         <span className="section-label" style={{ margin: 0 }}>
-          Tests
+          Tests{useApi && loading ? '…' : ''}
         </span>
         <div style={{ display: 'flex', gap: 6 }}>
           <Button variant="secondary" size="sm" onClick={() => setSuiteOpen(true)}>
@@ -54,11 +197,17 @@ export function TestsPanel() {
           <Button
             variant="primary"
             size="sm"
-            isDisabled={!suite}
+            isDisabled={!suite || running}
+            isLoading={running}
             onClick={() => {
               if (!suite) return
               runSuite(projectId, suite.id)
-              pushToast('Suite run finished', { description: 'Demo results applied', kind: 'success' })
+              if (!useApi) {
+                pushToast('Suite run finished', {
+                  description: 'Results updated for this suite.',
+                  kind: 'success',
+                })
+              }
             }}
           >
             Run suite
@@ -115,10 +264,16 @@ export function TestsPanel() {
                     <div className="lc-title">{c.name}</div>
                     <Label
                       color={
-                        c.lastStatus === 'failed' ? 'red' : c.lastStatus === 'skipped' ? 'grey' : 'green'
+                        c.lastStatus === 'failed'
+                          ? 'red'
+                          : c.lastStatus === 'skipped'
+                            ? 'grey'
+                            : c.lastStatus === 'passed'
+                              ? 'green'
+                              : 'grey'
                       }
                     >
-                      {c.type} · {c.lastStatus ?? 'unrun'}
+                      {c.type} · {c.lastStatus ?? 'pending'}
                     </Label>
                   </div>
                   <div className="lc-meta" style={{ fontFamily: 'var(--mono)' }}>
@@ -183,7 +338,6 @@ export function TestsPanel() {
             name: caseName.trim(),
             type: caseType,
             command: caseCmd || `test ${caseName.trim()}`,
-            lastStatus: 'passed',
           })
           pushToast('Test case created', { kind: 'success' })
           setCaseName('')

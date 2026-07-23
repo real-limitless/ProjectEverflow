@@ -12,7 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.auth import require_agent_token
 from app.config import Settings, get_settings
-from app.msb import SandboxBackend
+from app.msb import SandboxBackend, is_missing_path_error
 from app.opencode_mgr import get_opencode_manager
 from app.opencode_proxy import proxy_to_opencode, proxy_to_opencode_guest
 from app.guest_tunnel import resolve_dial_target
@@ -24,6 +24,7 @@ from app.opencode_harness import (
     read_pack_from_workspace,
     read_pack_via_backend,
 )
+from app.jobs import get_job_logs, kill_job, list_jobs, start_job
 from app.schemas import (
     BootstrapRequest,
     ExecRequest,
@@ -31,6 +32,9 @@ from app.schemas import (
     FsEntry,
     FsWriteRequest,
     HealthResponse,
+    JobCreateRequest,
+    JobInfo,
+    JobLogsResponse,
     ListeningPortInfo,
     OpenCodeEnsureRequest,
     OpenCodeEnsureResponse,
@@ -252,6 +256,104 @@ async def exec_sandbox(
     return ExecResult(exit_code=code, stdout=stdout, stderr=stderr)
 
 
+def _job_info(meta: dict[str, Any]) -> JobInfo:
+    return JobInfo(
+        id=str(meta.get("id") or ""),
+        title=str(meta.get("title") or ""),
+        command=str(meta.get("command") or ""),
+        cwd=meta.get("cwd"),
+        pid=int(meta["pid"]) if meta.get("pid") is not None else None,
+        status=str(meta.get("status") or "unknown"),
+        log_path=meta.get("log_path"),
+        created_at=meta.get("created_at"),
+        updated_at=meta.get("updated_at"),
+        exit_code=meta.get("exit_code"),
+    )
+
+
+@router.post(
+    "/v1/sandboxes/{name}/jobs",
+    response_model=JobInfo,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_agent_token)],
+)
+async def create_job(
+    name: str,
+    body: JobCreateRequest,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> JobInfo:
+    await _require_running_sandbox(name, backend)
+    try:
+        meta = await start_job(
+            backend,
+            name,
+            title=body.title,
+            command=body.command,
+            cwd=body.cwd,
+        )
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found") from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _job_info(meta)
+
+
+@router.get(
+    "/v1/sandboxes/{name}/jobs",
+    response_model=list[JobInfo],
+    dependencies=[Depends(require_agent_token)],
+)
+async def list_sandbox_jobs(
+    name: str,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> list[JobInfo]:
+    await _require_running_sandbox(name, backend)
+    try:
+        jobs = await list_jobs(backend, name)
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found") from None
+    return [_job_info(j) for j in jobs]
+
+
+@router.get(
+    "/v1/sandboxes/{name}/jobs/{job_id}/logs",
+    response_model=JobLogsResponse,
+    dependencies=[Depends(require_agent_token)],
+)
+async def job_logs(
+    name: str,
+    job_id: str,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+    tail: int = Query(default=200, ge=1, le=5000),
+) -> JobLogsResponse:
+    await _require_running_sandbox(name, backend)
+    try:
+        data = await get_job_logs(backend, name, job_id, tail=tail)
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+    return JobLogsResponse(**data)
+
+
+@router.post(
+    "/v1/sandboxes/{name}/jobs/{job_id}/kill",
+    response_model=JobInfo,
+    dependencies=[Depends(require_agent_token)],
+)
+async def kill_sandbox_job(
+    name: str,
+    job_id: str,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> JobInfo:
+    await _require_running_sandbox(name, backend)
+    try:
+        meta = await kill_job(backend, name, job_id)
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _job_info(meta)
+
+
 @router.post(
     "/v1/sandboxes/{name}/bootstrap",
     response_model=SandboxInfo,
@@ -308,9 +410,23 @@ async def read_fs(
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found") from None
     except FileNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Path not found") from None
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Path not found: {path}",
+        ) from None
     except PermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except OSError as exc:
+        # Belt-and-suspenders: microsandbox FilesystemError may surface as OSError.
+        if is_missing_path_error(exc):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Path not found: {path}",
+            ) from None
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Sandbox filesystem error: {exc}",
+        ) from exc
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
@@ -467,7 +583,11 @@ async def opencode_ensure(
     can reach the platform API via 127.0.0.1 inside the guest.
     """
     from app.api_tunnel import get_api_tunnel_manager
-    from app.everflow_mcp_inject import write_everflow_mcp_guest, write_everflow_mcp_host
+    from app.everflow_mcp_inject import (
+        ensure_everflow_mcp_package,
+        write_everflow_mcp_guest,
+        write_everflow_mcp_host,
+    )
 
     rec = await _require_running_sandbox(name, backend)
     mgr = get_opencode_manager()
@@ -493,6 +613,19 @@ async def opencode_ensure(
 
         guest_api_url = agent_platform_url
         tunnel_info: dict[str, Any] | None = None
+        package_status: dict[str, Any] | None = None
+
+        if guest:
+            # Stale guest images often lack everflow_mcp; install from agent bundle.
+            package_status = await ensure_everflow_mcp_package(backend, name)
+            if not package_status.get("installed"):
+                mcp_status = {
+                    "configured": False,
+                    "error": package_status.get("error") or "everflow_mcp not installed in guest",
+                    "package": package_status,
+                    "mode": "guest",
+                }
+                return
 
         if guest and agent_platform_url:
             async def _kill_guest_port(sandbox_name: str, listen_port: int) -> None:
@@ -528,7 +661,8 @@ async def opencode_ensure(
 
         # Host-mode OpenCode runs on agent host — use body URL or agent platform URL.
         host_api_url = (body.everflow_api_url or agent_platform_url).rstrip("/")
-        command = body.everflow_mcp_command or "everflow-mcp"
+        # None / "everflow-mcp" → python3 -m everflow_mcp (PATH-safe) in inject.
+        command = body.everflow_mcp_command
 
         if guest:
             mcp_status = await write_everflow_mcp_guest(
@@ -549,6 +683,8 @@ async def opencode_ensure(
             )
         if mcp_status is not None and tunnel_info is not None:
             mcp_status = {**mcp_status, "tunnel": tunnel_info}
+        if mcp_status is not None and package_status is not None:
+            mcp_status = {**mcp_status, "package": package_status}
         # Config changed — force OpenCode restart so it reloads MCP servers.
         if mcp_status and mcp_status.get("configured"):
             force = True
@@ -575,7 +711,7 @@ async def opencode_ensure(
                     api_url=(body.everflow_api_url or cfg.platform_api_url or "").rstrip("/"),
                     token=body.everflow_token,
                     project_id=body.everflow_project_id or "",
-                    command=body.everflow_mcp_command or "everflow-mcp",
+                    command=body.everflow_mcp_command,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.debug("host mirror mcp write ignored: %s", exc)

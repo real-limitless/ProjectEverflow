@@ -194,6 +194,84 @@ class EverflowClient:
             expect_empty=True,
         )
 
+    # --- tests ---
+
+    def list_test_suites(self) -> list[dict[str, Any]]:
+        data = self.request("GET", f"/api/v1/projects/{self.project_id}/tests/suites")
+        return data if isinstance(data, list) else []
+
+    def create_test_suite(self, *, name: str, description: str | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {"name": name}
+        if description is not None:
+            body["description"] = description
+        return self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/tests/suites",
+            json_body=body,
+        )
+
+    def create_test_case(
+        self,
+        suite_id: str,
+        *,
+        name: str,
+        type: str = "unit",
+        command: str = "",
+    ) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/tests/suites/{suite_id}/cases",
+            json_body={"name": name, "type": type, "command": command},
+        )
+
+    def update_test_case(self, suite_id: str, case_id: str, **fields: Any) -> dict[str, Any]:
+        return self.request(
+            "PATCH",
+            f"/api/v1/projects/{self.project_id}/tests/suites/{suite_id}/cases/{case_id}",
+            json_body={k: v for k, v in fields.items() if v is not None},
+        )
+
+    def delete_test_case(self, suite_id: str, case_id: str) -> None:
+        self.request(
+            "DELETE",
+            f"/api/v1/projects/{self.project_id}/tests/suites/{suite_id}/cases/{case_id}",
+            expect_empty=True,
+        )
+
+    def run_test_suite(self, suite_id: str) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/tests/suites/{suite_id}/run",
+        )
+
+    # --- http tools ---
+
+    def list_http_tools(self) -> list[dict[str, Any]]:
+        data = self.request("GET", f"/api/v1/projects/{self.project_id}/http-tools")
+        return data if isinstance(data, list) else []
+
+    def call_http_tool(
+        self,
+        tool_id: str,
+        *,
+        path_params: dict[str, str] | None = None,
+        query: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+        body: Any | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "path_params": path_params or {},
+            "query": query or {},
+            "headers": headers or {},
+        }
+        if body is not None:
+            payload["body"] = body
+        return self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/http-tools/{tool_id}/execute",
+            json_body=payload,
+        )
+
 
 def dumps(data: Any) -> str:
     return json.dumps(data, indent=2, default=str)

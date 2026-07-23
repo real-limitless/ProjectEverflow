@@ -14,11 +14,10 @@ export function HarnessesStep({ draft, onChange }: HarnessesStepProps) {
       onChange={(harnessIds) => onChange({ harnessIds })}
       lead={
         <>
-          Harnesses run in the backend — CI, preview environments, databases, and AI
-          sandbox tools. These are <strong>starting defaults</strong> only. After the
-          project is created you can add, remove, or change harnesses anytime from{' '}
-          <strong>Project settings</strong> (gear on the project bar, or right-click a
-          project tab).
+          Harnesses run in the sandbox — agent CLIs, Postgres tools, and related
+          installers. Your selection is applied when the sandbox is provisioned. After
+          create, change them anytime in <strong>Project settings</strong>; saving
+          reconfigures or recreates the sandbox.
         </>
       }
     />

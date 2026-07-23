@@ -13,8 +13,11 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.agent import ProjectAgent
+    from app.models.deploy import DeployNode, DeploySshKey
+    from app.models.http_tool import ProjectHttpTool
     from app.models.knowledge import KnowledgeCanvas
     from app.models.organization import Organization
+    from app.models.test_suite import TestSuite
     from app.models.workflow import Workflow
 
 
@@ -36,6 +39,10 @@ class Project(Base):
     # Catalog of attached git remotes (cloned into sandbox workspace after provision).
     # List of dicts: id, label, url, branch, provider, local_path, clone_status, clone_error
     repos: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True, default=list)
+
+    # Enabled sandbox harness ids (strings) or {id, label?, enabled?} dicts.
+    # Applied on provision / bootstrap when the user changes Project Settings → Harnesses.
+    harnesses: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True, default=list)
 
     # microsandbox lifecycle (provisioned via internal sandbox-agent)
     sandbox_name: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
@@ -69,6 +76,26 @@ class Project(Base):
     )
     workflows: Mapped[list["Workflow"]] = relationship(
         "Workflow",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    test_suites: Mapped[list["TestSuite"]] = relationship(
+        "TestSuite",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    http_tools: Mapped[list["ProjectHttpTool"]] = relationship(
+        "ProjectHttpTool",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    deploy_ssh_keys: Mapped[list["DeploySshKey"]] = relationship(
+        "DeploySshKey",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    deploy_nodes: Mapped[list["DeployNode"]] = relationship(
+        "DeployNode",
         back_populates="project",
         cascade="all, delete-orphan",
     )

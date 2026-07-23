@@ -26,6 +26,8 @@ import {
   TabTitleText,
   TextInput,
 } from '@patternfly/react-core'
+import AngleLeftIcon from '@patternfly/react-icons/dist/esm/icons/angle-left-icon'
+import AngleRightIcon from '@patternfly/react-icons/dist/esm/icons/angle-right-icon'
 import CubesIcon from '@patternfly/react-icons/dist/esm/icons/cubes-icon'
 import SyncAltIcon from '@patternfly/react-icons/dist/esm/icons/sync-alt-icon'
 import {
@@ -43,7 +45,21 @@ import { usePlaygroundStore } from '@/store/playgroundStore'
 type DeviceMode = 'full' | 'desktop' | 'tablet' | 'mobile'
 type FramedDevice = Exclude<DeviceMode, 'full'>
 
+type PreviewNavState = { stack: string[]; index: number }
+
+const PREVIEW_NAV_MSG = 'everflow-preview-nav'
+const PREVIEW_HISTORY_MSG = 'everflow-preview-history'
+
 const PORT_POLL_MS = 4000
+
+/** Everflow / Desktop internals — never offer as Preview app targets (client guard). */
+const PREVIEW_EXCLUDED_PORTS = new Set([
+  22, // ssh
+  4096, // OpenCode
+  5900, // x11vnc
+  6080, // noVNC (Desktop panel)
+  18765, // Everflow MCP API tunnel
+])
 
 /** Responsive preset widths (px). Full mode uses 100% of the panel. */
 const PRESET_WIDTH: Record<FramedDevice, number> = {
@@ -266,6 +282,32 @@ function joinOriginAndPath(origin: string, path: string): string {
   }
 }
 
+/** Normalize a preview path for the address bar (drop ticket query param). */
+function normalizePreviewPath(path: string): string {
+  const raw = path.trim() || '/'
+  const withSlash = raw.startsWith('/') ? raw : `/${raw}`
+  try {
+    const u = new URL(withSlash, 'http://preview.local')
+    u.searchParams.delete('ticket')
+    const q = u.searchParams.toString()
+    return `${u.pathname || '/'}${q ? `?${q}` : ''}${u.hash}` || '/'
+  } catch {
+    return withSlash
+  }
+}
+
+function pushPreviewNav(prev: PreviewNavState, path: string): PreviewNavState {
+  const p = normalizePreviewPath(path)
+  if (prev.stack[prev.index] === p) return prev
+  const stack = prev.stack.slice(0, prev.index + 1)
+  stack.push(p)
+  return { stack, index: stack.length - 1 }
+}
+
+function resetPreviewNav(path = '/'): PreviewNavState {
+  return { stack: [normalizePreviewPath(path)], index: 0 }
+}
+
 export function PreviewPanel() {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
   const demo = isDemoMode()
@@ -296,11 +338,28 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
   const [endpoint, setEndpoint] = useState<PreviewEndpoint | null>(null)
   const [iframeSrc, setIframeSrc] = useState<string | null>(null)
   const [pathInput, setPathInput] = useState('/')
+  const [nav, setNav] = useState<PreviewNavState>(() => resetPreviewNav('/'))
   const [selectOpen, setSelectOpen] = useState(false)
   const [mintError, setMintError] = useState<string | null>(null)
   const [minting, setMinting] = useState(false)
   const [tick, setTick] = useState(0)
   const remintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const expectHistoryNav = useRef(false)
+  /** True when the current iframe document still has usable session history (SPA / in-frame nav). */
+  const iframeHistoryLive = useRef(false)
+
+  const previewOrigin = useMemo(() => {
+    if (!endpoint?.url) return null
+    try {
+      return new URL(endpoint.url).origin
+    } catch {
+      return null
+    }
+  }, [endpoint?.url])
+
+  const canGoBack = nav.index > 0
+  const canGoForward = nav.index < nav.stack.length - 1
 
   const pollPorts = useCallback(async () => {
     if (!projectId) {
@@ -310,7 +369,13 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
     setLoadingPorts(true)
     try {
       const res = await listSandboxPorts(projectId)
-      setPorts(res.ports || [])
+      setPorts(
+        (res.ports || []).filter(
+          (p) =>
+            !PREVIEW_EXCLUDED_PORTS.has(p.port) &&
+            !(p.port >= 14100 && p.port < 14200),
+        ),
+      )
       setPortsError(null)
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to list ports'
@@ -350,9 +415,10 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
       setMintError(null)
       try {
         const ep = await createPreviewEndpoint(projectId, port)
+        const cleaned = normalizePreviewPath(path)
         setEndpoint(ep)
-        setIframeSrc(previewIframeSrc(ep, path))
-        setPathInput(path.startsWith('/') ? path : `/${path}`)
+        setIframeSrc(previewIframeSrc(ep, cleaned))
+        setPathInput(cleaned)
 
         if (remintTimer.current) clearTimeout(remintTimer.current)
         // Remint ~60s before expiry
@@ -373,6 +439,7 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
 
   useEffect(() => {
     if (selectedPort == null || !projectId) return
+    setNav(resetPreviewNav(pathInput || '/'))
     void mint(selectedPort, pathInput || '/')
     return () => {
       if (remintTimer.current) clearTimeout(remintTimer.current)
@@ -387,12 +454,15 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
     setSelectedPort(port)
     setSelectOpen(false)
     setPathInput('/')
+    setNav(resetPreviewNav('/'))
   }
 
   const applyPath = (path: string) => {
-    const cleaned = path.trim() || '/'
-    const withSlash = cleaned.startsWith('/') ? cleaned : `/${cleaned}`
+    const withSlash = normalizePreviewPath(path)
     setPathInput(withSlash)
+    setNav((prev) => pushPreviewNav(prev, withSlash))
+    // Address-bar loads remount the frame (tick) and clear iframe session history.
+    iframeHistoryLive.current = false
     if (endpoint) {
       setIframeSrc(previewIframeSrc(endpoint, withSlash))
       setTick((t) => t + 1)
@@ -400,6 +470,62 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
       void mint(selectedPort, withSlash)
     }
   }
+
+  const goHistory = (delta: -1 | 1) => {
+    const next = nav.index + delta
+    if (next < 0 || next >= nav.stack.length) return
+    const target = nav.stack[next]
+    expectHistoryNav.current = true
+    setNav((prev) => ({ ...prev, index: next }))
+    setPathInput(target)
+    if (
+      iframeHistoryLive.current &&
+      iframeRef.current?.contentWindow &&
+      previewOrigin
+    ) {
+      iframeRef.current.contentWindow.postMessage(
+        { type: PREVIEW_HISTORY_MSG, delta },
+        previewOrigin,
+      )
+      return
+    }
+    // Fallback: parent path stack for address-bar navigations / remounted iframe
+    if (endpoint) {
+      setIframeSrc(previewIframeSrc(endpoint, target))
+      setTick((t) => t + 1)
+    }
+  }
+
+  useEffect(() => {
+    if (!previewOrigin) return
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== previewOrigin) return
+      const data = event.data
+      if (!data || data.type !== PREVIEW_NAV_MSG || typeof data.path !== 'string') return
+      const path = normalizePreviewPath(data.path)
+      setPathInput(path)
+      if (expectHistoryNav.current) {
+        expectHistoryNav.current = false
+        setNav((prev) => {
+          if (prev.stack[prev.index] === path) return prev
+          const stack = [...prev.stack]
+          stack[prev.index] = path
+          return { ...prev, stack }
+        })
+        return
+      }
+      setNav((prev) => {
+        // In-frame SPA/hash nav — enable postMessage back/forward.
+        // Ignore the bridge's initial report when it matches the stack tip.
+        if (prev.stack[prev.index] !== path) {
+          iframeHistoryLive.current = true
+        }
+        return pushPreviewNav(prev, path)
+      })
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [previewOrigin])
 
   const refresh = () => {
     if (selectedPort != null) {
@@ -453,6 +579,26 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
             viewportWidth={viewportWidth}
           />
           <InputGroup className="preview-address-group">
+            <InputGroupItem>
+              <Button
+                variant="control"
+                className="preview-nav-btn"
+                aria-label="Back"
+                isDisabled={!selectedPort || !canGoBack}
+                onClick={() => goHistory(-1)}
+                icon={<AngleLeftIcon />}
+              />
+            </InputGroupItem>
+            <InputGroupItem>
+              <Button
+                variant="control"
+                className="preview-nav-btn"
+                aria-label="Forward"
+                isDisabled={!selectedPort || !canGoForward}
+                onClick={() => goHistory(1)}
+                icon={<AngleRightIcon />}
+              />
+            </InputGroupItem>
             <InputGroupItem isFill>
               <TextInput
                 value={pathInput}
@@ -532,6 +678,7 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
           )}
           {iframeSrc && (
             <iframe
+              ref={iframeRef}
               title="Sandbox preview"
               src={iframeSrc}
               className="preview-iframe"
@@ -567,16 +714,24 @@ function DemoPreviewPanel({ projectId }: { projectId: string | null }) {
   const [pathInput, setPathInput] = useState(() =>
     urlToPath(services[0]?.url || 'http://localhost:5173'),
   )
+  const [nav, setNav] = useState<PreviewNavState>(() =>
+    resetPreviewNav(urlToPath(services[0]?.url || 'http://localhost:5173')),
+  )
   const [selectOpen, setSelectOpen] = useState(false)
   const [tick, setTick] = useState(0)
+
+  const canGoBack = nav.index > 0
+  const canGoForward = nav.index < nav.stack.length - 1
 
   useEffect(() => {
     const list = getPreviewServices(projectId)
     const first = list[0]
     const nextUrl = first?.url || 'http://localhost:5173'
+    const nextPath = urlToPath(nextUrl)
     setServiceId(first?.id || 'web')
     setUrl(nextUrl)
-    setPathInput(urlToPath(nextUrl))
+    setPathInput(nextPath)
+    setNav(resetPreviewNav(nextPath))
   }, [projectId])
 
   const service = services.find((s) => s.id === serviceId) || services[0]
@@ -585,21 +740,35 @@ function DemoPreviewPanel({ projectId }: { projectId: string | null }) {
   const selectService = (id: string) => {
     const s = services.find((x) => x.id === id)
     if (!s) return
+    const nextPath = urlToPath(s.url)
     setServiceId(id)
     setUrl(s.url)
-    setPathInput(urlToPath(s.url))
+    setPathInput(nextPath)
+    setNav(resetPreviewNav(nextPath))
     setSelectOpen(false)
   }
 
-  const applyPath = (path: string) => {
+  const applyPath = (path: string, opts?: { record?: boolean }) => {
     const next = joinOriginAndPath(origin, path)
+    const nextPath = urlToPath(next)
     setUrl(next)
-    setPathInput(urlToPath(next))
+    setPathInput(nextPath)
+    if (opts?.record !== false) {
+      setNav((prev) => pushPreviewNav(prev, nextPath))
+    }
     setTick((t) => t + 1)
   }
 
+  const goHistory = (delta: -1 | 1) => {
+    const next = nav.index + delta
+    if (next < 0 || next >= nav.stack.length) return
+    const target = nav.stack[next]
+    setNav((prev) => ({ ...prev, index: next }))
+    applyPath(target, { record: false })
+  }
+
   const refresh = () => {
-    applyPath(pathInput)
+    applyPath(pathInput, { record: false })
   }
 
   const displayPath = urlToPath(url)
@@ -638,6 +807,26 @@ function DemoPreviewPanel({ projectId }: { projectId: string | null }) {
             viewportWidth={viewportWidth}
           />
           <InputGroup className="preview-address-group">
+            <InputGroupItem>
+              <Button
+                variant="control"
+                className="preview-nav-btn"
+                aria-label="Back"
+                isDisabled={!canGoBack}
+                onClick={() => goHistory(-1)}
+                icon={<AngleLeftIcon />}
+              />
+            </InputGroupItem>
+            <InputGroupItem>
+              <Button
+                variant="control"
+                className="preview-nav-btn"
+                aria-label="Forward"
+                isDisabled={!canGoForward}
+                onClick={() => goHistory(1)}
+                icon={<AngleRightIcon />}
+              />
+            </InputGroupItem>
             <InputGroupItem isFill>
               <TextInput
                 value={pathInput}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -11,10 +12,40 @@ from app.opencode_harness import OPENCODE_JSON, _guest_read_text, _guest_write_t
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MCP_COMMAND = "everflow-mcp"
+# Prefer python -m so OpenCode's minimal PATH does not need /usr/local/bin.
+# Bare "everflow-mcp" fails with: Executable not found in $PATH: "everflow-mcp"
+DEFAULT_MCP_COMMAND: list[str] = ["python3", "-m", "everflow_mcp"]
 MCP_ENV_REL = ".everflow/mcp.env"
 # Local listener inside guest for API reverse tunnel
 DEFAULT_GUEST_API_PORT = 18765
+# Agent image ships the package here (deploy/sandbox-agent.Dockerfile).
+AGENT_MCP_ROOT = Path(os.environ.get("EVERFLOW_MCP_SRC", "/opt/everflow-mcp"))
+# Copied into guest when the microVM image was built without everflow-mcp.
+GUEST_MCP_VENDOR_REL = ".everflow/vendor/everflow-mcp"
+# Files required for a pip-installable tree (tests/docs optional).
+_VENDOR_FILES = (
+    "pyproject.toml",
+    "README.md",
+    "src/everflow_mcp/__init__.py",
+    "src/everflow_mcp/__main__.py",
+    "src/everflow_mcp/client.py",
+    "src/everflow_mcp/server.py",
+)
+
+
+def _normalize_command(command: str | list[str] | None) -> list[str]:
+    if command is None:
+        return list(DEFAULT_MCP_COMMAND)
+    if isinstance(command, list):
+        parts = [str(c) for c in command if str(c).strip()]
+        return parts or list(DEFAULT_MCP_COMMAND)
+    text = str(command).strip()
+    if not text:
+        return list(DEFAULT_MCP_COMMAND)
+    # Legacy single binary name → module invocation (PATH-safe)
+    if text == "everflow-mcp" or text.endswith("/everflow-mcp"):
+        return list(DEFAULT_MCP_COMMAND)
+    return [text]
 
 
 def build_everflow_mcp_config(
@@ -22,17 +53,107 @@ def build_everflow_mcp_config(
     api_url: str,
     token: str,
     project_id: str,
-    command: str = DEFAULT_MCP_COMMAND,
+    command: str | list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "type": "local",
-        "command": [command],
+        "command": _normalize_command(command),
         "enabled": True,
         "environment": {
             "EVERFLOW_API_URL": api_url,
             "EVERFLOW_TOKEN": token,
             "EVERFLOW_PROJECT_ID": project_id,
         },
+    }
+
+
+async def ensure_everflow_mcp_package(backend: Any, sandbox_name: str) -> dict[str, Any]:
+    """Ensure ``everflow_mcp`` is importable inside the guest.
+
+    Prebaked guest images include it; older/stale images do not. When missing,
+    copy the agent-bundled source into the workspace and ``pip install`` it so
+    OpenCode's ``python3 -m everflow_mcp`` MCP entry can start.
+    """
+    try:
+        code, _stdout, _stderr = await backend.exec(
+            sandbox_name,
+            "python3",
+            ["-c", "import everflow_mcp; print('ok')"],
+            cwd="/workspace",
+            timeout_seconds=20,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("everflow_mcp probe failed name=%s: %s", sandbox_name, exc)
+        return {"installed": False, "error": f"probe failed: {exc}"}
+
+    if code == 0:
+        return {"installed": True, "source": "existing"}
+
+    if not AGENT_MCP_ROOT.is_dir():
+        return {
+            "installed": False,
+            "error": f"agent package missing at {AGENT_MCP_ROOT}",
+            "source": "vendor",
+        }
+
+    missing = [rel for rel in _VENDOR_FILES if not (AGENT_MCP_ROOT / rel).is_file()]
+    if missing:
+        return {
+            "installed": False,
+            "error": f"incomplete agent package (missing {missing[0]})",
+            "source": "vendor",
+        }
+
+    try:
+        for rel in _VENDOR_FILES:
+            body = (AGENT_MCP_ROOT / rel).read_text(encoding="utf-8")
+            await _guest_write_text(
+                backend,
+                sandbox_name,
+                f"{GUEST_MCP_VENDOR_REL}/{rel}",
+                body,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("everflow_mcp vendor copy failed name=%s: %s", sandbox_name, exc)
+        return {"installed": False, "error": f"vendor copy failed: {exc}", "source": "vendor"}
+
+    install_sh = (
+        "set -eu; "
+        "export PIP_BREAK_SYSTEM_PACKAGES=1 PIP_DISABLE_PIP_VERSION_CHECK=1; "
+        f"pip3 install --no-cache-dir /workspace/{GUEST_MCP_VENDOR_REL}; "
+        "python3 -c 'import everflow_mcp; print(everflow_mcp.__file__)'"
+    )
+    try:
+        code, stdout, stderr = await backend.exec(
+            sandbox_name,
+            "sh",
+            ["-c", install_sh],
+            cwd="/workspace",
+            timeout_seconds=180,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("everflow_mcp pip install failed name=%s: %s", sandbox_name, exc)
+        return {"installed": False, "error": f"pip install failed: {exc}", "source": "vendor"}
+
+    if code != 0:
+        detail = (stderr or stdout or "pip install failed").strip()[:500]
+        logger.warning(
+            "everflow_mcp install exit=%s name=%s detail=%s",
+            code,
+            sandbox_name,
+            detail,
+        )
+        return {"installed": False, "error": detail, "source": "vendor"}
+
+    logger.info(
+        "everflow_mcp installed into guest name=%s path=%s",
+        sandbox_name,
+        (stdout or "").strip().splitlines()[-1] if stdout else "",
+    )
+    return {
+        "installed": True,
+        "source": "vendor",
+        "path": (stdout or "").strip().splitlines()[-1] if stdout else None,
     }
 
 
@@ -53,7 +174,7 @@ def write_everflow_mcp_host(
     api_url: str,
     token: str,
     project_id: str,
-    command: str = DEFAULT_MCP_COMMAND,
+    command: str | list[str] | None = None,
 ) -> dict[str, Any]:
     """Write MCP env + opencode.json on a host-accessible workspace path."""
     ws = Path(workspace)
@@ -92,10 +213,11 @@ def write_everflow_mcp_host(
     except OSError as exc:
         return {"configured": False, "error": f"write opencode.json failed: {exc}", "mode": "host"}
 
+    cmd = _normalize_command(command)
     return {
         "configured": True,
         "mode": "host",
-        "command": command,
+        "command": cmd,
         "env_path": str(env_path),
         "project_id": project_id,
         "api_url": api_url,
@@ -109,7 +231,7 @@ async def write_everflow_mcp_guest(
     api_url: str,
     token: str,
     project_id: str,
-    command: str = DEFAULT_MCP_COMMAND,
+    command: str | list[str] | None = None,
 ) -> dict[str, Any]:
     """Write MCP env + opencode.json into the guest workspace via write_fs."""
     mcp_cfg = build_everflow_mcp_config(
@@ -151,10 +273,11 @@ async def write_everflow_mcp_guest(
             "mode": "guest",
         }
 
+    cmd = _normalize_command(command)
     return {
         "configured": True,
         "mode": "guest",
-        "command": command,
+        "command": cmd,
         "env_path": f"/workspace/{MCP_ENV_REL}",
         "project_id": project_id,
         "api_url": api_url,

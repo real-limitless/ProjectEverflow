@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -41,6 +42,34 @@ DEAD_AGENT_STATUSES = frozenset(
 
 MISSING_ON_AGENT = "Sandbox not found on agent; recreate to restore"
 DEAD_ON_AGENT = "Sandbox is not running on agent; recreate to restore"
+
+
+def normalize_harness_ids(raw: list[Any] | None) -> list[str]:
+    """Accept string ids or {id, enabled?} dicts; return unique enabled ids."""
+    if not raw:
+        return []
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            s = item.strip()
+            if s:
+                out.append(s)
+            continue
+        if isinstance(item, dict):
+            if item.get("enabled", True) is False:
+                continue
+            hid = item.get("id")
+            if isinstance(hid, str) and hid.strip():
+                out.append(hid.strip())
+    return list(dict.fromkeys(out))
+
+
+def harness_ids_for_project(project: Project, settings: Settings) -> list[str]:
+    """Project harness selection, falling back to platform defaults."""
+    ids = normalize_harness_ids(project.harnesses)
+    if ids:
+        return ids
+    return list(settings.sandbox_default_harnesses)
 
 
 def make_sandbox_name(org_slug: str, project_slug: str) -> str:
@@ -124,7 +153,7 @@ async def provision_project_sandbox(
                 "everflow.org_id": str(project.organization_id),
                 "everflow.project_slug": project.slug,
             },
-            harnesses=list(settings.sandbox_default_harnesses),
+            harnesses=harness_ids_for_project(project, settings),
             workspace_host_path=f"/workspaces/{name}",
             replace=True,
         )
@@ -160,6 +189,55 @@ async def recreate_project_sandbox(
         client=client,
         force=True,
     )
+
+
+async def reconfigure_project_sandbox(
+    session: AsyncSession,
+    project: Project,
+    *,
+    settings: Settings | None = None,
+    client: SandboxAgentClient | None = None,
+    force_recreate: bool = False,
+    previous_harness_ids: list[str] | None = None,
+) -> tuple[Project, str]:
+    """Apply current project harnesses to the sandbox.
+
+    Returns (project, mode) where mode is ``bootstrap`` or ``recreate``.
+
+    - Running sandbox + only additions → in-place bootstrap
+    - Removals, force_recreate, or non-running → full recreate (async caller)
+    """
+    settings = settings or get_settings()
+    if not settings.sandbox_enabled:
+        raise SandboxAgentError("Sandbox disabled", status_code=503)
+
+    desired = harness_ids_for_project(project, settings)
+    prev = list(previous_harness_ids or [])
+    removed = bool(set(prev) - set(desired)) if prev else False
+    needs_recreate = (
+        force_recreate
+        or removed
+        or project.sandbox_status != "running"
+        or not project.sandbox_name
+    )
+
+    if needs_recreate:
+        return project, "recreate"
+
+    client = client or SandboxAgentClient(settings)
+    name = project.sandbox_name
+    assert name  # guarded by needs_recreate
+    try:
+        await client.bootstrap(name, desired)
+    except SandboxAgentError as exc:
+        if exc.status_code == 404:
+            await mark_sandbox_missing(session, project)
+            return project, "recreate"
+        raise
+    project.sandbox_error = None
+    await session.commit()
+    await session.refresh(project)
+    return project, "bootstrap"
 
 
 async def destroy_project_sandbox(

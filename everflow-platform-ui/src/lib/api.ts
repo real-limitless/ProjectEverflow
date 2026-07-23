@@ -146,6 +146,8 @@ export type ApiProject = {
   slug: string
   description: string | null
   repos?: ApiProjectRepo[] | null
+  /** Harness ids or {id, enabled?} objects persisted for sandbox bootstrap */
+  harnesses?: Array<string | { id: string; label?: string; enabled?: boolean }> | null
   sandbox_name?: string | null
   sandbox_status?: string
   sandbox_image?: string | null
@@ -163,6 +165,7 @@ export type SandboxStatus = {
   error?: string | null
   created_at?: string | null
   agent?: Record<string, unknown> | null
+  reconfigure_mode?: string | null
 }
 
 export type SandboxExecResult = {
@@ -208,6 +211,7 @@ export async function createProject(
       local_path?: string
       active?: boolean
     }>
+    harnesses?: string[]
   },
 ): Promise<ApiProject> {
   return apiFetch(`/api/v1/orgs/${orgId}/projects`, {
@@ -218,6 +222,23 @@ export async function createProject(
 
 export async function getProject(projectId: string): Promise<ApiProject> {
   return apiFetch(`/api/v1/projects/${projectId}`)
+}
+
+export async function updateProject(
+  projectId: string,
+  payload: {
+    name?: string
+    slug?: string
+    description?: string | null
+    harnesses?: string[]
+    /** Default true when harnesses are sent — bootstrap or recreate sandbox */
+    reconfigure_sandbox?: boolean
+  },
+): Promise<ApiProject> {
+  return apiFetch(`/api/v1/projects/${projectId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
@@ -236,6 +257,11 @@ export async function retrySandbox(projectId: string): Promise<SandboxStatus> {
 /** Alias for retry — recreate when DB has a project but agent lost the sandbox. */
 export async function recreateSandbox(projectId: string): Promise<SandboxStatus> {
   return apiFetch(`/api/v1/projects/${projectId}/sandbox/recreate`, { method: 'POST' })
+}
+
+/** Apply project harnesses to the sandbox (bootstrap in place or recreate). */
+export async function reconfigureSandbox(projectId: string): Promise<SandboxStatus> {
+  return apiFetch(`/api/v1/projects/${projectId}/sandbox/reconfigure`, { method: 'POST' })
 }
 
 export async function startSandbox(projectId: string): Promise<SandboxStatus> {
@@ -618,6 +644,21 @@ export async function deleteKnowledgeCanvas(projectId: string, canvasId: string)
   })
 }
 
+export type ApiWebSearchHit = {
+  id: string
+  title: string
+  url: string
+  snippet: string
+}
+
+export async function searchKnowledgeWeb(
+  projectId: string,
+  q: string,
+): Promise<ApiWebSearchHit[]> {
+  const params = new URLSearchParams({ q })
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/web-search?${params}`)
+}
+
 export async function listProjectAgents(projectId: string): Promise<ApiProjectAgent[]> {
   return apiFetch(`/api/v1/projects/${projectId}/agents`)
 }
@@ -659,6 +700,203 @@ export async function updateProjectAgent(
 
 export async function deleteProjectAgent(projectId: string, agentId: string): Promise<void> {
   await apiFetch(`/api/v1/projects/${projectId}/agents/${agentId}`, { method: 'DELETE' })
+}
+
+// ── Studio: test suites + cases ───────────────────────────────────────────────
+
+export type ApiTestCase = {
+  id: string
+  suite_id: string
+  project_id: string
+  name: string
+  type: string
+  command: string
+  last_status?: string | null
+  last_error?: string | null
+  created_by?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ApiTestSuite = {
+  id: string
+  project_id: string
+  name: string
+  description?: string | null
+  cases: ApiTestCase[]
+  created_by?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ApiTestSuiteRunResult = {
+  suite_id: string
+  status: 'passed' | 'failed'
+  summary: string
+  passed: number
+  failed: number
+  results: Array<{
+    case_id: string
+    name: string
+    status: 'passed' | 'failed' | 'skipped'
+    exit_code?: number | null
+    stdout?: string
+    stderr?: string
+    error?: string | null
+  }>
+}
+
+export async function listTestSuites(projectId: string): Promise<ApiTestSuite[]> {
+  return apiFetch(`/api/v1/projects/${projectId}/tests/suites`)
+}
+
+export async function createTestSuite(
+  projectId: string,
+  body: { name: string; description?: string },
+): Promise<ApiTestSuite> {
+  return apiFetch(`/api/v1/projects/${projectId}/tests/suites`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function createTestCase(
+  projectId: string,
+  suiteId: string,
+  body: { name: string; type?: string; command?: string },
+): Promise<ApiTestCase> {
+  return apiFetch(`/api/v1/projects/${projectId}/tests/suites/${suiteId}/cases`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateTestCase(
+  projectId: string,
+  suiteId: string,
+  caseId: string,
+  body: Partial<{ name: string; type: string; command: string }>,
+): Promise<ApiTestCase> {
+  return apiFetch(`/api/v1/projects/${projectId}/tests/suites/${suiteId}/cases/${caseId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteTestCase(
+  projectId: string,
+  suiteId: string,
+  caseId: string,
+): Promise<void> {
+  await apiFetch(`/api/v1/projects/${projectId}/tests/suites/${suiteId}/cases/${caseId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function runTestSuite(
+  projectId: string,
+  suiteId: string,
+): Promise<ApiTestSuiteRunResult> {
+  return apiFetch(`/api/v1/projects/${projectId}/tests/suites/${suiteId}/run`, {
+    method: 'POST',
+  })
+}
+
+// ── Studio: HTTP tools (Tools panel) ─────────────────────────────────────────
+
+export type ApiHttpTool = {
+  id: string
+  project_id: string
+  name: string
+  method: string
+  url_template: string
+  enabled: boolean
+  created_by?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ApiHttpToolExecuteResult = {
+  ok: boolean
+  status_code: number | null
+  url: string
+  method: string
+  headers: Record<string, string>
+  body: string
+  truncated: boolean
+  error: string | null
+  elapsed_ms: number
+}
+
+export async function listHttpTools(projectId: string): Promise<ApiHttpTool[]> {
+  return apiFetch(`/api/v1/projects/${projectId}/http-tools`)
+}
+
+export async function createHttpTool(
+  projectId: string,
+  body: {
+    name: string
+    method?: string
+    url_template: string
+    enabled?: boolean
+  },
+): Promise<ApiHttpTool> {
+  return apiFetch(`/api/v1/projects/${projectId}/http-tools`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateHttpTool(
+  projectId: string,
+  toolId: string,
+  body: Partial<{
+    name: string
+    method: string
+    url_template: string
+    enabled: boolean
+  }>,
+): Promise<ApiHttpTool> {
+  return apiFetch(`/api/v1/projects/${projectId}/http-tools/${toolId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteHttpTool(projectId: string, toolId: string): Promise<void> {
+  await apiFetch(`/api/v1/projects/${projectId}/http-tools/${toolId}`, { method: 'DELETE' })
+}
+
+export async function testHttpTool(
+  projectId: string,
+  toolId: string,
+  body: {
+    path_params?: Record<string, string>
+    query?: Record<string, string>
+    headers?: Record<string, string>
+    body?: unknown
+  } = {},
+): Promise<ApiHttpToolExecuteResult> {
+  return apiFetch(`/api/v1/projects/${projectId}/http-tools/${toolId}/test`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function executeHttpTool(
+  projectId: string,
+  toolId: string,
+  body: {
+    path_params?: Record<string, string>
+    query?: Record<string, string>
+    headers?: Record<string, string>
+    body?: unknown
+  } = {},
+): Promise<ApiHttpToolExecuteResult> {
+  return apiFetch(`/api/v1/projects/${projectId}/http-tools/${toolId}/execute`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
 
 export { API_BASE }

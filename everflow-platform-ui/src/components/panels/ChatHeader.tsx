@@ -49,11 +49,6 @@ export function ChatHeader({
           />
         ))}
       </ToggleGroup>
-      {mode === 'auto' ? (
-        <span className="chat-mode-auto-badge" title="Permissions auto-approved">
-          auto
-        </span>
-      ) : null}
 
       <div className="chat-metrics" aria-label="Conversation metrics">
         <span className="metric" title={`Context ${used.toLocaleString()} / ${window.toLocaleString()} tokens`}>

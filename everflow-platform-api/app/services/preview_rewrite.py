@@ -30,6 +30,39 @@ _WS_PATCH_SCRIPT = (
     "</script>"
 )
 
+_NAV_BRIDGE_SCRIPT = (
+    "<script data-everflow-nav-bridge>"
+    "(function(){"
+    "if(window.__efNavPatched)return;"
+    "window.__efNavPatched=1;"
+    "function report(){"
+    "try{"
+    "parent.postMessage("
+    "{type:'everflow-preview-nav',path:location.pathname+location.search+location.hash},"
+    "'*'"
+    ");"
+    "}catch(e){}"
+    "}"
+    "var _ps=history.pushState,_rs=history.replaceState;"
+    "history.pushState=function(){"
+    "var r=_ps.apply(this,arguments);report();return r;"
+    "};"
+    "history.replaceState=function(){"
+    "var r=_rs.apply(this,arguments);report();return r;"
+    "};"
+    "addEventListener('popstate',report);"
+    "addEventListener('hashchange',report);"
+    "addEventListener('message',function(e){"
+    "var d=e&&e.data;"
+    "if(!d||d.type!=='everflow-preview-history')return;"
+    "if(d.delta===-1)history.back();"
+    "else if(d.delta===1)history.forward();"
+    "});"
+    "report();"
+    "})();"
+    "</script>"
+)
+
 
 def rewrite_vite_client_js(content: bytes) -> bytes:
     try:
@@ -59,15 +92,20 @@ def inject_ws_patch_html(content: bytes) -> bytes:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
         return content
-    if "data-everflow-ws-patch" in text:
+    inject = ""
+    if "data-everflow-ws-patch" not in text:
+        inject += _WS_PATCH_SCRIPT
+    if "data-everflow-nav-bridge" not in text:
+        inject += _NAV_BRIDGE_SCRIPT
+    if not inject:
         return content
     lower = text.lower()
     idx = lower.find("<head>")
     if idx >= 0:
         insert_at = idx + len("<head>")
-        text = text[:insert_at] + _WS_PATCH_SCRIPT + text[insert_at:]
+        text = text[:insert_at] + inject + text[insert_at:]
         return text.encode("utf-8")
-    return (_WS_PATCH_SCRIPT + text).encode("utf-8")
+    return (inject + text).encode("utf-8")
 
 
 def preview_cache_headers(path: str, headers: dict[str, str]) -> dict[str, str]:

@@ -15,6 +15,8 @@ class SandboxStatusRead(BaseModel):
     error: str | None = None
     created_at: datetime | None = None
     agent: dict[str, Any] | None = None
+    # Present on reconfigure: "bootstrap" (in place) or "recreate" (queued)
+    reconfigure_mode: str | None = None
 
 
 class SandboxExecRequest(BaseModel):

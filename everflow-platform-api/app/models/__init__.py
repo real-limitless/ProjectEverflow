@@ -16,6 +16,9 @@ from app.models.workflow import (
     WorkflowDataTableRow,
     WorkflowRun,
 )
+from app.models.test_suite import TestCase, TestSuite
+from app.models.http_tool import ProjectHttpTool
+from app.models.deploy import DeployNode, DeployRoute, DeployRun, DeploySshKey
 
 __all__ = [
     "User",
@@ -33,4 +36,11 @@ __all__ = [
     "WorkflowCredential",
     "WorkflowDataTable",
     "WorkflowDataTableRow",
+    "TestSuite",
+    "TestCase",
+    "ProjectHttpTool",
+    "DeploySshKey",
+    "DeployNode",
+    "DeployRoute",
+    "DeployRun",
 ]

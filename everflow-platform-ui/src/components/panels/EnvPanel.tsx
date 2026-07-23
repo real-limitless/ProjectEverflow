@@ -10,12 +10,16 @@ import {
 } from '@patternfly/react-core'
 import { CreateResourceModal } from '@/components/studio/CreateResourceModal'
 import { EmptySplash } from '@/components/studio/EmptySplash'
+import { getProject } from '@/data/projects'
 import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { useProjectStudio, useStudioDemoStore } from '@/store/studioDemoStore'
 
 export function EnvPanel() {
   const projectId = usePlaygroundStore((s) => s.currentProjectId) || 'default'
+  const openProjectSettings = usePlaygroundStore((s) => s.openProjectSettings)
+  const project = getProject(projectId === 'default' ? null : projectId)
+  const isApi = Boolean(project?.fromApi)
   const entries = useProjectStudio(projectId).envEntries
   const createEnvEntry = useStudioDemoStore((s) => s.createEnvEntry)
   const deleteEnvEntry = useStudioDemoStore((s) => s.deleteEnvEntry)
@@ -73,9 +77,11 @@ export function EnvPanel() {
           onClear={() => setQ('')}
           style={{ maxWidth: 240 }}
         />
-        <Button variant="primary" size="sm" onClick={() => setOpen(true)}>
-          Add
-        </Button>
+        {!(isApi && entries.length === 0) && (
+          <Button variant="primary" size="sm" onClick={() => setOpen(true)}>
+            Add
+          </Button>
+        )}
       </div>
       <div className="panel-scroll">
         <p style={{ fontSize: 12, color: 'var(--pf-t--global--text--color--subtle)', marginTop: 0 }}>
@@ -83,12 +89,25 @@ export function EnvPanel() {
           or deploy targets.
         </p>
         {filtered.length === 0 ? (
-          <EmptySplash
-            title="Nothing configured"
-            body="Add environment variables or secrets for this project."
-            primaryLabel="Add variable"
-            onPrimary={() => setOpen(true)}
-          />
+          entries.length === 0 ? (
+            isApi ? (
+              <EmptySplash
+                title="No environment variables"
+                body="Add AI provider keys in Project Settings → Providers. Everflow injects them into the sandbox when configured."
+                primaryLabel="Open project settings"
+                onPrimary={() => openProjectSettings(projectId)}
+              />
+            ) : (
+              <EmptySplash
+                title="Nothing configured"
+                body="Add environment variables or secrets for this project."
+                primaryLabel="Add variable"
+                onPrimary={() => setOpen(true)}
+              />
+            )
+          ) : (
+            <p className="lc-meta">No entries match your search.</p>
+          )
         ) : (
           filtered.map((e) => (
             <div className="list-card" key={e.id}>

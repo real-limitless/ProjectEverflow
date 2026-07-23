@@ -1,0 +1,20 @@
+# Minimal SearXNG overlay for Everflow platform backend (JSON API).
+# Wikidata is removed: its SPARQL init often gets HTTP 403 from query.wikidata.org
+# and floods logs without helping general web search.
+use_default_settings:
+  engines:
+    remove:
+      - wikidata
+
+server:
+  # Overridden by SEARXNG_SECRET in compose when set
+  secret_key: "everflow-dev-searxng-change-me"
+  limiter: false
+  image_proxy: false
+  # Backend calls from the compose network (not a public instance)
+  public_instance: false
+
+search:
+  formats:
+    - html
+    - json

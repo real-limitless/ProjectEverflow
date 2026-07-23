@@ -962,35 +962,20 @@
     }
     .tab-git { font-size: 0.65rem; font-weight: 700; }
     .editor-controls {
-      display: flex; align-items: center; gap: 0.35rem;
-      padding: 0 0.5rem; flex-shrink: 0;
+      display: flex; align-items: center; gap: 0.4rem;
+      padding: 0.2rem 0.45rem; flex-shrink: 0;
       border-inline-start: 1px solid var(--pf-t--global--border--color--default);
     }
-    .font-size-ctrl { display: inline-flex; align-items: center; gap: 0.15rem; }
-    .font-size-val {
-      font-size: 0.7rem; font-variant-numeric: tabular-nums; min-width: 1.25rem; text-align: center;
-      color: var(--pf-t--global--text--color--subtle);
+    .editor-mode-toggle { flex: 0 0 auto; }
+    .editor-mode-toggle .pf-v6-c-toggle-group__button {
+      font-size: 0.72rem !important;
+      padding-block: 0.2rem !important;
+      padding-inline: 0.5rem !important;
     }
-    .editor-ctrl-btn {
-      border: 1px solid var(--pf-t--global--border--color--default);
-      background: var(--pf-t--global--background--color--primary--default);
-      color: var(--pf-t--global--text--color--regular);
-      border-radius: var(--pf-t--global--border--radius--small);
-      font-size: 0.7rem; padding: 0.15rem 0.4rem; cursor: pointer;
-      display: inline-flex; align-items: center; gap: 0.25rem;
-    }
-    .editor-ctrl-btn:hover:not(:disabled) {
-      background: var(--pf-t--global--background--color--action--plain--hover);
-    }
-    .editor-ctrl-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-    .editor-ctrl-btn.active {
-      border-color: var(--pf-t--global--border--color--brand--default);
-      color: var(--pf-t--global--text--color--brand--default);
-    }
-    .lint-count {
-      background: var(--pf-t--global--color--status--warning--default);
-      color: #111; border-radius: 999px; font-size: 0.6rem; font-weight: 700;
-      padding: 0 0.3rem; min-width: 1rem; text-align: center;
+    .editor-menu-toggle {
+      font-size: 0.72rem !important;
+      padding-block: 0.15rem !important;
+      padding-inline: 0.45rem !important;
     }
 
     .editor-body {

@@ -22,6 +22,7 @@ from app.schemas.sandbox import (
 from app.services.sandbox import (
     MISSING_ON_AGENT,
     mark_sandbox_missing,
+    reconfigure_project_sandbox,
     recreate_project_sandbox,
     refresh_sandbox_status,
 )
@@ -50,7 +51,12 @@ def _agent_http_error(exc: SandboxAgentError) -> HTTPException:
     return HTTPException(status_code=code, detail=str(exc))
 
 
-def _status_read(project: Project, agent_info: dict | None = None) -> SandboxStatusRead:
+def _status_read(
+    project: Project,
+    agent_info: dict | None = None,
+    *,
+    reconfigure_mode: str | None = None,
+) -> SandboxStatusRead:
     return SandboxStatusRead(
         project_id=project.id,
         sandbox_name=project.sandbox_name,
@@ -59,6 +65,7 @@ def _status_read(project: Project, agent_info: dict | None = None) -> SandboxSta
         error=project.sandbox_error,
         created_at=project.sandbox_created_at,
         agent=agent_info,
+        reconfigure_mode=reconfigure_mode,
     )
 
 
@@ -106,6 +113,46 @@ async def _bg_recreate(project_id: UUID) -> None:
                 await bg_session.commit()
                 await bg_session.refresh(project)
                 await _clone_repos_for_project(bg_session, project, settings)
+
+
+@router.post("/projects/{project_id}/sandbox/reconfigure", response_model=SandboxStatusRead)
+async def reconfigure_sandbox(
+    background_tasks: BackgroundTasks,
+    project: Project = Depends(get_project_for_member),
+    session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
+) -> SandboxStatusRead:
+    """Apply the project's harness list to the sandbox (bootstrap or recreate)."""
+    if not settings.sandbox_enabled:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Sandbox disabled")
+
+    try:
+        project, mode = await reconfigure_project_sandbox(
+            session, project, settings=settings
+        )
+    except SandboxAgentError as exc:
+        raise _agent_http_error(exc) from exc
+
+    if mode == "recreate":
+        project.sandbox_status = "pending"
+        project.sandbox_error = None
+        if project.repos:
+            reset = []
+            for r in project.repos:
+                if not isinstance(r, dict):
+                    continue
+                item = dict(r)
+                if item.get("url"):
+                    item["clone_status"] = "pending"
+                    item["clone_error"] = None
+                reset.append(item)
+            project.repos = reset
+        await session.commit()
+        await session.refresh(project)
+        background_tasks.add_task(_bg_recreate, project.id)
+        return _status_read(project, reconfigure_mode="recreate")
+
+    return _status_read(project, reconfigure_mode="bootstrap")
 
 
 @router.post("/projects/{project_id}/sandbox/retry", response_model=SandboxStatusRead)

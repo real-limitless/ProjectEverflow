@@ -3,6 +3,7 @@ import type { PanelMeta, PanelType } from '@/types/panels'
 export const PANEL_META: Record<PanelType, PanelMeta> = {
   chat: { label: 'Chat', icon: '💬' },
   preview: { label: 'Preview', icon: '▣' },
+  desktop: { label: 'Desktop', icon: '🖥' },
   knowledge: { label: 'Knowledge', icon: '📚' },
   code: { label: 'Code', icon: '</>' },
   repository: { label: 'Repository', icon: '⌥' },

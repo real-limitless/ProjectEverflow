@@ -64,6 +64,8 @@ class ProjectCreate(BaseModel):
     slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     description: str | None = None
     repos: list[ProjectRepoIn] = Field(default_factory=list, max_length=10)
+    # Harness ids (e.g. agent-opencode, db-postgres) or {id, enabled} objects
+    harnesses: list[str | dict[str, Any]] | None = Field(default=None, max_length=40)
 
     @model_validator(mode="after")
     def ensure_one_active(self) -> "ProjectCreate":
@@ -91,6 +93,9 @@ class ProjectUpdate(BaseModel):
     )
     description: str | None = None
     repos: list[ProjectRepoIn] | None = Field(default=None, max_length=10)
+    harnesses: list[str | dict[str, Any]] | None = Field(default=None, max_length=40)
+    # When True and harnesses were updated, re-run sandbox bootstrap (or recreate if not running).
+    reconfigure_sandbox: bool | None = None
 
 
 class ProjectRead(BaseModel):
@@ -102,6 +107,7 @@ class ProjectRead(BaseModel):
     slug: str
     description: str | None
     repos: list[dict[str, Any]] = Field(default_factory=list)
+    harnesses: list[Any] = Field(default_factory=list)
     sandbox_name: str | None = None
     sandbox_status: str = "pending"
     sandbox_image: str | None = None
@@ -113,6 +119,15 @@ class ProjectRead(BaseModel):
     @field_validator("repos", mode="before")
     @classmethod
     def default_repos(cls, v: Any) -> list[dict[str, Any]]:
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        return []
+
+    @field_validator("harnesses", mode="before")
+    @classmethod
+    def default_harnesses(cls, v: Any) -> list[Any]:
         if v is None:
             return []
         if isinstance(v, list):

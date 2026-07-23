@@ -148,3 +148,29 @@ class OpenCodeHarnessResponse(BaseModel):
     manifest: dict[str, Any] = Field(default_factory=dict)
     opencode_json: dict[str, Any] = Field(default_factory=dict)
     written: dict[str, Any] | None = None
+
+
+class JobCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    command: str = Field(min_length=1, max_length=4000)
+    cwd: str | None = Field(default=None, max_length=1024)
+
+
+class JobInfo(BaseModel):
+    id: str
+    title: str
+    command: str
+    cwd: str | None = None
+    pid: int | None = None
+    status: str
+    log_path: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    exit_code: int | None = None
+
+
+class JobLogsResponse(BaseModel):
+    job_id: str
+    status: str | None = None
+    tail: int = 200
+    content: str = ""

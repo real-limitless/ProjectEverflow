@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -15,8 +16,9 @@ mcp = FastMCP(
     "everflow",
     instructions=(
         "Everflow product control plane for this project. "
-        "Use these tools to create knowledge canvases and Everflow agent definitions "
-        "(not OpenCode built-in modes). All mutations apply only to the bound project."
+        "Use these tools to create knowledge canvases, Everflow agent definitions "
+        "(not OpenCode built-in modes), test suites/cases, and registered HTTP tools. "
+        "All mutations apply only to the bound project."
     ),
 )
 
@@ -219,6 +221,136 @@ def everflow_delete_agent(agent_id: str) -> str:
     try:
         _client().delete_agent(agent_id)
         return _ok({"deleted": True, "agent_id": agent_id})
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+def everflow_list_test_suites() -> str:
+    """List test suites for the project (includes cases and last_status)."""
+    try:
+        return _ok(_client().list_test_suites())
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+def everflow_create_test_suite(name: str, description: str = "") -> str:
+    """Create a test suite in the Everflow Tests panel."""
+    try:
+        return _ok(
+            _client().create_test_suite(
+                name=name,
+                description=description or None,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+def everflow_create_test_case(
+    suite_id: str,
+    name: str,
+    type: str = "unit",
+    command: str = "",
+) -> str:
+    """Create a test case under a suite. ``type`` is unit, e2e, or smoke; ``command`` runs via sandbox shell."""
+    try:
+        return _ok(
+            _client().create_test_case(
+                suite_id,
+                name=name,
+                type=type or "unit",
+                command=command,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+def everflow_update_test_case(
+    suite_id: str,
+    case_id: str,
+    name: str | None = None,
+    type: str | None = None,
+    command: str | None = None,
+) -> str:
+    """Update a test case name, type, or command."""
+    try:
+        fields: dict[str, Any] = {}
+        if name is not None:
+            fields["name"] = name
+        if type is not None:
+            fields["type"] = type
+        if command is not None:
+            fields["command"] = command
+        return _ok(_client().update_test_case(suite_id, case_id, **fields))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+def everflow_delete_test_case(suite_id: str, case_id: str) -> str:
+    """Delete a test case from a suite."""
+    try:
+        _client().delete_test_case(suite_id, case_id)
+        return _ok({"deleted": True, "suite_id": suite_id, "case_id": case_id})
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+def everflow_run_test_suite(suite_id: str) -> str:
+    """Run all cases in a suite via sandbox shell; updates each case last_status."""
+    try:
+        return _ok(_client().run_test_suite(suite_id))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+def everflow_list_http_tools() -> str:
+    """List registered HTTP tools for the project (name, method, url_template, enabled)."""
+    try:
+        return _ok(_client().list_http_tools())
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+def everflow_call_http_tool(
+    tool_id: str,
+    path_params_json: str = "{}",
+    query_json: str = "{}",
+    headers_json: str = "{}",
+    body_json: str = "",
+) -> str:
+    """Execute an enabled HTTP tool by id.
+
+    ``path_params_json`` / ``query_json`` / ``headers_json`` are JSON objects.
+    ``body_json`` is optional JSON for the request body (POST/PUT/PATCH).
+    SSRF guard blocks private/loopback/link-local/metadata unless the API allows sandbox-internal.
+    """
+    try:
+        path_params = json.loads(path_params_json or "{}")
+        query = json.loads(query_json or "{}")
+        headers = json.loads(headers_json or "{}")
+        if not isinstance(path_params, dict) or not isinstance(query, dict) or not isinstance(headers, dict):
+            return _err(ValueError("path_params_json, query_json, and headers_json must be JSON objects"))
+        body: Any | None = None
+        if body_json and body_json.strip():
+            body = json.loads(body_json)
+        return _ok(
+            _client().call_http_tool(
+                tool_id,
+                path_params={str(k): str(v) for k, v in path_params.items()},
+                query={str(k): str(v) for k, v in query.items()},
+                headers={str(k): str(v) for k, v in headers.items()},
+                body=body,
+            )
+        )
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 

@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Spinner } from '@patternfly/react-core'
+import {
+  Button,
+  Dropdown,
+  DropdownItem,
+  DropdownList,
+  MenuToggle,
+  Spinner,
+  ToggleGroup,
+  ToggleGroupItem,
+} from '@patternfly/react-core'
 import AngleDownIcon from '@patternfly/react-icons/dist/esm/icons/angle-down-icon'
 import AngleRightIcon from '@patternfly/react-icons/dist/esm/icons/angle-right-icon'
 import TimesIcon from '@patternfly/react-icons/dist/esm/icons/times-icon'
@@ -407,6 +416,7 @@ export function CodePanel({ panelKey }: CodePanelProps) {
 
   const lines = highlighted ? highlighted.split('\n') : []
   const [showLint, setShowLint] = useState(true)
+  const [editorMenuOpen, setEditorMenuOpen] = useState(false)
 
   const save = async () => {
     if (!currentProjectId || !activePath || !fromApi) return
@@ -537,16 +547,22 @@ export function CodePanel({ panelKey }: CodePanelProps) {
           <div className="editor-controls">
             {fromApi ? (
               <>
-                <button
-                  type="button"
-                  className={`editor-ctrl-btn${editMode ? ' active' : ''}`}
-                  title={editMode ? 'Switch to read-only view' : 'Switch to edit'}
-                  aria-label={editMode ? 'Switch to view' : 'Switch to edit'}
-                  aria-pressed={editMode}
-                  onClick={() => setEditMode((v) => !v)}
-                >
-                  {editMode ? 'View' : 'Edit'}
-                </button>
+                <ToggleGroup className="editor-mode-toggle" aria-label="Editor mode">
+                  <ToggleGroupItem
+                    text="Edit"
+                    buttonId="editor-mode-edit"
+                    isSelected={editMode}
+                    onChange={() => setEditMode(true)}
+                    title="Edit file in sandbox"
+                  />
+                  <ToggleGroupItem
+                    text="View"
+                    buttonId="editor-mode-view"
+                    isSelected={!editMode}
+                    onChange={() => setEditMode(false)}
+                    title="Read-only syntax-highlighted view"
+                  />
+                </ToggleGroup>
                 <Button
                   variant="primary"
                   size="sm"
@@ -558,38 +574,56 @@ export function CodePanel({ panelKey }: CodePanelProps) {
                 </Button>
               </>
             ) : null}
-            <button
-              type="button"
-              className={`editor-ctrl-btn${showLint ? ' active' : ''}`}
-              title={showLint ? 'Hide lint markers' : 'Show lint markers'}
-              onClick={() => setShowLint((v) => !v)}
-            >
-              Lint
-              {diagnostics.length > 0 && (
-                <span className="lint-count">{diagnostics.length}</span>
+            <Dropdown
+              isOpen={editorMenuOpen}
+              onOpenChange={setEditorMenuOpen}
+              onSelect={(_event, itemId) => {
+                if (itemId === 'font-dec') {
+                  if (fontSize > 10) setCodeFontSize(panelKey, fontSize - 1)
+                  return
+                }
+                if (itemId === 'font-inc') {
+                  if (fontSize < 22) setCodeFontSize(panelKey, fontSize + 1)
+                  return
+                }
+                if (itemId === 'lint') {
+                  setShowLint((v) => !v)
+                }
+                setEditorMenuOpen(false)
+              }}
+              popperProps={{ position: 'right' }}
+              toggle={(toggleRef) => (
+                <MenuToggle
+                  ref={toggleRef}
+                  className="editor-menu-toggle"
+                  size="sm"
+                  onClick={() => setEditorMenuOpen((open) => !open)}
+                  isExpanded={editorMenuOpen}
+                  aria-label="Editor settings"
+                >
+                  Editor
+                </MenuToggle>
               )}
-            </button>
-            <div className="font-size-ctrl" title="Editor font size">
-              <button
-                type="button"
-                className="editor-ctrl-btn"
-                aria-label="Decrease font size"
-                disabled={fontSize <= 10}
-                onClick={() => setCodeFontSize(panelKey, fontSize - 1)}
-              >
-                A−
-              </button>
-              <span className="font-size-val">{fontSize}</span>
-              <button
-                type="button"
-                className="editor-ctrl-btn"
-                aria-label="Increase font size"
-                disabled={fontSize >= 22}
-                onClick={() => setCodeFontSize(panelKey, fontSize + 1)}
-              >
-                A+
-              </button>
-            </div>
+            >
+              <DropdownList>
+                <DropdownItem
+                  value="lint"
+                  description={
+                    diagnostics.length > 0
+                      ? `${diagnostics.length} problem${diagnostics.length === 1 ? '' : 's'}`
+                      : undefined
+                  }
+                >
+                  {showLint ? 'Hide lint markers' : 'Show lint markers'}
+                </DropdownItem>
+                <DropdownItem value="font-dec" isDisabled={fontSize <= 10}>
+                  Decrease font size (A−)
+                </DropdownItem>
+                <DropdownItem value="font-inc" isDisabled={fontSize >= 22}>
+                  Increase font size (A+) · {fontSize}px
+                </DropdownItem>
+              </DropdownList>
+            </Dropdown>
           </div>
         </div>
 

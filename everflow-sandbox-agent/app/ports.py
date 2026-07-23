@@ -16,10 +16,14 @@ logger = logging.getLogger(__name__)
 ExecFn = Callable[..., Awaitable[tuple[int, str, str]]]
 
 # Harness / internal ports we hide from the Preview "app" dropdown by default.
+# Desktop noVNC (6080) has its own Desktop panel — never offer it as a Preview target.
 DEFAULT_EXCLUDED_PORTS: frozenset[int] = frozenset(
     {
         22,  # ssh
         4096,  # OpenCode guest default
+        5900,  # x11vnc (raw VNC; use noVNC on 6080 via Desktop panel)
+        6080,  # noVNC / websockify (Desktop panel)
+        18765,  # Everflow MCP → platform API reverse tunnel
         # OpenCode host range starts at 14100; hide a wide band of harness ports
         *range(14100, 14200),
     }

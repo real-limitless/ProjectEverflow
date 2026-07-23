@@ -45,7 +45,7 @@ import {
   upsertMessage,
   upsertQuestionMessage,
 } from '@/lib/opencode/mapEvents'
-import { openCodePromptForMode } from '@/lib/opencode/chatMode'
+import { mcpToolsDenyMap, openCodePromptForMode } from '@/lib/opencode/chatMode'
 import {
   assistantTurnReady,
   estimateLiveTokensPerSec,
@@ -55,6 +55,7 @@ import {
   parseModelId,
   sessionToConversation,
 } from '@/lib/opencode/mapParts'
+import { agentFromPack, getOpenCodeHarness } from '@/lib/harness/opencodePack'
 import { ChatComposer } from './ChatComposer'
 import { ChatEmptyState } from './ChatEmptyState'
 import { ChatHeader } from './ChatHeader'
@@ -111,12 +112,16 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const [sending, setSending] = useState(false)
   const sseRef = useRef<AbortController | null>(null)
   const liveRef = useRef(false)
+  const agentsLiveRef = useRef<CatalogItem[] | null>(null)
+  agentsLiveRef.current = agentsLive
   /** Monotonic bootstrap generation — remount/retry increments; stale async exits. */
   const bootGenRef = useRef(0)
   const sendingRef = useRef(false)
   const pollAbortRef = useRef(0)
   /** Question request ids already answered in this session — never re-inject as pending. */
   const answeredQuestionIdsRef = useRef<Set<string>>(new Set())
+  /** Soft-default everflow MCP at most once per panel mount. */
+  const everflowDefaultedRef = useRef(false)
   /** Current chat mode for SSE handlers (avoid stale closures). */
   const modeRef = useRef<ChatMode>(DEFAULT_CHAT_MODE)
   /** Permission ids we already auto-approved this session (dedupe). */
@@ -349,6 +354,19 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         const created = await createSession(projectId, 'New chat')
         mapped.push(sessionToConversation(created, []))
       }
+      // createSession can race ahead of listSessions — keep preferId in the rail.
+      if (preferId && !mapped.some((c) => c.id === preferId)) {
+        const prev = prevById.get(preferId)
+        mapped.unshift(
+          prev ||
+            sessionToConversation(
+              { id: preferId, title: 'New chat' } as Parameters<
+                typeof sessionToConversation
+              >[0],
+              [],
+            ),
+        )
+      }
       usePlaygroundStore.setState((state) => ({
         projectChats: { ...state.projectChats, [projectId]: mapped },
       }))
@@ -359,7 +377,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         // First load of a session may legitimately be empty
         const hadLocal = (prevById.get(pick.id)?.messages.length || 0) > 0
         await hydrateSession(projectId, pick.id, {
-          allowEmpty: !hadLocal,
+          allowEmpty: !hadLocal || pick.id === preferId,
           force: true,
         })
       }
@@ -370,10 +388,11 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
 
   const loadCatalogs = useCallback(async (projectId: string) => {
     try {
-      const [prov, mcpMap, agentList] = await Promise.all([
+      const [prov, mcpMap, agentList, harness] = await Promise.all([
         listProviders(projectId),
         listMcp(projectId).catch(() => ({})),
         listAgents(projectId).catch(() => []),
+        getOpenCodeHarness(projectId).catch(() => null),
       ])
       // harness-updated listeners call loadCatalogs to pick up new agents/MCP
       const modelItems: CatalogItem[] = []
@@ -428,11 +447,55 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       }))
       setMcpsLive(mcpItems.length ? mcpItems : null)
 
-      const agentItems: CatalogItem[] = (agentList || []).map((a) => ({
-        id: a.name,
-        label: a.name,
-        description: a.description || a.mode || 'agent',
-      }))
+      // Soft-default once: enable everflow MCP when present in the live catalog
+      if (
+        !everflowDefaultedRef.current &&
+        mcpItems.some((m) => m.id === 'everflow')
+      ) {
+        everflowDefaultedRef.current = true
+        const cur =
+          usePlaygroundStore.getState().instanceState[panelKey]?.enabledMcps ||
+          DEFAULT_CHAT_MCPS
+        if (!cur.includes('everflow')) {
+          usePlaygroundStore
+            .getState()
+            .ensureInstanceState(panelKey, { enabledMcps: [...cur, 'everflow'] })
+        }
+      }
+
+      // Merge pack + live agents (dedupe by name; prefer live description).
+      // Chat picker: primary/all. Pack agents included so new creates show immediately.
+      const isChatAgentMode = (mode?: string) => {
+        const m = (mode || 'all').toLowerCase()
+        return m === 'primary' || m === 'all'
+      }
+      const byName = new Map<string, CatalogItem & { mode?: string }>()
+      for (const raw of harness?.agents || []) {
+        const a = agentFromPack(raw as Record<string, unknown>)
+        const name = (a.name || a.id || '').trim()
+        if (!name || !isChatAgentMode(a.mode)) continue
+        byName.set(name.toLowerCase(), {
+          id: name,
+          label: name,
+          description: a.description || a.desc || a.mode || 'agent',
+          mode: a.mode || 'all',
+        })
+      }
+      for (const a of agentList || []) {
+        const name = (a.name || '').trim()
+        if (!name || !isChatAgentMode(a.mode)) continue
+        const key = name.toLowerCase()
+        const prev = byName.get(key)
+        byName.set(key, {
+          id: name,
+          label: name,
+          description: a.description || prev?.description || a.mode || 'agent',
+          mode: a.mode || prev?.mode || 'all',
+        })
+      }
+      const agentItems: CatalogItem[] = Array.from(byName.values()).map(
+        ({ id, label, description }) => ({ id, label, description }),
+      )
       setAgentsLive(agentItems.length ? agentItems : null)
 
       // Soft-default primary agent if panel has none (prefer build from live catalog)
@@ -445,22 +508,53 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         }
       }
 
-      return { connected, modelItems }
+      return { connected, modelItems, agentItems }
     } catch {
-      return { connected: [] as string[], modelItems: [] as CatalogItem[] }
+      return {
+        connected: [] as string[],
+        modelItems: [] as CatalogItem[],
+        agentItems: [] as CatalogItem[],
+      }
     }
   }, [panelKey])
 
   // Refresh agents/MCP when Agents or Tools panel syncs harness pack
   useEffect(() => {
     if (!useLive || !currentProjectId) return
+    let cancelled = false
     const onHarness = (ev: Event) => {
       const detail = (ev as CustomEvent<{ projectId?: string }>).detail
       if (detail?.projectId && detail.projectId !== currentProjectId) return
-      void loadCatalogs(currentProjectId)
+      void (async () => {
+        const before = new Set(
+          (agentsLiveRef.current || []).map((a) => a.id.toLowerCase()),
+        )
+        try {
+          await ensureOpenCode(currentProjectId, true)
+        } catch {
+          /* still refresh catalogs from pack */
+        }
+        if (cancelled) return
+        // Retries with backoff until new agents appear or attempts exhausted
+        const backoffsMs = [0, 400, 1200]
+        for (let i = 0; i < backoffsMs.length; i++) {
+          if (backoffsMs[i] > 0) {
+            await new Promise((r) => setTimeout(r, backoffsMs[i]))
+          }
+          if (cancelled) return
+          const cat = await loadCatalogs(currentProjectId)
+          const appeared = (cat.agentItems || []).some(
+            (a) => !before.has(a.id.toLowerCase()),
+          )
+          if (appeared) break
+        }
+      })()
     }
     window.addEventListener('everflow:harness-updated', onHarness)
-    return () => window.removeEventListener('everflow:harness-updated', onHarness)
+    return () => {
+      cancelled = true
+      window.removeEventListener('everflow:harness-updated', onHarness)
+    }
   }, [useLive, currentProjectId, loadCatalogs])
 
   // Bootstrap OpenCode when live. Generation token survives Strict Mode remounts:
@@ -712,6 +806,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
 
   // Load pinned models when project changes; reset provider-skip gate per project
   useEffect(() => {
+    everflowDefaultedRef.current = false
     if (!currentProjectId) {
       setPinnedModelIds([])
       setProviderSkipped(false)
@@ -731,6 +826,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     const pollGen = ++pollAbortRef.current
     const streamStartedAt = Date.now()
     let clientTtftMs: number | undefined
+    let gotReady = false
 
     try {
       // Optimistic user + pending assistant (spinner only — no fake markdown)
@@ -766,6 +862,18 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         selectedAgent ||
         (agentsLive && agentsLive[0]?.id) ||
         DEFAULT_PRIMARY_AGENT
+      const enabledMcps =
+        usePlaygroundStore.getState().instanceState[panelKey]?.enabledMcps ||
+        DEFAULT_CHAT_MCPS
+      // Deny unchecked live MCP servers via `{server}_*`; enabled inherit agent/harness allow.
+      const mcpDeny = mcpToolsDenyMap(
+        (mcpsLive || []).map((m) => m.id),
+        enabledMcps,
+      )
+      const toolsMap = {
+        ...(modePrompt.tools || {}),
+        ...mcpDeny,
+      }
 
       const body: {
         parts: Array<{ type: string; text?: string }>
@@ -777,7 +885,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       }
       if (modelRef) body.model = modelRef
       if (agentName) body.agent = agentName
-      if (modePrompt.tools) body.tools = modePrompt.tools
+      if (Object.keys(toolsMap).length) body.tools = toolsMap
 
       try {
         await promptAsync(projectId, convId, body)
@@ -797,7 +905,6 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       // SSE is primary (guest stream_exec → /event). Poll is a slow backup only.
       const deadline = Date.now() + 180_000
       const pollMs = 2000
-      let gotReady = false
       while (Date.now() < deadline && pollAbortRef.current === pollGen) {
         await new Promise((r) => setTimeout(r, pollMs))
         if (pollAbortRef.current !== pollGen) break
@@ -877,10 +984,52 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         const lastAsst = [...cur]
           .reverse()
           .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
-        if (cur.some((m) => m.id.startsWith('pending-')) && assistantTurnReady(lastAsst)) {
-          const cleaned = cur.filter((m) => !m.id.startsWith('pending-'))
-          ensureInstanceState(panelKey, { messages: cleaned })
-          updateConversationMessages(projectId, convId, cleaned, lastAsst)
+        let next: ChatMessage[] | null = null
+        if (
+          assistantTurnReady(lastAsst) ||
+          (lastAsst != null && messageHasReplyText(lastAsst))
+        ) {
+          if (cur.some((m) => m.id.startsWith('pending-'))) {
+            next = cur.filter((m) => !m.id.startsWith('pending-'))
+          }
+        } else if (!gotReady) {
+          // Timed out / hung turn: clear pending shell and stop "Working…" spinner.
+          const withoutPending = cur.filter((m) => !m.id.startsWith('pending-'))
+          const marked = withoutPending.map((m) =>
+            m.role === 'assistant' &&
+            (m.generationStatus === 'incomplete' || !m.generationStatus)
+              ? { ...m, generationStatus: 'error' as const }
+              : m,
+          )
+          const hadIncomplete = withoutPending.some(
+            (m) =>
+              m.role === 'assistant' &&
+              (m.generationStatus === 'incomplete' || !m.generationStatus),
+          )
+          if (hadIncomplete) {
+            next = marked
+          } else if (cur.some((m) => m.id.startsWith('pending-'))) {
+            const errText =
+              'The response did not finish. Try again, or check Tools / MCP if the agent was waiting on a tool.'
+            next = [
+              ...withoutPending,
+              {
+                id: `err-a-${Date.now()}`,
+                role: 'assistant',
+                generationStatus: 'error',
+                text: errText,
+                blocks: [{ type: 'text', text: errText }],
+                createdAt: new Date().toISOString(),
+              },
+            ]
+          }
+        }
+        if (next) {
+          const finalAsst = [...next]
+            .reverse()
+            .find((m) => m.role === 'assistant')
+          ensureInstanceState(panelKey, { messages: next })
+          updateConversationMessages(projectId, convId, next, finalAsst)
         }
       }
     }
@@ -1074,8 +1223,45 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
 
   const liveNewChat = async () => {
     if (!currentProjectId) return
-    const created = await createSession(currentProjectId, 'New chat')
-    await refreshSessions(currentProjectId, created.id)
+    const projectId = currentProjectId
+    const created = await createSession(projectId, 'New chat')
+    // Switch the middle pane immediately (same path as liveSelect). refreshSessions
+    // alone can leave convId on the previous chat when listSessions lags create.
+    ensureInstanceState(panelKey, {
+      convId: created.id,
+      messages: [],
+      chatMode: DEFAULT_CHAT_MODE,
+      primaryAgent: DEFAULT_PRIMARY_AGENT,
+      title: created.title || 'New chat',
+    })
+    const prevList =
+      usePlaygroundStore.getState().projectChats[projectId] || []
+    if (!prevList.some((c) => c.id === created.id)) {
+      usePlaygroundStore.setState((state) => ({
+        projectChats: {
+          ...state.projectChats,
+          [projectId]: [
+            sessionToConversation(created, []),
+            ...(state.projectChats[projectId] || []),
+          ],
+        },
+      }))
+    }
+    await refreshSessions(projectId, created.id)
+    // Re-assert after refresh in case preferId fell through to mapped[0].
+    const still =
+      usePlaygroundStore.getState().instanceState[panelKey]?.convId
+    if (still !== created.id) {
+      ensureInstanceState(panelKey, {
+        convId: created.id,
+        messages: [],
+        title: created.title || 'New chat',
+      })
+      await hydrateSession(projectId, created.id, {
+        allowEmpty: true,
+        force: true,
+      })
+    }
   }
 
   const liveSelect = async (id: string) => {
@@ -1128,7 +1314,10 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   }
 
   const composerModels = models
-  const composerMcps = mcpsLive ? mcpsLive.map((m) => m.id) : mcps
+  // Respect enabledMcps ∩ live MCP ids (do not force-check every live server)
+  const composerMcps = mcpsLive
+    ? mcps.filter((id) => mcpsLive.some((m) => m.id === id))
+    : mcps
   const composerAgentOptions = agentsLive?.length
     ? agentsLive
     : OPENCODE_AGENT_FALLBACKS

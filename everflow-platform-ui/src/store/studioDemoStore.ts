@@ -58,22 +58,125 @@ function isDemoCatalogPrId(id: string): boolean {
   return /^pr-\d+$/.test(id) || id.startsWith('pr-sec-')
 }
 
+const DEMO_COMPOSE_FILES = [
+  'podman-compose.yml',
+  'podman-compose.staging.yml',
+  'compose.preview.yml',
+] as const
+
+function isDemoCatalogEnvId(id: string): boolean {
+  return /^env-\d+$/.test(id) || /^sec-\d+$/.test(id)
+}
+
+function isDemoCatalogTestSuiteId(id: string): boolean {
+  return /^suite-\d+$/.test(id)
+}
+
+function isDemoCatalogTestCaseId(id: string): boolean {
+  return /^tc-\d+$/.test(id)
+}
+
+function isDemoCatalogJobId(id: string): boolean {
+  return /^job-\d+/.test(id)
+}
+
+function isDemoCatalogDeployHostId(id: string): boolean {
+  return /^host-\d+$/.test(id)
+}
+
+function isDemoCatalogDeployRunId(id: string): boolean {
+  return id.startsWith('run-seed-')
+}
+
+function isDemoCatalogDeployId(id: string): boolean {
+  return /^dep-\d+$/.test(id)
+}
+
+function isDemoCatalogDeployServiceId(id: string): boolean {
+  return /^svc-p-\d+$/.test(id)
+}
+
+function isDemoComposeFiles(files: string[]): boolean {
+  if (files.length !== DEMO_COMPOSE_FILES.length) return false
+  const sorted = [...files].sort()
+  const demo = [...DEMO_COMPOSE_FILES].sort()
+  return sorted.every((f, i) => f === demo[i])
+}
+
 function stripDemoCatalog(state: ProjectStudioState): ProjectStudioState {
+  const hadDemoCatalog =
+    state.issues.some((i) => isDemoCatalogIssueId(i.id)) ||
+    state.pullRequests.some((pr) => isDemoCatalogPrId(pr.id)) ||
+    state.agents.some((a) => a.source === 'demo' || /^a\d+$/.test(a.id)) ||
+    state.mcps.some((m) => /^mcp-\d+$/.test(m.id)) ||
+    state.envEntries.some((e) => isDemoCatalogEnvId(e.id)) ||
+    state.testSuites.some(
+      (s) =>
+        isDemoCatalogTestSuiteId(s.id) ||
+        s.cases.some((c) => isDemoCatalogTestCaseId(c.id)),
+    ) ||
+    (state.lastTestRun != null &&
+      isDemoCatalogTestSuiteId(state.lastTestRun.suiteId)) ||
+    state.jobs.some((j) => isDemoCatalogJobId(j.id)) ||
+    state.deployHosts.some((h) => isDemoCatalogDeployHostId(h.id)) ||
+    state.deployRuns.some((r) => isDemoCatalogDeployRunId(r.id)) ||
+    state.deployServices.some((s) => isDemoCatalogDeployServiceId(s.id)) ||
+    state.deploys.some((d) => isDemoCatalogDeployId(d.id)) ||
+    isDemoComposeFiles(state.composeFiles) ||
+    (state.deployTimeline.length > 0 &&
+      (state.deployHosts.some((h) => isDemoCatalogDeployHostId(h.id)) ||
+        state.deployRuns.some((r) => isDemoCatalogDeployRunId(r.id)) ||
+        state.deploys.some((d) => isDemoCatalogDeployId(d.id)) ||
+        state.deployServices.some((s) => isDemoCatalogDeployServiceId(s.id))))
+
+  if (!hadDemoCatalog) return state
+
   const issues = state.issues.filter((i) => !isDemoCatalogIssueId(i.id))
   const pullRequests = state.pullRequests.filter((pr) => !isDemoCatalogPrId(pr.id))
-  // Demo seed agents use source: 'demo' and short ids a1/a2/a3
   const agents = state.agents.filter((a) => a.source !== 'demo' && !/^a\d+$/.test(a.id))
-  // Demo MCP seeds look like github-mcp / docs-search with id mcp-N
   const mcps = state.mcps.filter((m) => !/^mcp-\d+$/.test(m.id))
-  if (
-    issues.length === state.issues.length &&
-    pullRequests.length === state.pullRequests.length &&
-    agents.length === state.agents.length &&
-    mcps.length === state.mcps.length
-  ) {
-    return state
+  const envEntries = state.envEntries.filter((e) => !isDemoCatalogEnvId(e.id))
+  const testSuites = state.testSuites
+    .filter((s) => !isDemoCatalogTestSuiteId(s.id))
+    .map((s) => ({
+      ...s,
+      cases: s.cases.filter((c) => !isDemoCatalogTestCaseId(c.id)),
+    }))
+  const lastTestRun =
+    state.lastTestRun && isDemoCatalogTestSuiteId(state.lastTestRun.suiteId)
+      ? null
+      : state.lastTestRun
+  const jobs = state.jobs.filter((j) => !isDemoCatalogJobId(j.id))
+  const deployHosts = state.deployHosts.filter((h) => !isDemoCatalogDeployHostId(h.id))
+  const deployRuns = state.deployRuns.filter((r) => !isDemoCatalogDeployRunId(r.id))
+  const deployServices = state.deployServices.filter((s) => !isDemoCatalogDeployServiceId(s.id))
+  const deploys = state.deploys.filter((d) => !isDemoCatalogDeployId(d.id))
+  const composeFiles = isDemoComposeFiles(state.composeFiles) ? [] : state.composeFiles
+  const deployTimeline =
+    state.deployHosts.some((h) => isDemoCatalogDeployHostId(h.id)) ||
+    state.deployRuns.some((r) => isDemoCatalogDeployRunId(r.id)) ||
+    state.deploys.some((d) => isDemoCatalogDeployId(d.id)) ||
+    state.deployServices.some((s) => isDemoCatalogDeployServiceId(s.id))
+      ? []
+      : state.deployTimeline
+
+  return {
+    ...state,
+    issues,
+    pullRequests,
+    agents,
+    mcps,
+    envEntries,
+    testSuites,
+    lastTestRun,
+    jobs,
+    deployHosts,
+    deployRuns,
+    deployServices,
+    deploys,
+    composeFiles,
+    deployTimeline,
   }
-  return { ...state, issues, pullRequests, agents, mcps }
 }
 
 function seedProject(projectId: string): ProjectStudioState {
@@ -396,13 +499,15 @@ function seedProject(projectId: string): ProjectStudioState {
     columns: t.name === 'users' ? ['id', 'email', 'role'] : ['name', 'status', 'cpu'],
   }))
 
-  const jobs: BackgroundJob[] = d.jobs.map((j, i) => ({
-    id: `job-${i}`,
-    title: j.title,
-    type: j.title.toLowerCase().includes('index') ? 'index' : 'custom',
-    status: j.status as BackgroundJob['status'],
-    progress: j.progress,
-  }))
+  const jobs: BackgroundJob[] = useDemoCatalog
+    ? d.jobs.map((j, i) => ({
+        id: `job-${i}`,
+        title: j.title,
+        type: j.title.toLowerCase().includes('index') ? 'index' : 'custom',
+        status: j.status as BackgroundJob['status'],
+        progress: j.progress,
+      }))
+    : []
 
   // API projects use OpenCode live agents — never seed showcase "Coding Assistant" etc.
   const agents: AgentDefinition[] = useDemoCatalog
@@ -449,25 +554,32 @@ function seedProject(projectId: string): ProjectStudioState {
       }))
     : []
 
-  const envEntries: EnvEntry[] = [
-    ...d.envVars.map((e, i) => ({
-      id: `env-${i}`,
-      key: e.key,
-      value: e.value,
-      kind: 'env' as const,
-      attachedTo: [] as string[],
-    })),
-    ...d.secrets.map((e, i) => ({
-      id: `sec-${i}`,
-      key: e.key,
-      value: e.value,
-      kind: 'secret' as const,
-      attachedTo: e.key.includes('DATABASE') ? ['postgres'] : e.key.includes('STRIPE') ? ['billing'] : ['llm'],
-      revealed: false,
-    })),
-  ]
+  const envEntries: EnvEntry[] = useDemoCatalog
+    ? [
+        ...d.envVars.map((e, i) => ({
+          id: `env-${i}`,
+          key: e.key,
+          value: e.value,
+          kind: 'env' as const,
+          attachedTo: [] as string[],
+        })),
+        ...d.secrets.map((e, i) => ({
+          id: `sec-${i}`,
+          key: e.key,
+          value: e.value,
+          kind: 'secret' as const,
+          attachedTo: e.key.includes('DATABASE')
+            ? ['postgres']
+            : e.key.includes('STRIPE')
+              ? ['billing']
+              : ['llm'],
+          revealed: false,
+        })),
+      ]
+    : []
 
-  const testSuites: TestSuite[] = [
+  const testSuites: TestSuite[] = useDemoCatalog
+    ? [
     {
       id: 'suite-1',
       name: 'unit',
@@ -511,8 +623,10 @@ function seedProject(projectId: string): ProjectStudioState {
       ],
     },
   ]
+    : []
 
-  const deployHosts: DeployHost[] = [
+  const deployHosts: DeployHost[] = useDemoCatalog
+    ? [
     {
       id: 'host-1',
       name: 'edge-01',
@@ -553,19 +667,23 @@ function seedProject(projectId: string): ProjectStudioState {
       memPct: 41,
     },
   ]
+    : []
 
-  const deploys: DeployRecord[] = d.deploys.map((dep, i) => ({
-    id: `dep-${i}`,
-    env: dep.env,
-    url: dep.url,
-    status: dep.status,
-    when: dep.when,
-    hostId: i === 0 ? 'host-1' : 'host-3',
-    composeFile: i === 0 ? 'compose.preview.yml' : 'podman-compose.staging.yml',
-    runId: `run-seed-${i}`,
-  }))
+  const deploys: DeployRecord[] = useDemoCatalog
+    ? d.deploys.map((dep, i) => ({
+        id: `dep-${i}`,
+        env: dep.env,
+        url: dep.url,
+        status: dep.status,
+        when: dep.when,
+        hostId: i === 0 ? 'host-1' : 'host-3',
+        composeFile: i === 0 ? 'compose.preview.yml' : 'podman-compose.staging.yml',
+        runId: `run-seed-${i}`,
+      }))
+    : []
 
-  const deployRuns: DeployRun[] = [
+  const deployRuns: DeployRun[] = useDemoCatalog
+    ? [
     {
       id: 'run-seed-0',
       hostId: 'host-1',
@@ -609,8 +727,10 @@ function seedProject(projectId: string): ProjectStudioState {
       attachedEnvIds: envEntries.filter((e) => e.kind === 'secret').slice(0, 1).map((e) => e.id),
     },
   ]
+    : []
 
-  const deployServices: DeployService[] = [
+  const deployServices: DeployService[] = useDemoCatalog
+    ? [
     {
       id: 'svc-p-0',
       name: 'web',
@@ -632,6 +752,7 @@ function seedProject(projectId: string): ProjectStudioState {
       hostId: 'host-1',
     },
   ]
+    : []
 
   return {
     issues,
@@ -652,18 +773,20 @@ function seedProject(projectId: string): ProjectStudioState {
     mcps,
     envEntries,
     testSuites,
-    lastTestRun: {
-      suiteId: 'suite-1',
-      status: d.tests.failedN ? 'failed' : 'passed',
-      summary: d.tests.summary,
-      passed: d.tests.passed,
-      failedN: d.tests.failedN,
-      failed: d.tests.failed,
-    },
+    lastTestRun: useDemoCatalog
+      ? {
+          suiteId: 'suite-1',
+          status: d.tests.failedN ? 'failed' : 'passed',
+          summary: d.tests.summary,
+          passed: d.tests.passed,
+          failedN: d.tests.failedN,
+          failed: d.tests.failed,
+        }
+      : null,
     deployHosts,
     deploys,
-    deployTimeline: d.deployTimeline,
-    composeFiles: ['podman-compose.yml', 'podman-compose.staging.yml', 'compose.preview.yml'],
+    deployTimeline: useDemoCatalog ? d.deployTimeline : [],
+    composeFiles: useDemoCatalog ? [...DEMO_COMPOSE_FILES] : [],
     deployRuns,
     deployServices,
   }
@@ -785,7 +908,7 @@ export const useStudioDemoStore = create<StudioDemoState>((set, get) => ({
       if (p?.fromApi) {
         const cleaned = stripDemoCatalog(existing)
         if (cleaned !== existing) {
-          seedCache.set(id, cleaned)
+          seedCache.delete(id)
           set((s) => ({ byProject: { ...s.byProject, [id]: cleaned } }))
           return cleaned
         }

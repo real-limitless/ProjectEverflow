@@ -5,6 +5,7 @@ import {
   FormSelect,
   FormSelectOption,
   Label,
+  Spinner,
   Switch,
   Tabs,
   Tab,
@@ -20,11 +21,20 @@ import {
   putOpenCodeHarness,
   slugifyAgentName,
 } from '@/lib/harness/opencodePack'
+import {
+  createHttpTool,
+  deleteHttpTool,
+  isDemoMode,
+  listHttpTools,
+  testHttpTool,
+  updateHttpTool,
+  type ApiHttpTool,
+} from '@/lib/api'
 import { ensureOpenCode, listMcp } from '@/lib/opencode/client'
 import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { useProjectStudio, useStudioDemoStore } from '@/store/studioDemoStore'
-import type { McpServerDef } from '@/types/studio'
+import type { HttpToolDef, McpServerDef } from '@/types/studio'
 
 function mcpConfigFromForm(
   name: string,
@@ -48,14 +58,27 @@ function mcpConfigFromForm(
   }
 }
 
+function apiToolToDef(t: ApiHttpTool): HttpToolDef {
+  return {
+    id: t.id,
+    name: t.name,
+    method: t.method,
+    url: t.url_template,
+    on: t.enabled,
+  }
+}
+
 export function ToolsPanel() {
   const projectId = usePlaygroundStore((s) => s.currentProjectId) || 'default'
+  const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
   const project = getProject(projectId === 'default' ? null : projectId)
-  const isApi = Boolean(project?.fromApi)
+  void catalogVersion
+
+  const isApi = Boolean(project?.fromApi) && !isDemoMode()
   const sandboxReady = !isApi || project?.sandboxStatus === 'running'
 
   const studio = useProjectStudio(projectId)
-  const httpTools = studio.httpTools
+  const localHttpTools = studio.httpTools
   const localMcps = studio.mcps
   const createTool = useStudioDemoStore((s) => s.createTool)
   const deleteTool = useStudioDemoStore((s) => s.deleteTool)
@@ -70,6 +93,10 @@ export function ToolsPanel() {
   const [syncing, setSyncing] = useState(false)
   const [liveMcp, setLiveMcp] = useState<McpServerDef[] | null>(null)
 
+  const [apiTools, setApiTools] = useState<HttpToolDef[]>([])
+  const [toolsLoading, setToolsLoading] = useState(false)
+  const [toolBusyId, setToolBusyId] = useState<string | null>(null)
+
   const [toolName, setToolName] = useState('')
   const [method, setMethod] = useState('GET')
   const [url, setUrl] = useState('')
@@ -77,6 +104,27 @@ export function ToolsPanel() {
   const [mcpName, setMcpName] = useState('')
   const [transport, setTransport] = useState('HTTP/SSE')
   const [endpoint, setEndpoint] = useState('')
+
+  const httpTools = isApi ? apiTools : localHttpTools
+
+  const refreshHttpTools = useCallback(async () => {
+    if (!isApi || !projectId) {
+      setApiTools([])
+      return
+    }
+    try {
+      const rows = await listHttpTools(projectId)
+      setApiTools(rows.map(apiToolToDef))
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Failed to load HTTP tools', { kind: 'danger' })
+    }
+  }, [isApi, projectId])
+
+  useEffect(() => {
+    if (!isApi) return
+    setToolsLoading(true)
+    void refreshHttpTools().finally(() => setToolsLoading(false))
+  }, [isApi, refreshHttpTools])
 
   const refreshLiveMcp = useCallback(async () => {
     if (!isApi || !sandboxReady) {
@@ -104,7 +152,6 @@ export function ToolsPanel() {
           status: (statusMap as Record<string, { status?: string }>)[name]?.status,
         } satisfies McpServerDef
       })
-      // Include status-only entries not yet in pack
       for (const [name, st] of Object.entries(statusMap || {})) {
         if (!fromPack.some((m) => m.name === name)) {
           fromPack.push({
@@ -139,7 +186,7 @@ export function ToolsPanel() {
   }, [projectId, refreshLiveMcp])
 
   const mcps = liveMcp && liveMcp.length > 0 ? liveMcp : localMcps
-  const empty = httpTools.length === 0 && mcps.length === 0
+  const empty = httpTools.length === 0 && mcps.length === 0 && !toolsLoading
 
   const syncMcpToOpenCode = async (
     name: string,
@@ -206,7 +253,6 @@ export function ToolsPanel() {
     if (isApi && sandboxReady) {
       setSyncing(true)
       try {
-        // Disable rather than fully remove unknown structure
         await putOpenCodeHarness(projectId, {
           mcp: {
             [m.name]: { enabled: false },
@@ -227,6 +273,101 @@ export function ToolsPanel() {
     }
   }
 
+  const handleCreateTool = async () => {
+    if (!toolName.trim()) return
+    const name = toolName.trim()
+    const urlTemplate = url || `https://api.example.com/${name}`
+    if (isApi) {
+      setSyncing(true)
+      try {
+        await createHttpTool(projectId, {
+          name,
+          method,
+          url_template: urlTemplate,
+          enabled: true,
+        })
+        await refreshHttpTools()
+        pushToast(`HTTP tool “${name}” created`, { kind: 'success' })
+      } catch (e) {
+        pushToast(e instanceof Error ? e.message : 'Failed to create HTTP tool', { kind: 'danger' })
+        return
+      } finally {
+        setSyncing(false)
+      }
+    } else {
+      createTool(projectId, {
+        name,
+        method,
+        url: urlTemplate,
+        on: true,
+      })
+      pushToast('Tool created', { kind: 'success' })
+    }
+    setToolName('')
+    setUrl('')
+    setToolOpen(false)
+  }
+
+  const handleToggleTool = async (t: HttpToolDef) => {
+    if (!isApi) {
+      toggleTool(projectId, t.id)
+      return
+    }
+    setToolBusyId(t.id)
+    try {
+      await updateHttpTool(projectId, t.id, { enabled: !t.on })
+      await refreshHttpTools()
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Failed to update tool', { kind: 'danger' })
+    } finally {
+      setToolBusyId(null)
+    }
+  }
+
+  const handleDeleteTool = async (t: HttpToolDef) => {
+    if (!isApi) {
+      deleteTool(projectId, t.id)
+      pushToast('Tool deleted', { kind: 'warning' })
+      return
+    }
+    setToolBusyId(t.id)
+    try {
+      await deleteHttpTool(projectId, t.id)
+      await refreshHttpTools()
+      pushToast('Tool deleted', { kind: 'warning' })
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Failed to delete tool', { kind: 'danger' })
+    } finally {
+      setToolBusyId(null)
+    }
+  }
+
+  const handleTestTool = async (t: HttpToolDef) => {
+    if (!isApi) {
+      pushToast('Test runs against the platform API (open an API project).', { kind: 'warning' })
+      return
+    }
+    setToolBusyId(t.id)
+    try {
+      const result = await testHttpTool(projectId, t.id)
+      if (result.ok) {
+        pushToast(
+          `Test OK · HTTP ${result.status_code ?? '?'} · ${result.elapsed_ms}ms`,
+          { kind: 'success' },
+        )
+      } else {
+        pushToast(
+          result.error || `Test failed · HTTP ${result.status_code ?? '?'}`,
+          { kind: 'danger' },
+        )
+      }
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Test failed', { kind: 'danger' })
+    } finally {
+      setToolBusyId(null)
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div className="panel-toolbar">
@@ -236,29 +377,82 @@ export function ToolsPanel() {
           variant="secondary"
           className="panel-pf-tabs"
         >
-          <Tab eventKey="tools" title={<TabTitleText>Tools ({httpTools.length})</TabTitleText>} />
+          <Tab
+            eventKey="tools"
+            title={
+              <TabTitleText>
+                HTTP tools ({httpTools.length})
+                {isApi ? ' · API' : ''}
+              </TabTitleText>
+            }
+          />
           <Tab eventKey="mcps" title={<TabTitleText>MCP servers ({mcps.length})</TabTitleText>} />
         </Tabs>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => (sub === 'tools' ? setToolOpen(true) : setMcpOpen(true))}
-          isDisabled={syncing}
-        >
-          {sub === 'tools' ? 'Create tool' : 'Create MCP'}
-        </Button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {sub === 'tools' && isApi ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setToolsLoading(true)
+                void refreshHttpTools().finally(() => setToolsLoading(false))
+              }}
+              isDisabled={syncing || toolsLoading}
+            >
+              {toolsLoading ? 'Loading…' : 'Refresh'}
+            </Button>
+          ) : null}
+          {sub === 'mcps' && isApi ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void refreshLiveMcp()}
+              isDisabled={syncing || !sandboxReady}
+            >
+              {syncing ? 'Syncing…' : 'Refresh status'}
+            </Button>
+          ) : null}
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => (sub === 'tools' ? setToolOpen(true) : setMcpOpen(true))}
+            isDisabled={syncing}
+          >
+            {sub === 'tools' ? 'Create tool' : 'Create MCP'}
+          </Button>
+        </div>
       </div>
       <div className="panel-scroll">
-        {sub === 'mcps' && isApi ? (
+        {sub === 'tools' && isApi ? (
           <p className="lc-meta" style={{ marginTop: 0 }}>
-            MCP servers sync into the project sandbox <code>opencode.json</code> and are available to
-            OpenCode agents. Assign them per-agent in the Agents panel.
+            HTTP tools are stored on the project and callable via Everflow MCP (
+            <code>everflow_list_http_tools</code> / <code>everflow_call_http_tool</code>
+            ). Outbound requests are SSRF-guarded.
           </p>
         ) : null}
-        {empty ? (
+        {sub === 'mcps' && isApi ? (
+          <p className="lc-meta" style={{ marginTop: 0 }}>
+            {!sandboxReady
+              ? 'Sandbox not running — showing local catalog. Start the sandbox to sync MCP into OpenCode.'
+              : liveMcp
+                ? syncing
+                  ? 'Syncing harness pack to OpenCode…'
+                  : 'Synced from the OpenCode harness (opencode.json). Toggle updates the pack; assign per-agent in Agents. Chat composer can further deny unchecked servers per prompt.'
+                : 'Could not load live MCP status — showing local catalog. Use Refresh status when the sandbox is healthy.'}
+          </p>
+        ) : null}
+        {sub === 'tools' && isApi && toolsLoading && httpTools.length === 0 ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
+            <Spinner size="lg" aria-label="Loading HTTP tools" />
+          </div>
+        ) : empty ? (
           <EmptySplash
             title="No tools or MCP servers"
-            body="Register HTTP tools and MCP servers so agents and chat can call them."
+            body={
+              isApi
+                ? 'Register HTTP tools (persisted + MCP-callable) or MCP servers for OpenCode.'
+                : 'Register HTTP tools and MCP servers so agents and chat can call them.'
+            }
             primaryLabel="Create tool"
             onPrimary={() => setToolOpen(true)}
             secondaryLabel="Create MCP server"
@@ -269,7 +463,11 @@ export function ToolsPanel() {
           httpTools.length === 0 ? (
             <EmptySplash
               title="No HTTP tools"
-              body="Create a tool to expose an HTTP action to agents."
+              body={
+                isApi
+                  ? 'Create an HTTP tool to expose a named method + URL template to agents via Everflow MCP.'
+                  : 'Create a tool to expose an HTTP action to agents.'
+              }
               primaryLabel="Create tool"
               onPrimary={() => setToolOpen(true)}
             />
@@ -287,20 +485,29 @@ export function ToolsPanel() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <Label color={t.on ? 'green' : 'grey'}>{t.method}</Label>
+                    {isApi ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => void handleTestTool(t)}
+                        isDisabled={toolBusyId === t.id || syncing}
+                      >
+                        {toolBusyId === t.id ? 'Testing…' : 'Test'}
+                      </Button>
+                    ) : null}
                     <Switch
                       id={`tool-${t.id}`}
                       isChecked={t.on}
-                      onChange={() => toggleTool(projectId, t.id)}
+                      onChange={() => void handleToggleTool(t)}
                       aria-label={`Toggle ${t.name}`}
+                      isDisabled={toolBusyId === t.id}
                     />
                     <Button
                       variant="link"
                       isDanger
                       size="sm"
-                      onClick={() => {
-                        deleteTool(projectId, t.id)
-                        pushToast('Tool deleted', { kind: 'warning' })
-                      }}
+                      onClick={() => void handleDeleteTool(t)}
+                      isDisabled={toolBusyId === t.id}
                     >
                       Delete
                     </Button>
@@ -317,43 +524,63 @@ export function ToolsPanel() {
             onPrimary={() => setMcpOpen(true)}
           />
         ) : (
-          mcps.map((m) => (
-            <div className="list-card" key={m.id}>
-              <div className="lc-row">
-                <div>
-                  <div className="lc-title">{m.name}</div>
-                  <div className="lc-meta">
-                    {m.transport} · {m.endpoint}
-                    {m.status ? ` · ${m.status}` : ''}
+          mcps.map((m) => {
+            const status = (m.status || '').toLowerCase()
+            const statusColor =
+              status.includes('connect') || status === 'ready' || status === 'ok'
+                ? 'green'
+                : status.includes('fail') || status.includes('error') || status === 'disconnected'
+                  ? 'red'
+                  : status
+                    ? 'grey'
+                    : null
+            return (
+              <div className="list-card" key={m.id}>
+                <div className="lc-row">
+                  <div>
+                    <div className="lc-title">{m.name}</div>
+                    <div className="lc-meta">
+                      {m.transport}
+                      {m.endpoint ? ` · ${m.endpoint}` : ''}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Label color={m.on ? 'green' : 'grey'}>{m.on ? 'enabled' : 'disabled'}</Label>
+                    {statusColor && m.status ? (
+                      <Label color={statusColor} isCompact>
+                        {m.status}
+                      </Label>
+                    ) : null}
+                    {isApi && sandboxReady && liveMcp?.some((x) => x.id === m.id) ? (
+                      <Label color="blue" isCompact>
+                        harness
+                      </Label>
+                    ) : isApi && !sandboxReady ? (
+                      <Label color="grey" isCompact>
+                        local
+                      </Label>
+                    ) : null}
+                    <Switch
+                      id={`mcp-${m.id}`}
+                      isChecked={m.on}
+                      onChange={() => void handleToggleMcp(m)}
+                      aria-label={`Toggle ${m.name}`}
+                      isDisabled={syncing}
+                    />
+                    <Button
+                      variant="link"
+                      isDanger
+                      size="sm"
+                      onClick={() => void handleDeleteMcp(m)}
+                      isDisabled={syncing}
+                    >
+                      Delete
+                    </Button>
                   </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Label color={m.on ? 'green' : 'grey'}>{m.on ? 'on' : 'off'}</Label>
-                  {isApi && sandboxReady ? (
-                    <Label color="blue" isCompact>
-                      opencode
-                    </Label>
-                  ) : null}
-                  <Switch
-                    id={`mcp-${m.id}`}
-                    isChecked={m.on}
-                    onChange={() => void handleToggleMcp(m)}
-                    aria-label={`Toggle ${m.name}`}
-                    isDisabled={syncing}
-                  />
-                  <Button
-                    variant="link"
-                    isDanger
-                    size="sm"
-                    onClick={() => void handleDeleteMcp(m)}
-                    isDisabled={syncing}
-                  >
-                    Delete
-                  </Button>
-                </div>
               </div>
-            </div>
-          ))
+            )
+          })
         )}
       </div>
 
@@ -361,20 +588,9 @@ export function ToolsPanel() {
         isOpen={toolOpen}
         title="Create HTTP tool"
         onClose={() => setToolOpen(false)}
-        onSubmit={() => {
-          if (!toolName.trim()) return
-          createTool(projectId, {
-            name: toolName.trim(),
-            method,
-            url: url || `https://api.example.com/${toolName.trim()}`,
-            on: true,
-          })
-          pushToast('Tool created', { kind: 'success' })
-          setToolName('')
-          setUrl('')
-          setToolOpen(false)
-        }}
-        isSubmitDisabled={!toolName.trim()}
+        onSubmit={() => void handleCreateTool()}
+        isSubmitDisabled={!toolName.trim() || syncing}
+        submitLabel={syncing ? 'Creating…' : 'Create'}
       >
         <FormGroup label="Name" isRequired fieldId="tool-name">
           <TextInput id="tool-name" value={toolName} onChange={(_e, v) => setToolName(v)} />

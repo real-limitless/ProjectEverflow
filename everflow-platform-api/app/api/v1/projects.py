@@ -16,7 +16,13 @@ from app.models.project import Project
 from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
 from app.services.repo_clone import clone_project_repos, repos_to_storage
-from app.services.sandbox import destroy_project_sandbox, make_sandbox_name, provision_project_sandbox
+from app.services.sandbox import (
+    destroy_project_sandbox,
+    make_sandbox_name,
+    normalize_harness_ids,
+    provision_project_sandbox,
+    reconfigure_project_sandbox,
+)
 from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
 
 logger = logging.getLogger(__name__)
@@ -140,12 +146,16 @@ async def create_project(
 
     sandbox_name = make_sandbox_name(org.slug, body.slug) if settings.sandbox_enabled else None
     stored_repos = repos_to_storage(body.repos)
+    harness_ids = normalize_harness_ids(body.harnesses)
+    if not harness_ids:
+        harness_ids = list(settings.sandbox_default_harnesses)
     project = Project(
         organization_id=org_id,
         name=body.name,
         slug=body.slug,
         description=body.description,
         repos=stored_repos,
+        harnesses=harness_ids,
         sandbox_name=sandbox_name,
         sandbox_status="pending" if settings.sandbox_enabled else "destroyed",
         sandbox_image=settings.sandbox_default_image if settings.sandbox_enabled else None,
@@ -177,13 +187,18 @@ async def get_project(
 @router.patch("/projects/{project_id}", response_model=ProjectRead)
 async def update_project(
     body: ProjectUpdate,
+    background_tasks: BackgroundTasks,
     project: Project = Depends(get_project_for_member),
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
 ) -> Project:
     # Name/slug changes require admin; description alone is fine for any member.
     if body.name is not None or body.slug is not None:
         await _require_project_admin(project, user, session)
+
+    prev_harnesses = normalize_harness_ids(project.harnesses)
+    harnesses_changed = False
 
     if body.name is not None:
         project.name = body.name
@@ -193,6 +208,10 @@ async def update_project(
         project.description = body.description
     if body.repos is not None:
         project.repos = repos_to_storage(body.repos)
+    if body.harnesses is not None:
+        new_ids = normalize_harness_ids(body.harnesses)
+        project.harnesses = new_ids
+        harnesses_changed = new_ids != prev_harnesses
 
     try:
         await session.commit()
@@ -203,6 +222,44 @@ async def update_project(
             detail="Project slug already exists in this organization",
         ) from None
     await session.refresh(project)
+
+    # Default: reconfigure when harnesses change unless the client opts out.
+    should_reconfigure = harnesses_changed and body.reconfigure_sandbox is not False
+    if should_reconfigure and settings.sandbox_enabled:
+        from app.api.v1.sandbox import _bg_recreate
+
+        try:
+            project, mode = await reconfigure_project_sandbox(
+                session,
+                project,
+                settings=settings,
+                previous_harness_ids=prev_harnesses,
+            )
+        except SandboxAgentError as exc:
+            logger.warning(
+                "sandbox reconfigure after harness update failed project=%s: %s",
+                project.id,
+                exc,
+            )
+        else:
+            if mode == "recreate":
+                project.sandbox_status = "pending"
+                project.sandbox_error = None
+                if project.repos:
+                    reset = []
+                    for r in project.repos:
+                        if not isinstance(r, dict):
+                            continue
+                        item = dict(r)
+                        if item.get("url"):
+                            item["clone_status"] = "pending"
+                            item["clone_error"] = None
+                        reset.append(item)
+                    project.repos = reset
+                await session.commit()
+                await session.refresh(project)
+                background_tasks.add_task(_bg_recreate, project.id)
+
     return project
 
 

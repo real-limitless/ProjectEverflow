@@ -164,6 +164,12 @@ export function ChatComposer({
                   />
                 ))}
                 <div className="composer-popover-title">MCP servers</div>
+                {mcpOptions?.length ? (
+                  <p className="composer-popover-hint">
+                    Unchecked servers are denied on the next prompt via tools permissions.
+                    Checked servers inherit agent / harness allow rules.
+                  </p>
+                ) : null}
                 {mcpList.map((m) => (
                   <Checkbox
                     key={m.id}

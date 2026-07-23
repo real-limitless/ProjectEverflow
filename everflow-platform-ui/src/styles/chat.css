@@ -344,19 +344,6 @@
   padding-inline: 0.55rem !important;
 }
 
-.chat-layout .chat-mode-auto-badge {
-  font-size: 0.65rem;
-  font-weight: 700;
-  text-transform: lowercase;
-  letter-spacing: 0.04em;
-  color: var(--pf-t--global--text--color--subtle);
-  background: var(--pf-t--global--background--color--secondary--default);
-  border: 1px solid var(--pf-t--global--border--color--default);
-  border-radius: 999px;
-  padding: 0.1rem 0.45rem;
-  opacity: 0.85;
-}
-
 .chat-layout .chat-metrics {
   display: flex;
   align-items: center;
@@ -1175,6 +1162,13 @@ button.chat-composer-send {
   letter-spacing: 0.04em;
   color: var(--pf-t--global--text--color--subtle);
   margin-top: 0.25rem;
+}
+
+.composer-popover-hint {
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: var(--pf-t--global--text--color--subtle);
+  margin: 0 0 0.15rem;
 }
 
 /* Dark theme polish */

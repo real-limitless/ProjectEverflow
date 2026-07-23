@@ -1,0 +1,33 @@
+# Example Traefik dynamic file config.
+# Copy to /etc/everflow/dynamic/routes.yml (or project .everflow/traefik-routes.yml
+# and mount/symlink into the file provider directory).
+#
+# Rule: Host(`domain`) → service at host:port (or docker network service name).
+
+http:
+  routers:
+    example-app:
+      rule: "Host(`app.example.com`)"
+      entryPoints:
+        - web
+      service: example-app
+      # middlewares: []
+
+    # Additional host:
+    # api-app:
+    #   rule: "Host(`api.example.com`)"
+    #   entryPoints:
+    #     - web
+    #   service: api-app
+
+  services:
+    example-app:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8080"
+        # passHostHeader: true
+
+    # api-app:
+    #   loadBalancer:
+    #     servers:
+    #       - url: "http://api:3000"

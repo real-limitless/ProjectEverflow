@@ -1170,6 +1170,13 @@ body,
   margin-top: 0.25rem;
 }
 
+.composer-popover-hint {
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: var(--pf-t--global--text--color--subtle);
+  margin: 0 0 0.15rem;
+}
+
 /* Empty splash */
 .messages--empty {
   display: grid !important;
@@ -1271,6 +1278,10 @@ body,
 .preview-address-group {
   flex: 1;
   min-width: 6rem;
+}
+
+.preview-address-group .preview-nav-btn {
+  flex-shrink: 0;
 }
 
 .preview-code-block {

@@ -5,6 +5,11 @@ import {
   type CreateProjectDraft,
 } from '@/data/createProjectDraft'
 import {
+  DEFAULT_AGENT_HARNESS_IDS,
+  harnessesFromApi,
+  harnessesFromIds,
+} from '@/data/harnesses'
+import {
   PROJECTS,
   addProjectToCatalog,
   createBlankProject,
@@ -788,13 +793,14 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       layoutMode: existing?.layoutMode || seed?.layoutMode || 'standard',
       environment: existing?.environment || seed?.environment || 'local',
       visibility: existing?.visibility || seed?.visibility || 'private',
-      harnesses:
-        existing?.harnesses ||
-        seed?.harnesses ||
-        [
-          { id: 'agent-claude-code', label: 'Claude Code', enabled: true },
-          { id: 'agent-opencode', label: 'OpenCode', enabled: true },
-        ],
+      harnesses: (() => {
+        if (apiProject.harnesses?.length) {
+          return harnessesFromApi(apiProject.harnesses)
+        }
+        if (existing?.harnesses?.length) return existing.harnesses
+        if (seed?.harnesses?.length) return seed.harnesses
+        return harnessesFromIds([...DEFAULT_AGENT_HARNESS_IDS])
+      })(),
       repos: (() => {
         const fromApi = apiProject.repos?.length
           ? apiProject.repos.map((r, i) => ({
@@ -896,11 +902,16 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
           '@/lib/workspaceRepos'
         )
         const normalizedRepos = normalizeReposForCreate(draft.repos || [])
+        const harnessIds =
+          draft.harnessIds.length > 0
+            ? draft.harnessIds
+            : [...DEFAULT_AGENT_HARNESS_IDS]
         const apiProject = await apiCreateProject(auth.org.id, {
           name: draft.name.trim(),
           slug,
           description: draft.description?.trim() || undefined,
           repos: projectReposToApiPayload(normalizedRepos),
+          harnesses: harnessIds,
         })
         project = createProjectFromDraft(
           { ...draft, repos: normalizedRepos },

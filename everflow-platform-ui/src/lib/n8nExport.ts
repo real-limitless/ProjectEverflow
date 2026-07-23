@@ -24,6 +24,7 @@ export interface CanvasEdgeLike {
   target: string
   connectionType?: string
   sourceHandle?: string
+  targetHandle?: string
   sourceIndex?: number
   targetIndex?: number
   data?: { connectionType?: string }
@@ -35,11 +36,17 @@ function parseSourceIndex(handle?: string, fallback = 0): number {
   return m ? Number(m[1]) : fallback
 }
 
-function parseConnectionType(handle?: string, edgeType?: string): string {
+function parseConnectionType(
+  sourceHandle?: string,
+  edgeType?: string,
+  targetHandle?: string,
+): string {
   if (edgeType && edgeType !== 'main') return edgeType
-  if (!handle) return 'main'
-  if (handle.startsWith('ai_')) return handle.split(':')[0] || 'main'
-  if (handle.startsWith('main')) return 'main'
+  for (const handle of [targetHandle, sourceHandle]) {
+    if (!handle) continue
+    if (handle.startsWith('ai_')) return handle.split(':')[0] || 'main'
+    if (handle.startsWith('main')) return 'main'
+  }
   return edgeType || 'main'
 }
 
@@ -87,6 +94,7 @@ export function graphToN8nDocument(
     const ctype = parseConnectionType(
       e.sourceHandle,
       e.connectionType || e.data?.connectionType,
+      e.targetHandle,
     )
     const sIdx = e.sourceIndex ?? parseSourceIndex(e.sourceHandle, 0)
     const tIdx = e.targetIndex ?? 0
