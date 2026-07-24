@@ -18,6 +18,7 @@
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.11.2",
+    "echarts": "^5.6.0",
     "mermaid": "^11.16.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -25,9 +26,11 @@
     "victory-area": "^37.3.6",
     "victory-axis": "^37.3.6",
     "victory-bar": "^37.3.6",
+    "victory-box-plot": "^37.3.6",
     "victory-chart": "^37.3.6",
     "victory-core": "^37.3.6",
     "victory-create-container": "^37.3.6",
+    "victory-cursor-container": "^37.3.6",
     "victory-group": "^37.3.6",
     "victory-legend": "^37.3.6",
     "victory-line": "^37.3.6",
@@ -36,6 +39,7 @@
     "victory-stack": "^37.3.6",
     "victory-tooltip": "^37.3.6",
     "victory-voronoi-container": "^37.3.6",
+    "victory-zoom-container": "^37.3.6",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

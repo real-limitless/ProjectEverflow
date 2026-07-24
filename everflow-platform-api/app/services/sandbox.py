@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -17,6 +20,53 @@ from app.models.project import Project
 from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
 
 logger = logging.getLogger(__name__)
+
+# #region agent log
+def _agent_dbg(
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict[str, Any] | None = None,
+) -> None:
+    payload = {
+        "sessionId": "c0f5c1",
+        "runId": "pre-fix",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data or {},
+        "timestamp": int(time.time() * 1000),
+    }
+    line = json.dumps(payload, default=str) + "\n"
+    for path in (
+        Path("/home/chchiu/Documents/GitHub/ProjectEverflow3/.cursor/debug-c0f5c1.log"),
+        # services/sandbox.py → app/_debug_c0f5c1.ndjson (bind-mounted)
+        Path(__file__).resolve().parents[1] / "_debug_c0f5c1.ndjson",
+    ):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+        except Exception:
+            pass
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(
+            "http://host.containers.internal:7314/ingest/d6f4ef88-4822-4e57-b621-261934682132",
+            data=line.encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-Debug-Session-Id": "c0f5c1",
+            },
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=0.4)  # noqa: S310
+    except Exception:
+        pass
+
+
+# #endregion
 
 SANDBOX_STATUSES = (
     "pending",
@@ -125,6 +175,18 @@ async def provision_project_sandbox(
     await session.commit()
 
     if force and name:
+        # #region agent log
+        _agent_dbg(
+            "D",
+            "sandbox.py:provision_project_sandbox",
+            "force recreate stop+remove",
+            {
+                "project_id": str(project_id),
+                "sandbox_name": name,
+                "prev_status": project.sandbox_status,
+            },
+        )
+        # #endregion
         try:
             await client.stop_sandbox(name)
         except SandboxAgentError:
@@ -306,6 +368,20 @@ async def mark_sandbox_dead(
     message: str | None = None,
 ) -> Project:
     """Mark a sandbox unusable so clients recreate instead of polling forever."""
+    # #region agent log
+    _agent_dbg(
+        "A",
+        "sandbox.py:mark_sandbox_dead",
+        "marking sandbox dead",
+        {
+            "project_id": str(project.id),
+            "sandbox_name": project.sandbox_name,
+            "prev_status": project.sandbox_status,
+            "live_status": live_status,
+            "message": (message or f"{DEAD_ON_AGENT} (status={live_status})")[:300],
+        },
+    )
+    # #endregion
     project.sandbox_status = "error"
     project.sandbox_error = (message or f"{DEAD_ON_AGENT} (status={live_status})")[:2000]
     try:
@@ -346,10 +422,27 @@ async def refresh_sandbox_status(
 
     client = client or SandboxAgentClient(settings)
     creating = project.sandbox_status in ("pending", "creating")
+    prev_status = project.sandbox_status
     try:
         info = await client.get_sandbox(project.sandbox_name)
         live_raw = str(info.get("status") or "").strip()
         live = normalize_agent_status(live_raw, fallback=project.sandbox_status)
+        # #region agent log
+        if (live_raw or "").strip().lower() != "running" or prev_status != "running":
+            _agent_dbg(
+                "A",
+                "sandbox.py:refresh_sandbox_status",
+                "refresh non-running or demoting",
+                {
+                    "project_id": str(project.id),
+                    "sandbox_name": project.sandbox_name,
+                    "prev_status": prev_status,
+                    "live_raw": live_raw,
+                    "live_normalized": live,
+                    "creating": creating,
+                },
+            )
+        # #endregion
 
         if creating:
             # Only promote to running while create is in flight; never demote mid-create.
@@ -383,6 +476,21 @@ async def refresh_sandbox_status(
         await session.commit()
         await session.refresh(project)
     except SandboxAgentError as exc:
+        # #region agent log
+        _agent_dbg(
+            "D",
+            "sandbox.py:refresh_sandbox_status",
+            "agent error during refresh",
+            {
+                "project_id": str(project.id),
+                "sandbox_name": project.sandbox_name,
+                "prev_status": prev_status,
+                "status_code": exc.status_code,
+                "error": str(exc)[:300],
+                "creating": creating,
+            },
+        )
+        # #endregion
         if exc.status_code == 404:
             if creating:
                 # Create still in progress — name may not be registered yet.

@@ -111,6 +111,36 @@ async function doEnsure(
 
   applyUpdate(st, onUpdate)
 
+  // #region agent log
+  if (
+    st.status !== 'running' ||
+    /drain|not running|missing|crashed/i.test(st.error || '')
+  ) {
+    fetch('http://127.0.0.1:7314/ingest/d6f4ef88-4822-4e57-b621-261934682132', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Debug-Session-Id': 'c0f5c1',
+      },
+      body: JSON.stringify({
+        sessionId: 'c0f5c1',
+        runId: 'pre-fix',
+        hypothesisId: 'D',
+        location: 'ensureSandbox.ts:doEnsure',
+        message: 'ensure saw non-running or drain error',
+        data: {
+          projectId,
+          status: st.status,
+          error: (st.error || '').slice(0, 300),
+          sandbox_name: st.sandbox_name,
+          forceRecreate: !!opts?.forceRecreate,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {})
+  }
+  // #endregion
+
   if (st.status === 'running' && !opts?.forceRecreate) {
     return { status: st, action: 'none', ok: true }
   }
@@ -120,6 +150,29 @@ async function doEnsure(
   try {
     if (opts?.forceRecreate || shouldRecreateSandbox(st.status)) {
       action = 'recreate'
+      // #region agent log
+      fetch('http://127.0.0.1:7314/ingest/d6f4ef88-4822-4e57-b621-261934682132', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Debug-Session-Id': 'c0f5c1',
+        },
+        body: JSON.stringify({
+          sessionId: 'c0f5c1',
+          runId: 'pre-fix',
+          hypothesisId: 'D',
+          location: 'ensureSandbox.ts:doEnsure',
+          message: 'ensure triggering recreate',
+          data: {
+            projectId,
+            status: st.status,
+            error: (st.error || '').slice(0, 300),
+            forceRecreate: !!opts?.forceRecreate,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {})
+      // #endregion
       st = await runRecreate(projectId, onUpdate)
     } else if (st.status === 'stopped') {
       action = 'start'

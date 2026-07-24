@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import json
 import logging
 import os
 import subprocess
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,6 +18,52 @@ from typing import Any
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
+
+# #region agent log
+def _agent_dbg(
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict[str, Any] | None = None,
+) -> None:
+    payload = {
+        "sessionId": "c0f5c1",
+        "runId": "pre-fix",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data or {},
+        "timestamp": int(time.time() * 1000),
+    }
+    line = json.dumps(payload, default=str) + "\n"
+    for path in (
+        Path("/home/chchiu/Documents/GitHub/ProjectEverflow3/.cursor/debug-c0f5c1.log"),
+        Path(__file__).resolve().parent / "_debug_c0f5c1.ndjson",
+    ):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+        except Exception:
+            pass
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(
+            "http://host.containers.internal:7314/ingest/d6f4ef88-4822-4e57-b621-261934682132",
+            data=line.encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-Debug-Session-Id": "c0f5c1",
+            },
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=0.4)  # noqa: S310
+    except Exception:
+        pass
+
+
+# #endregion
 
 # Prefer named volumes in nested Docker+KVM; bind and guest-only are fallbacks.
 VOLUME_STRATEGY_ORDER: tuple[str, ...] = ("named-volume", "bind", "no-volumes")
@@ -583,6 +631,14 @@ class MicrosandboxBackend(SandboxBackend):
 
     async def _force_cleanup(self, name: str) -> None:
         """Best-effort stop+remove so create/replace is clean."""
+        # #region agent log
+        _agent_dbg(
+            "D",
+            "msb.py:_force_cleanup",
+            "force cleanup before create/replace",
+            {"name": name},
+        )
+        # #endregion
         try:
             await self.remove(name)
         except Exception as exc:
@@ -670,6 +726,20 @@ class MicrosandboxBackend(SandboxBackend):
         for label, extra in attempts:
             try:
                 logger.info("Sandbox.create attempt=%s name=%s image=%s", label, name, image)
+                # #region agent log
+                _agent_dbg(
+                    "C",
+                    "msb.py:create",
+                    "create attempt",
+                    {
+                        "name": name,
+                        "label": label,
+                        "extra_keys": sorted(extra.keys()),
+                        "workdir": extra.get("workdir"),
+                        "replace": replace,
+                    },
+                )
+                # #endregion
                 sb = await Sandbox.create(
                     name,
                     image=image,
@@ -693,6 +763,19 @@ class MicrosandboxBackend(SandboxBackend):
                 msg = f"{label}: {exc}"
                 errors.append(msg)
                 logger.warning("Sandbox.create failed attempt=%s name=%s: %s", label, name, exc)
+                # #region agent log
+                _agent_dbg(
+                    "C",
+                    "msb.py:create",
+                    "create attempt failed",
+                    {
+                        "name": name,
+                        "label": label,
+                        "error": str(exc)[:400],
+                        "workdir": extra.get("workdir"),
+                    },
+                )
+                # #endregion
                 await self._force_cleanup(name)
                 sb = None
 
@@ -716,6 +799,19 @@ class MicrosandboxBackend(SandboxBackend):
             created_at=datetime.now(timezone.utc),
         )
         self._meta[name] = rec
+        # #region agent log
+        _agent_dbg(
+            "C",
+            "msb.py:create",
+            "create succeeded",
+            {
+                "name": name,
+                "strategy": won_label,
+                "workspace_path": used_workspace,
+                "harnesses": list(harnesses),
+            },
+        )
+        # #endregion
         # krun does not run the OCI ENTRYPOINT — start noVNC via guest exec.
         from app.desktop import schedule_ensure_guest_desktop
 
@@ -760,9 +856,23 @@ class MicrosandboxBackend(SandboxBackend):
         status = getattr(handle, "status", None) or (meta.status if meta else "unknown")
         if callable(status):
             status = status()
+        status_s = str(status)
+        # #region agent log
+        if status_s.strip().lower() != "running":
+            _agent_dbg(
+                "A",
+                "msb.py:get",
+                "non-running status from microsandbox",
+                {
+                    "name": name,
+                    "status": status_s,
+                    "prev_meta_status": getattr(meta, "status", None),
+                },
+            )
+        # #endregion
         rec = SandboxRecord(
             name=name,
-            status=str(status),
+            status=status_s,
             image=meta.image if meta else self._settings.default_image,
             labels=meta.labels if meta else {},
             harnesses=meta.harnesses if meta else [],
@@ -814,6 +924,9 @@ class MicrosandboxBackend(SandboxBackend):
     async def stop(self, name: str) -> SandboxRecord:
         from microsandbox import Sandbox
 
+        # #region agent log
+        _agent_dbg("B", "msb.py:stop", "stop called", {"name": name})
+        # #endregion
         try:
             handle = await Sandbox.get(name)
         except Exception as exc:
@@ -842,12 +955,23 @@ class MicrosandboxBackend(SandboxBackend):
         from microsandbox import Sandbox
 
         self._cancel_bootstrap(name)
+        # #region agent log
+        _agent_dbg("D", "msb.py:remove", "remove called", {"name": name})
+        # #endregion
 
         try:
             handle = await Sandbox.get(name)
             status = getattr(handle, "status", "")
             if callable(status):
                 status = status()
+            # #region agent log
+            _agent_dbg(
+                "A",
+                "msb.py:remove",
+                "remove pre-status",
+                {"name": name, "status": str(status)},
+            )
+            # #endregion
             if str(status) == "running":
                 try:
                     await self.stop(name)
@@ -1079,6 +1203,20 @@ class MicrosandboxBackend(SandboxBackend):
                 data = await sb.fs.read(guest_path)
                 return bytes(data)
             except Exception as exc:
+                # #region agent log
+                _agent_dbg(
+                    "E",
+                    "msb.py:read_fs",
+                    "fs.read failed",
+                    {
+                        "name": name,
+                        "path": path,
+                        "guest_path": guest_path,
+                        "error": str(exc)[:400],
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                # #endregion
                 # SDK raises FilesystemError (not FileNotFoundError) for ENOENT.
                 if is_missing_path_error(exc):
                     raise FileNotFoundError(path) from exc
