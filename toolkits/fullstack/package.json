@@ -1,0 +1,10 @@
+{
+  "name": "everflow-toolkit-fullstack",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:web": "npm --prefix apps/web run dev",
+    "dev:api": "cd apps/api && uvicorn main:app --host 0.0.0.0 --port 8000 --reload",
+    "web": "npm run dev:web"
+  }
+}

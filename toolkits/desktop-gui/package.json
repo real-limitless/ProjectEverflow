@@ -1,0 +1,14 @@
+{
+  "name": "everflow-toolkit-desktop-gui",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev:web": "npx --yes serve renderer -l 5174",
+    "web": "npm run dev:web"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  }
+}

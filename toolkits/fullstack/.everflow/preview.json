@@ -1,0 +1,5 @@
+{
+  "port": 5173,
+  "command": "npm --prefix apps/web install && npm run web",
+  "label": "Full-stack web"
+}

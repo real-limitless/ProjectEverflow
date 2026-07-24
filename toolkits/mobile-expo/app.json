@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Everflow Mobile",
+    "slug": "everflow-mobile-expo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "platforms": ["ios", "android", "web"],
+    "web": {
+      "bundler": "metro"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.everflow.mobile"
+    },
+    "android": {
+      "package": "dev.everflow.mobile"
+    }
+  }
+}
