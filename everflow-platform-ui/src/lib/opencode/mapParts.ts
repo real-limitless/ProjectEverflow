@@ -236,6 +236,60 @@ export function mapPartToBlocks(p: OcPart): ChatBlock[] {
       ]
     }
 
+    // Knowledge RAG (Everflow MCP)
+    if (
+      toolName === 'everflow_knowledge_search' ||
+      toolName === 'knowledge_search' ||
+      toolName.endsWith('knowledge_search')
+    ) {
+      const rawOut =
+        (typeof st?.output === 'string' && st.output) ||
+        (typeof p.output === 'string' ? p.output : '') ||
+        ''
+      let hits: {
+        canvas_id?: string
+        canvasId?: string
+        canvas_name?: string
+        canvasName?: string
+        chunk_id?: string
+        chunkId?: string
+        text?: string
+        score?: number
+        source_url?: string
+        sourceUrl?: string
+        path?: string
+      }[] = []
+      try {
+        const parsed = JSON.parse(rawOut) as {
+          hits?: typeof hits
+          error?: string
+        }
+        if (Array.isArray(parsed.hits)) hits = parsed.hits
+      } catch {
+        // leave hits empty; fall through to tool card body
+      }
+      if (hits.length) {
+        return [
+          {
+            type: 'knowledge_citations',
+            partId: partId || callId,
+            knowledgeCitations: {
+              query: String(input?.query || ''),
+              hits: hits.map((h) => ({
+                canvasId: String(h.canvas_id || h.canvasId || ''),
+                canvasName: String(h.canvas_name || h.canvasName || 'Canvas'),
+                chunkId: h.chunk_id || h.chunkId,
+                text: String(h.text || ''),
+                score: h.score,
+                sourceUrl: h.source_url || h.sourceUrl,
+                path: h.path,
+              })),
+            },
+          },
+        ]
+      }
+    }
+
     // Web tools
     if (toolName === 'websearch' || toolName === 'web_search') {
       return [
@@ -448,9 +502,24 @@ const REPLY_PLACEHOLDER_RE =
   /^_?(Thinking|Generating response|No response content|Working(?: on it)?)[.…_]*_?$/i
 
 function isReplyPlaceholder(text: string | undefined): boolean {
-  const t = (text || '').trim()
+  let t = (text || '').trim()
+  if (!t) return true
+  // Strip markdown italic wrappers (*text* / _text_) and decorative parens
+  t = t.replace(/^\*([^*]+)\*$/, '$1').replace(/^_([^_]+)_$/, '$1').trim()
+  t = t.replace(/^\((.+)\)$/, '$1').trim()
   if (!t) return true
   return REPLY_PLACEHOLDER_RE.test(t)
+}
+
+/** User-visible plain text from message text or first text/markdown block. */
+export function messagePlainText(m: ChatMessage): string {
+  const main = (m.text || '').trim()
+  if (main) return main
+  const block = (m.blocks || []).find(
+    (b) =>
+      (b.type === 'text' || b.type === 'markdown') && !!(b.text || '').trim(),
+  )
+  return (block?.text || '').trim()
 }
 
 /** True if message has real user-visible reply body (not only reasoning / placeholders). */
@@ -476,7 +545,8 @@ export function messageHasActivity(m: ChatMessage): boolean {
       b.type === 'question' ||
       b.type === 'permission' ||
       b.type === 'image' ||
-      b.type === 'attachment',
+      b.type === 'attachment' ||
+      b.type === 'knowledge_citations',
   )
 }
 
@@ -621,6 +691,12 @@ function metricsFromOpenCodeInfo(
   const created = normalizeEpochMs(time?.created)
   const completed = normalizeEpochMs(time?.completed)
   const output = tokens?.output
+  const input = tokens?.input
+  const reasoning = tokens?.reasoning
+  const cacheRead = tokens?.cache?.read
+  const cacheWrite = tokens?.cache?.write
+  const provider = info.model?.providerID
+  const model = info.model?.modelID
   let tokensPerSec: number | undefined
   let durationMs: number | undefined
   if (created != null && completed != null && completed > created) {
@@ -633,19 +709,21 @@ function metricsFromOpenCodeInfo(
   if (tokens?.total != null && tokens.total > 0) {
     contextUsedTokens = tokens.total
   } else if (tokens) {
-    const cacheRead = tokens.cache?.read ?? 0
     const sum =
       (tokens.input ?? 0) +
       (tokens.output ?? 0) +
       (tokens.reasoning ?? 0) +
-      cacheRead
+      (tokens.cache?.read ?? 0)
     if (sum > 0) contextUsedTokens = sum
   }
   if (
     clientTtftMs == null &&
     tokensPerSec == null &&
     output == null &&
-    contextUsedTokens == null
+    input == null &&
+    contextUsedTokens == null &&
+    !provider &&
+    !model
   ) {
     return undefined
   }
@@ -655,6 +733,13 @@ function metricsFromOpenCodeInfo(
     completionTokens: output,
     contextUsedTokens,
     durationMs,
+    inputTokens: input,
+    outputTokens: output,
+    reasoningTokens: reasoning,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+    provider: provider || undefined,
+    model: model || undefined,
   }
 }
 
@@ -718,7 +803,8 @@ export function mapOcMessage(
       b.type === 'question' ||
       b.type === 'permission' ||
       b.type === 'image' ||
-      b.type === 'attachment',
+      b.type === 'attachment' ||
+      b.type === 'knowledge_citations',
   )
 
   let errorText: string | undefined
@@ -817,7 +903,7 @@ export function mergeServerMessages(
   const serverTexts = new Set(
     server
       .filter((m) => m.role === 'user')
-      .map((m) => (m.text || '').trim())
+      .map((m) => messagePlainText(m))
       .filter(Boolean),
   )
 
@@ -826,7 +912,7 @@ export function mergeServerMessages(
 
   const extras = local.filter((m) => {
     if (m.id.startsWith('local-') && m.role === 'user') {
-      const t = (m.text || '').trim()
+      const t = messagePlainText(m)
       return t ? !serverTexts.has(t) : true
     }
     if (m.id.startsWith('pending-')) {
@@ -869,6 +955,7 @@ export function sessionToConversation(
     },
     chatMode: DEFAULT_CHAT_MODE,
     source: 'opencode',
+    useWorktree: false,
   }
 }
 

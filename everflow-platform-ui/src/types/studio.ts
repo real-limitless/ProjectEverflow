@@ -14,7 +14,7 @@ export type EmbedStatus =
   | 'stale' // was indexed; content changed — needs re-index
   | 'error'
 
-export type KnowledgeOrigin = 'created' | 'upload' | 'ocr' | 'web'
+export type KnowledgeOrigin = 'created' | 'upload' | 'ocr' | 'web' | 'repo' | 'research'
 export type TestCaseType = 'unit' | 'e2e' | 'smoke'
 export type TestRunStatus = 'idle' | 'running' | 'passed' | 'failed'
 export type DeployHostStatus = 'online' | 'offline' | 'unknown'
@@ -184,6 +184,27 @@ export interface KnowledgeCanvas {
   mime?: string
   sizeLabel?: string
   updatedAt?: string
+  collectionId?: string
+  sourceUrl?: string
+  contentHash?: string
+  lastFetchedAt?: string
+  repoPath?: string
+}
+
+export interface KnowledgeCollection {
+  id: string
+  name: string
+  visibility: 'personal' | 'team' | 'agent' | string
+  ownerUserId?: string
+}
+
+export interface KnowledgeLink {
+  id: string
+  fromType: string
+  fromId: string
+  toType: string
+  toId: string
+  rel: string
 }
 
 export interface WebSearchHit {

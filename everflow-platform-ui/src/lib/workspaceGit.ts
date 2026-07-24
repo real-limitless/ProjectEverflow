@@ -338,8 +338,10 @@ export async function discoverWorkspaceRepos(
   }
 
   // Verify find results are real work-tree roots (ignore empty / broken .git dirs)
+  // and never promote Everflow conversation worktrees into the repo catalog.
   const verifiedFound: string[] = []
   for (const root of found) {
+    if (isEverflowWorktreePath(root)) continue
     if (await probeIsGitRoot(projectId, root)) verifiedFound.push(root)
   }
   found = verifiedFound
@@ -360,10 +362,11 @@ export async function discoverWorkspaceRepos(
     probed.push(resolved)
   }
 
-  // Attach discovered roots not already in list
+  // Attach discovered roots not already in list (skip Everflow conversation worktrees)
   const paths = new Set(probed.filter((p) => p.hasGit).map((p) => p.path))
   for (const root of found) {
     if (paths.has(root)) continue
+    if (isEverflowWorktreePath(root)) continue
     // Prefer matching catalog by path hint / id / label basename
     const match = probed.find(
       (p) =>
@@ -658,4 +661,514 @@ export async function checkoutBranch(
   }
   const b = (await readBranch(projectId, repoPath)) || name
   return { ok: true, branch: b }
+}
+
+// ── Conversation worktrees (opt-in isolated checkouts) ──────────────────────
+
+export const EVERFLOW_WORKTREE_PREFIX = '.everflow/worktrees'
+export const WORKTREE_INDEX_PATH = '.everflow/worktrees/index.json'
+
+/** True when path is under Everflow-managed conversation worktrees. */
+export function isEverflowWorktreePath(path: string | undefined | null): boolean {
+  const p = sanitizeRepoPath(path)
+  if (!p || p === '.') return false
+  return p === EVERFLOW_WORKTREE_PREFIX || p.startsWith(`${EVERFLOW_WORKTREE_PREFIX}/`)
+}
+
+/** Allow session ids like `ses_…` / `n123` for path segments. */
+export function sanitizeWorktreeSessionId(raw: string | undefined | null): string | null {
+  if (raw == null) return null
+  const s = String(raw).trim()
+  if (!s || s.length > 128) return null
+  if (!/^[A-Za-z0-9._-]+$/.test(s)) return null
+  return s
+}
+
+/** Sanitize repo id for a single path segment under .everflow/worktrees/. */
+export function sanitizeWorktreeRepoId(raw: string | undefined | null): string | null {
+  if (raw == null) return null
+  let s = String(raw).trim().replace(/\\/g, '/')
+  if (!s) return null
+  s = s.replace(/^\.\//, '').replace(/\/+$/, '')
+  if (!s || s === '.' || s.includes('..') || s.includes('\0')) return null
+  s = s.replace(/[/\\]+/g, '-')
+  if (!/^[A-Za-z0-9._-]+$/.test(s) || s.length > 80) return null
+  return s
+}
+
+export function worktreeBranchForSession(sessionId: string): string | null {
+  const id = sanitizeWorktreeSessionId(sessionId)
+  if (!id) return null
+  const short = id.replace(/^ses_/, '').slice(0, 16) || id.slice(0, 16)
+  return sanitizeBranchName(`ef/${short}`)
+}
+
+export function worktreePathForSession(repoId: string, sessionId: string): string | null {
+  const rid = sanitizeWorktreeRepoId(repoId)
+  const sid = sanitizeWorktreeSessionId(sessionId)
+  if (!rid || !sid) return null
+  return `${EVERFLOW_WORKTREE_PREFIX}/${rid}/${sid}`
+}
+
+/** Normalize absolute guest paths (`/workspace/foo`) to workspace-relative. */
+export function workspaceRelFromAbsPath(absoluteOrRel: string): string {
+  let p = String(absoluteOrRel || '')
+    .replace(/\\/g, '/')
+    .trim()
+  if (p.startsWith('/workspace/')) p = p.slice('/workspace/'.length)
+  else if (p === '/workspace' || p === '/workspace/') p = '.'
+  return sanitizeRepoPath(p)
+}
+
+export interface WorktreeListEntry {
+  path: string
+  head?: string
+  branch?: string
+  bare?: boolean
+  detached?: boolean
+  locked?: boolean
+  prunable?: boolean
+}
+
+/**
+ * Parse `git worktree list --porcelain` into workspace-relative entries.
+ */
+export function parseWorktreePorcelain(stdout: string): WorktreeListEntry[] {
+  const entries: WorktreeListEntry[] = []
+  let cur: WorktreeListEntry | null = null
+  const flush = () => {
+    if (cur?.path) entries.push(cur)
+    cur = null
+  }
+  for (const rawLine of stdout.split(/\r?\n/)) {
+    const line = rawLine.trimEnd()
+    if (!line) {
+      flush()
+      continue
+    }
+    if (line.startsWith('worktree ')) {
+      flush()
+      const abs = line.slice('worktree '.length).trim()
+      cur = { path: workspaceRelFromAbsPath(abs) }
+      continue
+    }
+    if (!cur) continue
+    if (line.startsWith('HEAD ')) cur.head = line.slice(5).trim()
+    else if (line.startsWith('branch ')) {
+      const ref = line.slice('branch '.length).trim()
+      cur.branch = ref.replace(/^refs\/heads\//, '')
+    } else if (line === 'bare') cur.bare = true
+    else if (line === 'detached') cur.detached = true
+    else if (line.startsWith('locked')) cur.locked = true
+    else if (line === 'prunable' || line.startsWith('prunable ')) cur.prunable = true
+  }
+  flush()
+  return entries
+}
+
+export type ConversationWorktreeStatus = 'active' | 'applied' | 'discarded' | 'error'
+
+export interface ConversationWorktreeMeta {
+  sessionId: string
+  repoId: string
+  parentPath: string
+  path: string
+  branch: string
+  status: ConversationWorktreeStatus
+  error?: string
+}
+
+export interface WorktreeIndexFile {
+  entries: ConversationWorktreeMeta[]
+}
+
+export function parseWorktreeIndexJson(raw: string): WorktreeIndexFile {
+  try {
+    const data = JSON.parse(raw) as unknown
+    if (!data || typeof data !== 'object') return { entries: [] }
+    const entries = Array.isArray((data as WorktreeIndexFile).entries)
+      ? (data as WorktreeIndexFile).entries
+      : []
+    return {
+      entries: entries.filter(
+        (e): e is ConversationWorktreeMeta =>
+          Boolean(
+            e &&
+              typeof e === 'object' &&
+              typeof e.sessionId === 'string' &&
+              typeof e.path === 'string' &&
+              typeof e.branch === 'string' &&
+              typeof e.parentPath === 'string' &&
+              typeof e.repoId === 'string',
+          ),
+      ),
+    }
+  } catch {
+    return { entries: [] }
+  }
+}
+
+/** Pure command plan for discard (from parent repo). */
+export function planDiscardWorktreeCommands(
+  worktreePath: string,
+  branch: string,
+): string[][] {
+  const wt = sanitizeRepoPath(worktreePath)
+  const b = sanitizeBranchName(branch)
+  const cmds: string[][] = []
+  if (wt && wt !== '.') cmds.push(['worktree', 'remove', '--force', wt])
+  if (b) cmds.push(['branch', '-D', b])
+  return cmds
+}
+
+/** Pure command plan for approve merge (from parent after worktree is committed). */
+export function planApproveMergeCommands(branch: string): string[][] {
+  const b = sanitizeBranchName(branch)
+  if (!b) return []
+  return [
+    ['merge', '--no-edit', b],
+    ['worktree', 'remove', '--force'], // path filled by caller
+    ['branch', '-D', b],
+  ]
+}
+
+async function ensureParentDirs(projectId: string, relPath: string): Promise<void> {
+  const { execInSandbox } = await import('@/lib/api')
+  const parent = relPath.includes('/') ? relPath.replace(/\/[^/]+$/, '') : ''
+  if (!parent) return
+  await execInSandbox(projectId, {
+    cmd: 'mkdir',
+    args: ['-p', parent],
+    cwd: '/workspace',
+    timeout_seconds: 15,
+  })
+}
+
+export async function listWorktrees(
+  projectId: string,
+  repoPath: string,
+): Promise<WorktreeListEntry[]> {
+  const res = await gitExec(projectId, repoPath, ['worktree', 'list', '--porcelain'], 30)
+  if (res.exit_code !== 0) {
+    throw new Error(res.stderr.trim() || 'git worktree list failed')
+  }
+  return parseWorktreePorcelain(res.stdout)
+}
+
+export async function readWorktreeIndex(projectId: string): Promise<WorktreeIndexFile> {
+  try {
+    const { readSandboxFs } = await import('@/lib/api')
+    const raw = await readSandboxFs(projectId, WORKTREE_INDEX_PATH)
+    return parseWorktreeIndexJson(raw)
+  } catch {
+    return { entries: [] }
+  }
+}
+
+export async function writeWorktreeIndex(
+  projectId: string,
+  index: WorktreeIndexFile,
+): Promise<void> {
+  const { writeSandboxFs } = await import('@/lib/api')
+  await ensureParentDirs(projectId, WORKTREE_INDEX_PATH)
+  await writeSandboxFs(projectId, WORKTREE_INDEX_PATH, JSON.stringify(index, null, 2))
+}
+
+export async function upsertWorktreeIndexEntry(
+  projectId: string,
+  entry: ConversationWorktreeMeta,
+): Promise<void> {
+  const index = await readWorktreeIndex(projectId)
+  const next = index.entries.filter((e) => e.sessionId !== entry.sessionId)
+  next.push(entry)
+  await writeWorktreeIndex(projectId, { entries: next })
+}
+
+export type EnsureWorktreeResult =
+  | {
+      ok: true
+      path: string
+      branch: string
+      parentPath: string
+      repoId: string
+      reused: boolean
+    }
+  | { ok: false; error: string }
+
+/**
+ * Create (or reuse) a conversation worktree under `.everflow/worktrees/<repoId>/<sessionId>`.
+ */
+export async function ensureConversationWorktree(
+  projectId: string,
+  opts: {
+    repoId: string
+    parentPath: string
+    sessionId: string
+    baseBranch?: string | null
+  },
+): Promise<EnsureWorktreeResult> {
+  const parentPath = sanitizeRepoPath(opts.parentPath)
+  const path = worktreePathForSession(opts.repoId, opts.sessionId)
+  const branch = worktreeBranchForSession(opts.sessionId)
+  if (!path || !branch) {
+    return { ok: false, error: 'Invalid session or repo id for worktree' }
+  }
+  if (!(await probeIsGitRoot(projectId, parentPath))) {
+    return { ok: false, error: 'Parent path is not a git repository' }
+  }
+
+  // Reuse existing worktree at path
+  if (await probeIsGitRoot(projectId, path)) {
+    const meta: ConversationWorktreeMeta = {
+      sessionId: opts.sessionId,
+      repoId: opts.repoId,
+      parentPath,
+      path,
+      branch,
+      status: 'active',
+    }
+    await upsertWorktreeIndexEntry(projectId, meta).catch(() => undefined)
+    return { ok: true, path, branch, parentPath, repoId: opts.repoId, reused: true }
+  }
+
+  await ensureParentDirs(projectId, path)
+
+  const base = sanitizeBranchName(opts.baseBranch) || undefined
+  // Prefer create new branch from base (or HEAD); if branch exists, attach path to it.
+  let res = await gitExec(
+    projectId,
+    parentPath,
+    base
+      ? ['worktree', 'add', '-b', branch, path, base]
+      : ['worktree', 'add', '-b', branch, path],
+    90,
+  ).catch((e) => ({
+    exit_code: 1,
+    stdout: '',
+    stderr: e instanceof Error ? e.message : String(e),
+  }))
+
+  if (res.exit_code !== 0) {
+    const err = (res.stderr || res.stdout || '').toLowerCase()
+    if (err.includes('already exists') || err.includes('already checked out')) {
+      res = await gitExec(projectId, parentPath, ['worktree', 'add', path, branch], 90).catch(
+        (e) => ({
+          exit_code: 1,
+          stdout: '',
+          stderr: e instanceof Error ? e.message : String(e),
+        }),
+      )
+    }
+  }
+
+  if (res.exit_code !== 0) {
+    const msg = (res.stderr || res.stdout || 'git worktree add failed').trim().slice(0, 400)
+    return { ok: false, error: msg }
+  }
+
+  const meta: ConversationWorktreeMeta = {
+    sessionId: opts.sessionId,
+    repoId: opts.repoId,
+    parentPath,
+    path,
+    branch,
+    status: 'active',
+  }
+  await upsertWorktreeIndexEntry(projectId, meta).catch(() => undefined)
+  return { ok: true, path, branch, parentPath, repoId: opts.repoId, reused: false }
+}
+
+export async function diffWorktree(
+  projectId: string,
+  worktreePath: string,
+): Promise<{ changes: Awaited<ReturnType<typeof loadGitChanges>>; branch: string | null }> {
+  const path = sanitizeRepoPath(worktreePath)
+  const [changes, branch] = await Promise.all([
+    loadGitChanges(projectId, path, { withDiffs: true }),
+    getCurrentBranch(projectId, path),
+  ])
+  return { changes, branch }
+}
+
+async function commitWorktreeIfDirty(
+  projectId: string,
+  worktreePath: string,
+  message: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const status = await gitExec(projectId, worktreePath, ['status', '--porcelain=v1'], 30)
+  if (status.exit_code !== 0) {
+    return { ok: false, error: status.stderr.trim() || 'git status failed in worktree' }
+  }
+  if (!status.stdout.trim()) return { ok: true }
+
+  const add = await gitExec(projectId, worktreePath, ['add', '-A'], 60)
+  if (add.exit_code !== 0) {
+    return { ok: false, error: add.stderr.trim() || 'git add failed in worktree' }
+  }
+  // Identity for sandbox commits (local only)
+  await gitExec(projectId, worktreePath, ['config', 'user.email', 'everflow@local'], 15).catch(
+    () => null,
+  )
+  await gitExec(projectId, worktreePath, ['config', 'user.name', 'Everflow'], 15).catch(() => null)
+
+  const commit = await gitExec(
+    projectId,
+    worktreePath,
+    ['commit', '-m', message, '--allow-empty-message'],
+    60,
+  )
+  if (commit.exit_code !== 0) {
+    const msg = (commit.stderr || commit.stdout || 'git commit failed').trim()
+    // Nothing to commit race
+    if (/nothing to commit/i.test(msg)) return { ok: true }
+    return { ok: false, error: msg.slice(0, 400) }
+  }
+  return { ok: true }
+}
+
+export type WorktreeActionResult =
+  | { ok: true; parentBranch?: string }
+  | { ok: false; error: string }
+
+/**
+ * Merge worktree branch into the parent checkout's current branch, then remove the worktree.
+ */
+export async function approveWorktree(
+  projectId: string,
+  opts: {
+    parentPath: string
+    worktreePath: string
+    branch: string
+    sessionId?: string
+  },
+): Promise<WorktreeActionResult> {
+  const parentPath = sanitizeRepoPath(opts.parentPath)
+  const worktreePath = sanitizeRepoPath(opts.worktreePath)
+  const branch = sanitizeBranchName(opts.branch)
+  if (!branch) return { ok: false, error: 'Invalid worktree branch' }
+  if (!isEverflowWorktreePath(worktreePath)) {
+    return { ok: false, error: 'Refusing to approve a non-Everflow worktree path' }
+  }
+
+  const committed = await commitWorktreeIfDirty(
+    projectId,
+    worktreePath,
+    `ef: chat worktree ${branch}`,
+  )
+  if (!committed.ok) return committed
+
+  const parentBranch = await readBranch(projectId, parentPath)
+  const merge = await gitExec(projectId, parentPath, ['merge', '--no-edit', branch], 120).catch(
+    (e) => ({
+      exit_code: 1,
+      stdout: '',
+      stderr: e instanceof Error ? e.message : String(e),
+    }),
+  )
+  if (merge.exit_code !== 0) {
+    // Abort merge if conflict left repo in merging state
+    const msg = (merge.stderr || merge.stdout || 'merge failed').trim()
+    if (/conflict/i.test(msg)) {
+      await gitExec(projectId, parentPath, ['merge', '--abort'], 30).catch(() => null)
+    }
+    return { ok: false, error: msg.slice(0, 400) }
+  }
+
+  const remove = await gitExec(
+    projectId,
+    parentPath,
+    ['worktree', 'remove', '--force', worktreePath],
+    60,
+  ).catch((e) => ({
+    exit_code: 1,
+    stdout: '',
+    stderr: e instanceof Error ? e.message : String(e),
+  }))
+  if (remove.exit_code !== 0) {
+    return {
+      ok: false,
+      error: (remove.stderr || remove.stdout || 'worktree remove failed').trim().slice(0, 400),
+    }
+  }
+
+  await gitExec(projectId, parentPath, ['branch', '-D', branch], 30).catch(() => null)
+
+  if (opts.sessionId) {
+    const index = await readWorktreeIndex(projectId)
+    const entries = index.entries.map((e) =>
+      e.sessionId === opts.sessionId
+        ? { ...e, status: 'applied' as const, error: undefined }
+        : e,
+    )
+    await writeWorktreeIndex(projectId, { entries }).catch(() => undefined)
+  }
+
+  return { ok: true, parentBranch: parentBranch || undefined }
+}
+
+export async function discardWorktree(
+  projectId: string,
+  opts: {
+    parentPath: string
+    worktreePath: string
+    branch: string
+    sessionId?: string
+  },
+): Promise<WorktreeActionResult> {
+  const parentPath = sanitizeRepoPath(opts.parentPath)
+  const worktreePath = sanitizeRepoPath(opts.worktreePath)
+  const branch = sanitizeBranchName(opts.branch)
+  if (!branch) return { ok: false, error: 'Invalid worktree branch' }
+  if (!isEverflowWorktreePath(worktreePath)) {
+    return { ok: false, error: 'Refusing to discard a non-Everflow worktree path' }
+  }
+
+  for (const args of planDiscardWorktreeCommands(worktreePath, branch)) {
+    const res = await gitExec(projectId, parentPath, args, 60).catch((e) => ({
+      exit_code: 1,
+      stdout: '',
+      stderr: e instanceof Error ? e.message : String(e),
+    }))
+    // Ignore "not a working tree" / missing branch on cleanup
+    if (res.exit_code !== 0) {
+      const msg = (res.stderr || res.stdout || '').toLowerCase()
+      if (
+        msg.includes('not a working tree') ||
+        msg.includes('does not exist') ||
+        msg.includes('not found') ||
+        msg.includes('no such')
+      ) {
+        continue
+      }
+      if (args[0] === 'worktree') {
+        return { ok: false, error: (res.stderr || res.stdout || 'discard failed').trim().slice(0, 400) }
+      }
+    }
+  }
+
+  if (opts.sessionId) {
+    const index = await readWorktreeIndex(projectId)
+    const entries = index.entries.map((e) =>
+      e.sessionId === opts.sessionId
+        ? { ...e, status: 'discarded' as const, error: undefined }
+        : e,
+    )
+    await writeWorktreeIndex(projectId, { entries }).catch(() => undefined)
+  }
+
+  return { ok: true }
+}
+
+/** System prompt fragment so OpenCode edits stay inside the worktree. */
+export function worktreeSystemPrompt(worktreePath: string, parentPath: string): string {
+  const wt = sanitizeRepoPath(worktreePath)
+  const parent = sanitizeRepoPath(parentPath)
+  const wtAbs = wt === '.' ? '/workspace' : `/workspace/${wt}`
+  const parentAbs = parent === '.' ? '/workspace' : `/workspace/${parent}`
+  return [
+    `You are working in an isolated git worktree.`,
+    `Working directory (edit only here): ${wtAbs}`,
+    `Do not modify files under the parent checkout: ${parentAbs}`,
+    `Prefer paths relative to ${wtAbs}. Leave the parent tree unchanged until the user approves.`,
+  ].join(' ')
 }

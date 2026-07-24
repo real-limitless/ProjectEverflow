@@ -3,6 +3,8 @@ import {
   applyOcPartToMessage,
   mapOcMessage,
   mapQuestionRequest,
+  messageHasActivity,
+  messagePlainText,
 } from './mapParts'
 import type { OcEvent, OcMessageBundle, OcPart, OcQuestionRequest } from './types'
 
@@ -360,26 +362,35 @@ export function applyPartFull(
 }
 
 /**
- * Upsert an assistant message. When the incoming payload is info-only (empty
- * body) and we already have content/tools, preserve the existing body.
+ * Upsert a chat message. When the incoming payload is info-only (empty / placeholder
+ * body) and we already have content/tools/thinking, preserve the existing body.
+ * Also drops matching optimistic local-u-* user rows when the server user arrives.
  */
 export function upsertMessage(messages: ChatMessage[], msg: ChatMessage): ChatMessage[] {
-  const withoutPending =
-    msg.role === 'assistant'
-      ? messages.filter((m) => !m.id.startsWith('pending-'))
-      : messages
-  const idx = withoutPending.findIndex((m) => m.id === msg.id)
-  if (idx < 0) return [...withoutPending, msg]
+  let base = messages
+  if (msg.role === 'assistant') {
+    base = messages.filter((m) => !m.id.startsWith('pending-'))
+  } else if (msg.role === 'user') {
+    const incomingText = messagePlainText(msg)
+    if (incomingText) {
+      base = messages.filter(
+        (m) =>
+          !(
+            m.role === 'user' &&
+            m.id.startsWith('local-') &&
+            messagePlainText(m) === incomingText
+          ),
+      )
+    }
+  }
+  const idx = base.findIndex((m) => m.id === msg.id)
+  if (idx < 0) return [...base, msg]
 
-  const prev = withoutPending[idx]
-  const incomingEmpty =
-    !(msg.blocks && msg.blocks.length) &&
-    !(msg.text || '').trim() &&
-    !(msg.thinking || '').trim()
-  const prevHasBody =
-    !!(prev.blocks && prev.blocks.length) ||
-    !!(prev.text || '').trim() ||
-    !!(prev.thinking || '').trim()
+  const prev = base[idx]
+  // Placeholder-only bodies (e.g. *(No response content)*) count as empty so
+  // completed info-only message.updated does not wipe streamed thinking/tools.
+  const incomingEmpty = !messageHasActivity(msg)
+  const prevHasBody = messageHasActivity(prev)
 
   let merged: ChatMessage
   if (incomingEmpty && prevHasBody) {
@@ -421,7 +432,7 @@ export function upsertMessage(messages: ChatMessage[], msg: ChatMessage): ChatMe
     }
   }
 
-  const out = [...withoutPending]
+  const out = [...base]
   out[idx] = merged
   return out
 }

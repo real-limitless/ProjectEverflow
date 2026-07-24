@@ -151,6 +151,16 @@ function blockToMarkdown(b: ChatBlock): string {
         .join('\n')
       return `${head}\n${rows}`
     }
+    case 'knowledge_citations': {
+      const head = `**Knowledge sources:** ${b.knowledgeCitations?.query || ''}`
+      const rows = (b.knowledgeCitations?.hits || [])
+        .map(
+          (h) =>
+            `- ${h.canvasName}${h.score != null ? ` (${h.score})` : ''}: ${h.text.slice(0, 200)}`,
+        )
+        .join('\n')
+      return `${head}\n${rows}`
+    }
     case 'tool':
       return `\`\`\`\n// ${b.tool?.title || 'tool'}\n${b.tool?.body || ''}\n\`\`\``
     default:
@@ -174,6 +184,13 @@ function blockToRaw(b: ChatBlock): string {
       return [
         b.webSearch?.query || '',
         ...(b.webSearch?.results || []).map((r) => `${r.title}\n${r.url}\n${r.snippet}`),
+      ].join('\n')
+    case 'knowledge_citations':
+      return [
+        b.knowledgeCitations?.query || '',
+        ...(b.knowledgeCitations?.hits || []).map(
+          (h) => `${h.canvasName}\n${h.text}`,
+        ),
       ].join('\n')
     case 'tool':
       return `${b.tool?.title || ''}\n${b.tool?.body || ''}`

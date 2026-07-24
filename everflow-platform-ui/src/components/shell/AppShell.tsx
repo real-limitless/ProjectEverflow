@@ -10,6 +10,7 @@ import { OpenProjectModal } from '@/components/modals/OpenProjectModal'
 import { ConnectRepoModal } from '@/components/modals/ConnectRepoModal'
 import { ProjectSettingsModal } from '@/components/modals/ProjectSettingsModal'
 import { LoginModal } from '@/components/auth/LoginModal'
+import { SetupWizardModal } from '@/components/modals/SetupWizardModal'
 import { PanelPalette } from '@/components/palette/PanelPalette'
 import { AppMasthead } from './AppMasthead'
 import { AppSidebar } from './AppSidebar'
@@ -24,10 +25,14 @@ export function AppShell({ detached = false }: AppShellProps) {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
   const openProjectIds = usePlaygroundStore((s) => s.openProjectIds)
   const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
+  const sandboxVerified = usePlaygroundStore((s) =>
+    s.currentProjectId ? Boolean(s.sandboxReadyByProject[s.currentProjectId]) : false,
+  )
   const ready = useAuthStore((s) => s.ready)
   const bootstrap = useAuthStore((s) => s.bootstrap)
   const user = useAuthStore((s) => s.user)
   const demoMode = useAuthStore((s) => s.demoMode)
+  const setupOpen = useAuthStore((s) => s.setupOpen)
   void catalogVersion
 
   useEffect(() => {
@@ -38,7 +43,8 @@ export function AppShell({ detached = false }: AppShellProps) {
     location.pathname === '/' || location.pathname === ''
   const hasOpenProject = Boolean(currentProjectId && openProjectIds.length > 0)
   const currentProject = currentProjectId ? getProject(currentProjectId) : undefined
-  const workbenchReady = hasOpenProject && isSandboxWorkbenchReady(currentProject)
+  const workbenchReady =
+    hasOpenProject && isSandboxWorkbenchReady(currentProject, sandboxVerified)
 
   if (detached) {
     return (
@@ -56,7 +62,7 @@ export function AppShell({ detached = false }: AppShellProps) {
     )
   }
 
-  const blocked = !demoMode && !user
+  const blocked = !demoMode && (!user || setupOpen)
 
   return (
     <>
@@ -69,7 +75,11 @@ export function AppShell({ detached = false }: AppShellProps) {
       >
         {blocked ? (
           <div className="auth-boot-splash">
-            <p>Sign in to open projects and sandboxes.</p>
+            <p>
+              {setupOpen
+                ? 'Complete first-run setup to continue.'
+                : 'Sign in to open projects and sandboxes.'}
+            </p>
           </div>
         ) : (
           <Outlet />
@@ -84,6 +94,7 @@ export function AppShell({ detached = false }: AppShellProps) {
           <ProjectSettingsModal />
         </>
       ) : null}
+      <SetupWizardModal />
       <LoginModal />
     </>
   )

@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@patternfly/react-charts": "^8.6.0",
     "@patternfly/react-core": "^6.6.0",
     "@patternfly/react-icons": "^6.6.0",
     "@patternfly/react-styles": "^6.6.0",
@@ -21,6 +22,20 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.1",
+    "victory-area": "^37.3.6",
+    "victory-axis": "^37.3.6",
+    "victory-bar": "^37.3.6",
+    "victory-chart": "^37.3.6",
+    "victory-core": "^37.3.6",
+    "victory-create-container": "^37.3.6",
+    "victory-group": "^37.3.6",
+    "victory-legend": "^37.3.6",
+    "victory-line": "^37.3.6",
+    "victory-pie": "^37.3.6",
+    "victory-scatter": "^37.3.6",
+    "victory-stack": "^37.3.6",
+    "victory-tooltip": "^37.3.6",
+    "victory-voronoi-container": "^37.3.6",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

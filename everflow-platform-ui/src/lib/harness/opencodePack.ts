@@ -7,11 +7,18 @@ import type { AgentDefinition, AgentMode, SkillDefinition } from '@/types/studio
 export type OpenCodeHarnessPack = {
   agents?: AgentDefinition[]
   skills?: SkillDefinition[]
-  mcp?: Record<string, Record<string, unknown>>
+  commands?: Array<Record<string, unknown>>
+  mcp?: Record<string, Record<string, unknown> | null>
+  plugin?: string[]
+  marketplace_items?: Array<Record<string, unknown>>
   remove_agents?: string[]
   remove_skills?: string[]
+  remove_commands?: string[]
+  remove_plugins?: string[]
+  remove_marketplace_items?: Array<Record<string, unknown>>
   replace_all_agents?: boolean
   replace_all_skills?: boolean
+  replace_all_commands?: boolean
   model?: string
   small_model?: string
   default_agent?: string
@@ -23,14 +30,20 @@ export type OpenCodeHarnessResponse = {
   sandbox_name: string
   agents: Array<Record<string, unknown>>
   skills: Array<Record<string, unknown>>
+  commands?: Array<Record<string, unknown>>
+  plugins?: string[]
   mcp: Record<string, Record<string, unknown>>
   manifest: Record<string, unknown>
   opencode_json?: Record<string, unknown>
   written?: {
     agents?: string[]
     skills?: string[]
+    commands?: string[]
+    plugins?: string[]
     removed_agents?: string[]
     removed_skills?: string[]
+    removed_commands?: string[]
+    removed_plugins?: string[]
   }
 }
 
@@ -158,6 +171,16 @@ export const OPENCODE_BUILTIN_AGENTS = new Set([
   'title',
   'summary',
 ])
+
+/**
+ * Platform-injected MCP servers. Listed under System in Tools (not counted as
+ * user MCP servers, not deletable); users can still deny them per prompt in chat.
+ */
+export const SYSTEM_MCP_SERVERS = new Set(['everflow'])
+
+export function isSystemMcp(nameOrId: string): boolean {
+  return SYSTEM_MCP_SERVERS.has(nameOrId.trim().toLowerCase())
+}
 
 /** Common OpenCode permission keys for the agent form. */
 export const OPENCODE_TOOL_PERMISSIONS: {

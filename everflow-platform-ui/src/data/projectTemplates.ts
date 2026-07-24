@@ -2,6 +2,7 @@ import type {
   ProjectRepo,
   WorkspaceLayoutMode,
 } from '@/types/project'
+import type { DevicePresetId } from '@/data/devicePresets'
 
 export type ProjectTemplateId =
   | 'blank'
@@ -9,6 +10,15 @@ export type ProjectTemplateId =
   | 'web-php'
   | 'mobile-ios'
   | 'mobile-android'
+  | 'desktop-gui'
+  | 'python-api'
+  | 'fullstack'
+
+/** Shared toolkit ids (see /toolkits in the monorepo). */
+export type ToolkitId =
+  | 'web-npm'
+  | 'web-php'
+  | 'mobile-expo'
   | 'desktop-gui'
   | 'python-api'
   | 'fullstack'
@@ -21,8 +31,32 @@ export interface ProjectTemplate {
   defaultRepos: Omit<ProjectRepo, 'active'>[]
   defaultHarnessIds: string[]
   defaultLayout: WorkspaceLayoutMode
-  /** Optional starter files (name → path + content) */
+  /** Toolkit starter to clone/seed into the sandbox workspace. */
+  toolkitId?: ToolkitId
+  /** Default Preview device frame (phones for React Native templates). */
+  defaultPreviewDevice?: DevicePresetId
+  /**
+   * Optional inline seed files for demo/local mode when no remote is cloned.
+   * Prefer toolkit starters for real sandboxes.
+   */
   seedFiles?: { path: string; name: string; folder: string; content: string }[]
+}
+
+/**
+ * Resolve a cloneable starter URL for a toolkit.
+ * Override with VITE_TOOLKIT_REPO_BASE (e.g. https://github.com/org/everflow-toolkit-{id}.git)
+ * where `{id}` is replaced with the toolkit id.
+ */
+export function toolkitRepoUrl(toolkitId: ToolkitId): string {
+  const base =
+    (typeof import.meta !== 'undefined' &&
+      import.meta.env?.VITE_TOOLKIT_REPO_BASE) ||
+    ''
+  if (typeof base === 'string' && base.trim()) {
+    return base.trim().replace(/\{id\}/g, toolkitId)
+  }
+  // Empty → API seeds from local toolkits/ tree (TOOLKIT_LOCAL_ROOT).
+  return ''
 }
 
 export const PROJECT_TEMPLATES: ProjectTemplate[] = [
@@ -34,12 +68,15 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
     defaultRepos: [],
     defaultHarnessIds: ['agent-claude-code', 'agent-opencode'],
     defaultLayout: 'standard',
+    defaultPreviewDevice: 'full',
   },
   {
     id: 'web-npm',
     name: 'Web app (npm / Node)',
-    description: 'Vite + React style frontend with package.json and Preview.',
+    description: 'Vite + React frontend with package.json and Preview.',
     icon: '⬢',
+    toolkitId: 'web-npm',
+    defaultPreviewDevice: 'desktop',
     defaultRepos: [
       {
         id: 'web',
@@ -77,6 +114,8 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
     name: 'PHP web app',
     description: 'Composer-oriented PHP service with API-style layout.',
     icon: '🐘',
+    toolkitId: 'web-php',
+    defaultPreviewDevice: 'desktop',
     defaultRepos: [
       {
         id: 'php',
@@ -111,71 +150,93 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
   },
   {
     id: 'mobile-ios',
-    name: 'iOS app',
-    description: 'Swift / Xcode-oriented mobile scaffold.',
+    name: 'iOS app (React Native)',
+    description:
+      'Expo / React Native — preview in an iPhone frame via Expo web (not Xcode Simulator).',
     icon: '',
+    toolkitId: 'mobile-expo',
+    defaultPreviewDevice: 'iphone-12',
     defaultRepos: [
       {
-        id: 'ios',
-        label: 'app/ios',
+        id: 'mobile',
+        label: 'app/mobile',
         url: '',
         branch: 'main',
         provider: 'github',
       },
     ],
-    defaultHarnessIds: ['ci-github', 'test-runner', 'ai-sandbox'],
+    defaultHarnessIds: ['ci-github', 'preview-env', 'test-runner', 'ai-sandbox'],
     defaultLayout: 'code-first',
     seedFiles: [
       {
-        path: 'App/ContentView.swift',
-        name: 'ContentView.swift',
-        folder: 'App',
-        content: `import SwiftUI\n\nstruct ContentView: View {\n  var body: some View {\n    Text("Hello iOS")\n  }\n}`,
+        path: 'package.json',
+        name: 'package.json',
+        folder: '',
+        content: `{\n  "name": "mobile-expo",\n  "private": true,\n  "main": "expo-router/entry",\n  "scripts": {\n    "start": "expo start",\n    "web": "expo start --web",\n    "android": "expo start --android",\n    "ios": "expo start --ios"\n  }\n}`,
+      },
+      {
+        path: 'App.tsx',
+        name: 'App.tsx',
+        folder: '',
+        content: `import { Text, View, StyleSheet } from 'react-native'\n\nexport default function App() {\n  return (\n    <View style={styles.root}>\n      <Text style={styles.title}>Hello iOS (React Native)</Text>\n      <Text>Previewed in Everflow via Expo web.</Text>\n    </View>\n  )\n}\n\nconst styles = StyleSheet.create({\n  root: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },\n  title: { fontSize: 22, fontWeight: '600', marginBottom: 8 },\n})`,
       },
       {
         path: 'README.md',
         name: 'README.md',
         folder: '',
-        content: '# iOS app\n\nSwiftUI starter.',
+        content:
+          '# iOS app (React Native)\n\nExpo starter — run `npm run web` and open Preview with an iPhone device frame.',
       },
     ],
   },
   {
     id: 'mobile-android',
-    name: 'Android app',
-    description: 'Kotlin / Gradle mobile scaffold.',
+    name: 'Android app (React Native)',
+    description:
+      'Expo / React Native — preview in an Android phone frame via Expo web (not an emulator).',
     icon: '🤖',
+    toolkitId: 'mobile-expo',
+    defaultPreviewDevice: 'pixel-7',
     defaultRepos: [
       {
-        id: 'android',
-        label: 'app/android',
+        id: 'mobile',
+        label: 'app/mobile',
         url: '',
         branch: 'main',
         provider: 'github',
       },
     ],
-    defaultHarnessIds: ['ci-github', 'test-runner', 'ai-sandbox'],
+    defaultHarnessIds: ['ci-github', 'preview-env', 'test-runner', 'ai-sandbox'],
     defaultLayout: 'code-first',
     seedFiles: [
       {
-        path: 'app/src/main/java/MainActivity.kt',
-        name: 'MainActivity.kt',
-        folder: 'app',
-        content: `class MainActivity {\n  fun onCreate() {\n    println("Hello Android")\n  }\n}`,
+        path: 'package.json',
+        name: 'package.json',
+        folder: '',
+        content: `{\n  "name": "mobile-expo",\n  "private": true,\n  "main": "expo-router/entry",\n  "scripts": {\n    "start": "expo start",\n    "web": "expo start --web",\n    "android": "expo start --android",\n    "ios": "expo start --ios"\n  }\n}`,
+      },
+      {
+        path: 'App.tsx',
+        name: 'App.tsx',
+        folder: '',
+        content: `import { Text, View, StyleSheet } from 'react-native'\n\nexport default function App() {\n  return (\n    <View style={styles.root}>\n      <Text style={styles.title}>Hello Android (React Native)</Text>\n      <Text>Previewed in Everflow via Expo web.</Text>\n    </View>\n  )\n}\n\nconst styles = StyleSheet.create({\n  root: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },\n  title: { fontSize: 22, fontWeight: '600', marginBottom: 8 },\n})`,
       },
       {
         path: 'README.md',
         name: 'README.md',
         folder: '',
-        content: '# Android app\n\nKotlin starter.',
+        content:
+          '# Android app (React Native)\n\nExpo starter — run `npm run web` and open Preview with a Pixel / Z Fold device frame.',
       },
     ],
   },
   {
     id: 'desktop-gui',
     name: 'Desktop GUI',
-    description: 'Electron / Tauri-style desktop application.',
+    description: 'Electron-style desktop application shell.',
     icon: '🖥',
+    toolkitId: 'desktop-gui',
+    defaultPreviewDevice: 'desktop',
     defaultRepos: [
       {
         id: 'desktop',
@@ -213,6 +274,8 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
     name: 'Python API',
     description: 'FastAPI-style backend service for platform APIs.',
     icon: '🐍',
+    toolkitId: 'python-api',
+    defaultPreviewDevice: 'desktop',
     defaultRepos: [
       {
         id: 'api',
@@ -256,6 +319,8 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
     name: 'Full-stack monorepo',
     description: 'Web frontend + API backend with deploy and preview harnesses.',
     icon: '▣',
+    toolkitId: 'fullstack',
+    defaultPreviewDevice: 'desktop',
     defaultRepos: [
       {
         id: 'web',
@@ -326,14 +391,18 @@ export function reposFromTemplate(
       },
     ]
   }
+  const starterUrl = template.toolkitId
+    ? toolkitRepoUrl(template.toolkitId)
+    : ''
   return template.defaultRepos.map((r, i) => ({
     id: r.id || `repo-${i}`,
     label: r.label.includes('/')
       ? r.label.replace(/^[^/]+/, slug)
       : `${slug}/${r.label}`,
     active: i === 0,
-    url: r.url || '',
+    // First repo gets the toolkit starter URL when configured.
+    url: (i === 0 && starterUrl ? starterUrl : r.url) || '',
     branch: r.branch || 'main',
-    provider: r.provider || 'github',
+    provider: r.provider || (starterUrl && i === 0 ? 'github' : 'github'),
   }))
 }

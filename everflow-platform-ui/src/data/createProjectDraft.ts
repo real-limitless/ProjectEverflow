@@ -142,7 +142,11 @@ export function createProjectFromDraft(
     description:
       opts?.apiProject?.description ?? (draft.description?.trim() || ''),
     slug: baseSlug,
-    templateId: template.id,
+    templateId: opts?.apiProject?.template_id || template.id,
+    previewDevice:
+      opts?.apiProject?.preview_device ||
+      template.defaultPreviewDevice ||
+      'full',
     layoutMode: draft.options.layout || template.defaultLayout,
     environment: draft.options.environment,
     visibility: draft.options.visibility,

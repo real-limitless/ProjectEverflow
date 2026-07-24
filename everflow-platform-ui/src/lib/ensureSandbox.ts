@@ -9,7 +9,10 @@ import {
   SANDBOX_POLL_TIMEOUT_MS,
   waitForSandbox,
 } from '@/lib/sandboxPoll'
-import { shouldRecreateSandbox } from '@/lib/sandboxReady'
+import {
+  shouldRecreateSandbox,
+  withEffectiveSandboxStatus,
+} from '@/lib/sandboxReady'
 
 export type EnsureSandboxResult = {
   status: SandboxStatus
@@ -34,41 +37,7 @@ function applyUpdate(
   onUpdate?.(st)
 }
 
-/**
- * Prefer agent-reported status when the platform row is still "running" but the
- * microVM is dead (common after sandbox-agent restart).
- */
-function effectiveStatus(st: SandboxStatus): string {
-  const top = st.status || ''
-  const agentRaw = st.agent && typeof st.agent.status === 'string' ? st.agent.status : null
-  const agent = agentRaw?.trim() || null
-  if (agent && agent !== top) {
-    if (top === 'running' && agent !== 'running') {
-      return agent
-    }
-    if (shouldRecreateSandbox(agent) && !shouldRecreateSandbox(top) && top !== 'creating' && top !== 'pending') {
-      return agent
-    }
-  }
-  return top
-}
-
-function withEffectiveStatus(st: SandboxStatus): SandboxStatus {
-  const eff = effectiveStatus(st)
-  if (eff === st.status) return st
-  const agentErr =
-    st.agent && typeof st.agent.error === 'string' ? (st.agent.error as string) : null
-  return {
-    ...st,
-    status: eff,
-    error:
-      st.error ||
-      agentErr ||
-      (shouldRecreateSandbox(eff)
-        ? `Sandbox is ${eff} on agent; recreating…`
-        : st.error),
-  }
-}
+const withEffectiveStatus = withEffectiveSandboxStatus
 
 /**
  * Ensure a project's sandbox reaches a terminal state (prefer running).

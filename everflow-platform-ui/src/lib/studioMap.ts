@@ -28,6 +28,11 @@ export function mapApiCanvas(c: ApiKnowledgeCanvas): KnowledgeCanvas {
     mime: c.mime ?? undefined,
     sizeLabel: c.size_label ?? undefined,
     updatedAt: c.updated_at,
+    collectionId: c.collection_id ?? undefined,
+    sourceUrl: c.source_url ?? undefined,
+    contentHash: c.content_hash ?? undefined,
+    lastFetchedAt: c.last_fetched_at ?? undefined,
+    repoPath: c.repo_path ?? undefined,
   }
 }
 

@@ -114,7 +114,12 @@ export function logout(): void {
   setStoredOrgId(null)
 }
 
-export async function getMe(): Promise<{ id: string; email: string }> {
+export async function getMe(): Promise<{
+  id: string
+  email: string
+  is_superuser?: boolean
+  is_active?: boolean
+}> {
   return apiFetch('/api/v1/users/me')
 }
 
@@ -125,6 +130,83 @@ export type Org = {
   role?: string
   created_at: string
   updated_at: string
+}
+
+export type OrgMember = {
+  id: string
+  user_id: string
+  email?: string | null
+  role: string
+  created_at: string
+}
+
+export type OrgInvite = {
+  id: string
+  organization_id: string
+  role: string
+  email?: string | null
+  expires_at: string
+  accepted_at?: string | null
+  created_at: string
+  invite_url?: string | null
+  token?: string | null
+}
+
+export type GitCredential = {
+  id: string
+  owner_type: 'user' | 'org' | 'project'
+  owner_id: string
+  provider: string
+  label?: string | null
+  scopes: string
+  is_default: boolean
+  key_hint: string
+  created_at: string
+  updated_at: string
+  last_used_at?: string | null
+}
+
+export type SetupStatus = {
+  needs_setup: boolean
+  environment: string
+  warnings: string[]
+  sandbox?: {
+    enabled?: boolean
+    reachable?: boolean | null
+    mock?: boolean | null
+    error?: string
+  } | null
+  oauth: { github: boolean; google: boolean }
+}
+
+export type AuthProviders = {
+  github: boolean
+  google: boolean
+  password: boolean
+}
+
+export type GitRemoteResult = {
+  ok: boolean
+  exit_code: number
+  stdout: string
+  stderr: string
+  used_credential: boolean
+}
+
+export type AdminUser = {
+  id: string
+  email: string
+  is_active: boolean
+  is_superuser: boolean
+  is_verified: boolean
+}
+
+export type AdminOrg = {
+  id: string
+  name: string
+  slug: string
+  created_at: string
+  member_count: number
 }
 
 export type ApiProjectRepo = {
@@ -145,6 +227,8 @@ export type ApiProject = {
   name: string
   slug: string
   description: string | null
+  template_id?: string | null
+  preview_device?: string | null
   repos?: ApiProjectRepo[] | null
   /** Harness ids or {id, enabled?} objects persisted for sandbox bootstrap */
   harnesses?: Array<string | { id: string; label?: string; enabled?: boolean }> | null
@@ -192,6 +276,151 @@ export async function createOrg(name: string, slug: string): Promise<Org> {
   })
 }
 
+export async function getSetupStatus(): Promise<SetupStatus> {
+  return apiFetch('/api/v1/setup/status')
+}
+
+export async function bootstrapSetup(payload: {
+  email: string
+  password: string
+  org_name: string
+  org_slug: string
+}): Promise<{
+  user_id: string
+  email: string
+  org_id: string
+  org_slug: string
+  access_token: string
+}> {
+  return apiFetch('/api/v1/setup/bootstrap', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function getAuthProviders(): Promise<AuthProviders> {
+  return apiFetch('/api/v1/auth/providers')
+}
+
+export function oauthAuthorizeUrl(provider: 'github' | 'google'): string {
+  return `${API_BASE}/api/v1/auth/${provider}/authorize`
+}
+
+export async function listOrgMembers(orgId: string): Promise<OrgMember[]> {
+  return apiFetch(`/api/v1/orgs/${orgId}/members`)
+}
+
+export async function updateOrgMemberRole(
+  orgId: string,
+  userId: string,
+  role: 'owner' | 'admin' | 'member',
+): Promise<OrgMember> {
+  return apiFetch(`/api/v1/orgs/${orgId}/members/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  })
+}
+
+export async function removeOrgMember(orgId: string, userId: string): Promise<void> {
+  await apiFetch(`/api/v1/orgs/${orgId}/members/${userId}`, { method: 'DELETE' })
+}
+
+export async function createOrgInvite(
+  orgId: string,
+  payload?: { role?: 'admin' | 'member'; email?: string; expires_hours?: number },
+): Promise<OrgInvite> {
+  return apiFetch(`/api/v1/orgs/${orgId}/invites`, {
+    method: 'POST',
+    body: JSON.stringify(payload ?? { role: 'member' }),
+  })
+}
+
+export async function acceptInvite(token: string): Promise<{
+  organization_id: string
+  organization_name: string
+  organization_slug: string
+  role: string
+}> {
+  return apiFetch(`/api/v1/invites/${encodeURIComponent(token)}/accept`, {
+    method: 'POST',
+  })
+}
+
+export async function listMyGitCredentials(): Promise<GitCredential[]> {
+  return apiFetch('/api/v1/me/git-credentials')
+}
+
+export async function createMyGitCredential(payload: {
+  provider?: string
+  token: string
+  label?: string
+  scopes?: string
+  is_default?: boolean
+}): Promise<GitCredential> {
+  return apiFetch('/api/v1/me/git-credentials', {
+    method: 'POST',
+    body: JSON.stringify({ provider: 'github', ...payload }),
+  })
+}
+
+export async function deleteMyGitCredential(credId: string): Promise<void> {
+  await apiFetch(`/api/v1/me/git-credentials/${credId}`, { method: 'DELETE' })
+}
+
+export async function listOrgGitCredentials(orgId: string): Promise<GitCredential[]> {
+  return apiFetch(`/api/v1/orgs/${orgId}/git-credentials`)
+}
+
+export async function createOrgGitCredential(
+  orgId: string,
+  payload: { provider?: string; token: string; label?: string; is_default?: boolean },
+): Promise<GitCredential> {
+  return apiFetch(`/api/v1/orgs/${orgId}/git-credentials`, {
+    method: 'POST',
+    body: JSON.stringify({ provider: 'github', ...payload }),
+  })
+}
+
+export async function deleteOrgGitCredential(orgId: string, credId: string): Promise<void> {
+  await apiFetch(`/api/v1/orgs/${orgId}/git-credentials/${credId}`, { method: 'DELETE' })
+}
+
+export async function gitPull(
+  projectId: string,
+  body: { path?: string; remote?: string; branch?: string } = {},
+): Promise<GitRemoteResult> {
+  return apiFetch(`/api/v1/projects/${projectId}/git/pull`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function gitPush(
+  projectId: string,
+  body: { path?: string; remote?: string; branch?: string } = {},
+): Promise<GitRemoteResult> {
+  return apiFetch(`/api/v1/projects/${projectId}/git/push`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function listAdminUsers(): Promise<AdminUser[]> {
+  return apiFetch('/api/v1/admin/users')
+}
+
+export async function deactivateAdminUser(userId: string): Promise<AdminUser> {
+  return apiFetch(`/api/v1/admin/users/${userId}/deactivate`, { method: 'PATCH' })
+}
+
+export async function activateAdminUser(userId: string): Promise<AdminUser> {
+  return apiFetch(`/api/v1/admin/users/${userId}/activate`, { method: 'PATCH' })
+}
+
+export async function listAdminOrgs(): Promise<AdminOrg[]> {
+  return apiFetch('/api/v1/admin/orgs')
+}
+
 export async function listProjects(orgId: string): Promise<ApiProject[]> {
   return apiFetch(`/api/v1/orgs/${orgId}/projects`)
 }
@@ -202,6 +431,8 @@ export async function createProject(
     name: string
     slug: string
     description?: string
+    template_id?: string
+    preview_device?: string
     repos?: Array<{
       id: string
       label: string
@@ -569,6 +800,7 @@ export function previewIframeSrc(endpoint: PreviewEndpoint, path = '/'): string 
 export type ApiKnowledgeCanvas = {
   id: string
   project_id: string
+  collection_id?: string | null
   name: string
   description?: string | null
   content_md?: string
@@ -577,9 +809,87 @@ export type ApiKnowledgeCanvas = {
   chunks?: number | null
   mime?: string | null
   size_label?: string | null
+  source_url?: string | null
+  content_hash?: string | null
+  etag?: string | null
+  last_fetched_at?: string | null
+  repo_path?: string | null
   created_by?: string | null
   created_at: string
   updated_at: string
+}
+
+export type ApiKnowledgeRetrieveHit = {
+  canvas_id: string
+  canvas_name: string
+  chunk_id: string
+  text: string
+  score: number
+  source_url?: string | null
+  path?: string | null
+  collection_id?: string | null
+}
+
+export type ApiKnowledgeCollection = {
+  id: string
+  project_id: string
+  name: string
+  visibility: string
+  owner_user_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ApiKnowledgeLink = {
+  id: string
+  project_id: string
+  from_type: string
+  from_id: string
+  to_type: string
+  to_id: string
+  rel: string
+  created_at: string
+}
+
+export type ApiKnowledgeVersion = {
+  id: string
+  canvas_id: string
+  content_md: string
+  created_by?: string | null
+  label?: string | null
+  created_at: string
+}
+
+export type ApiKnowledgeEvalSet = {
+  id: string
+  project_id: string
+  name: string
+  collection_id?: string | null
+  last_score?: number | null
+  last_run_at?: string | null
+  created_at: string
+  updated_at: string
+  questions: {
+    id: string
+    question: string
+    expected_canvas_ids?: string[] | null
+    expected_notes?: string | null
+  }[]
+}
+
+export type ApiKnowledgeEvalRunResult = {
+  eval_set_id: string
+  score: number
+  total: number
+  hits: number
+  results: {
+    question_id: string
+    question: string
+    hit: boolean
+    expected_canvas_ids: string[]
+    retrieved_canvas_ids: string[]
+    top_score?: number | null
+  }[]
 }
 
 export type ApiProjectAgent = {
@@ -614,6 +924,9 @@ export async function createKnowledgeCanvas(
     description?: string
     content_md?: string
     origin?: string
+    source_url?: string
+    collection_id?: string
+    repo_path?: string
   },
 ): Promise<ApiKnowledgeCanvas> {
   return apiFetch(`/api/v1/projects/${projectId}/knowledge/canvases`, {
@@ -630,6 +943,8 @@ export async function updateKnowledgeCanvas(
     description: string | null
     content_md: string
     status: string
+    collection_id: string | null
+    source_url: string | null
   }>,
 ): Promise<ApiKnowledgeCanvas> {
   return apiFetch(`/api/v1/projects/${projectId}/knowledge/canvases/${canvasId}`, {
@@ -640,6 +955,177 @@ export async function updateKnowledgeCanvas(
 
 export async function deleteKnowledgeCanvas(projectId: string, canvasId: string): Promise<void> {
   await apiFetch(`/api/v1/projects/${projectId}/knowledge/canvases/${canvasId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function reindexKnowledgeCanvas(
+  projectId: string,
+  canvasId: string,
+): Promise<ApiKnowledgeCanvas> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/canvases/${canvasId}/reindex`, {
+    method: 'POST',
+  })
+}
+
+export async function refreshKnowledgeCanvasSource(
+  projectId: string,
+  canvasId: string,
+): Promise<{ canvas: ApiKnowledgeCanvas; changed: boolean }> {
+  return apiFetch(
+    `/api/v1/projects/${projectId}/knowledge/canvases/${canvasId}/refresh-source`,
+    { method: 'POST' },
+  )
+}
+
+export async function listKnowledgeCanvasVersions(
+  projectId: string,
+  canvasId: string,
+): Promise<ApiKnowledgeVersion[]> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/canvases/${canvasId}/versions`)
+}
+
+export async function retrieveKnowledge(
+  projectId: string,
+  body: { query: string; top_k?: number; collection_ids?: string[]; agent_id?: string },
+): Promise<{ hits: ApiKnowledgeRetrieveHit[] }> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/retrieve`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function promoteResearchToCanvas(
+  projectId: string,
+  body: {
+    title: string
+    mode: 'thread' | 'claims'
+    source_url?: string
+    article_title?: string
+    thread: { role: string; text: string }[]
+    article_markdown?: string
+  },
+): Promise<ApiKnowledgeCanvas> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/research/promote`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function indexKnowledgeRepo(
+  projectId: string,
+  body?: { collection_name?: string; paths?: string[] },
+): Promise<{ created: number; updated: number; skipped: number; canvas_ids: string[] }> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/index-repo`, {
+    method: 'POST',
+    body: JSON.stringify(body ?? {}),
+  })
+}
+
+export async function listKnowledgeCollections(
+  projectId: string,
+): Promise<ApiKnowledgeCollection[]> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/collections`)
+}
+
+export async function createKnowledgeCollection(
+  projectId: string,
+  body: { name: string; visibility?: string },
+): Promise<ApiKnowledgeCollection> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/collections`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function upsertCollectionGrant(
+  projectId: string,
+  collectionId: string,
+  body: { agent_id: string; can_retrieve?: boolean; can_write?: boolean },
+): Promise<unknown> {
+  return apiFetch(
+    `/api/v1/projects/${projectId}/knowledge/collections/${collectionId}/grants`,
+    { method: 'PUT', body: JSON.stringify(body) },
+  )
+}
+
+export async function listKnowledgeLinks(projectId: string): Promise<ApiKnowledgeLink[]> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/links`)
+}
+
+export async function listKnowledgeEvalSets(projectId: string): Promise<ApiKnowledgeEvalSet[]> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/eval-sets`)
+}
+
+export async function createKnowledgeEvalSet(
+  projectId: string,
+  body: {
+    name: string
+    collection_id?: string
+    questions: {
+      question: string
+      expected_canvas_ids?: string[]
+      expected_notes?: string
+    }[]
+  },
+): Promise<ApiKnowledgeEvalSet> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/eval-sets`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function runKnowledgeEvalSet(
+  projectId: string,
+  evalSetId: string,
+): Promise<ApiKnowledgeEvalRunResult> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/eval-sets/${evalSetId}/run`, {
+    method: 'POST',
+  })
+}
+
+export type ApiKnowledgeMindMap = {
+  id: string
+  project_id: string
+  name: string
+  mermaid: string
+  created_by?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export async function listKnowledgeMindMaps(
+  projectId: string,
+): Promise<ApiKnowledgeMindMap[]> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/mind-maps`)
+}
+
+export async function createKnowledgeMindMap(
+  projectId: string,
+  body: { name: string; mermaid?: string },
+): Promise<ApiKnowledgeMindMap> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/mind-maps`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateKnowledgeMindMap(
+  projectId: string,
+  mindMapId: string,
+  body: Partial<{ name: string; mermaid: string }>,
+): Promise<ApiKnowledgeMindMap> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/mind-maps/${mindMapId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteKnowledgeMindMap(
+  projectId: string,
+  mindMapId: string,
+): Promise<void> {
+  await apiFetch(`/api/v1/projects/${projectId}/knowledge/mind-maps/${mindMapId}`, {
     method: 'DELETE',
   })
 }
@@ -916,6 +1402,150 @@ export async function executeHttpTool(
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+export type MarketplaceKindApi = 'skill' | 'command' | 'plugin' | 'tool' | 'mcp'
+
+export async function getMarketplaceCatalog(): Promise<import('@/data/marketplace').MarketplaceCatalog> {
+  return apiFetch('/api/v1/marketplace/catalog')
+}
+
+export async function getMarketplaceInstalled(
+  projectId: string,
+): Promise<import('@/data/marketplace').MarketplaceInstalledResponse> {
+  return apiFetch(`/api/v1/projects/${projectId}/marketplace/installed`)
+}
+
+export async function installMarketplaceItem(
+  projectId: string,
+  kind: MarketplaceKindApi,
+  itemId: string,
+): Promise<{ ok: boolean; kind: string; item_id: string; harness?: unknown; http_tool?: unknown }> {
+  return apiFetch(`/api/v1/projects/${projectId}/marketplace/install`, {
+    method: 'POST',
+    body: JSON.stringify({ kind, item_id: itemId }),
+  })
+}
+
+export async function uninstallMarketplaceItem(
+  projectId: string,
+  kind: MarketplaceKindApi,
+  itemId: string,
+): Promise<{ ok: boolean; kind: string; item_id: string }> {
+  return apiFetch(`/api/v1/projects/${projectId}/marketplace/uninstall`, {
+    method: 'POST',
+    body: JSON.stringify({ kind, item_id: itemId }),
+  })
+}
+
+export type AiUsageEventPayload = {
+  session_id: string
+  message_id: string
+  provider?: string | null
+  model?: string | null
+  input_tokens?: number
+  output_tokens?: number
+  reasoning_tokens?: number
+  cache_read_tokens?: number
+  cache_write_tokens?: number
+  total_tokens?: number | null
+  duration_ms?: number | null
+  ttft_ms?: number | null
+  occurred_at?: string | null
+  completed?: boolean
+}
+
+export type AiUsageEventRead = {
+  id: string
+  organization_id: string
+  project_id: string
+  user_id: string
+  session_id: string
+  message_id: string
+  provider: string | null
+  model: string | null
+  input_tokens: number
+  output_tokens: number
+  reasoning_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  total_tokens: number
+  duration_ms: number | null
+  ttft_ms: number | null
+  occurred_at: string
+  created_at: string
+}
+
+export type AiUsageSummary = {
+  scope: 'me' | 'org'
+  from: string
+  to: string
+  totals: {
+    messages: number
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+    projects: number
+    users: number
+    sessions: number
+  }
+  series_daily: Array<{ date: string; tokens: number; messages: number }>
+  by_model: Array<{
+    provider: string | null
+    model: string | null
+    tokens: number
+    messages: number
+  }>
+  by_project: Array<{
+    project_id: string
+    project_name: string
+    tokens: number
+    messages: number
+  }>
+  by_user: Array<{
+    user_id: string
+    email: string
+    tokens: number
+    messages: number
+  }>
+}
+
+export async function reportUsageEvent(
+  projectId: string,
+  payload: AiUsageEventPayload,
+): Promise<AiUsageEventRead> {
+  return apiFetch(`/api/v1/projects/${projectId}/usage/events`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function reportUsageEventsBatch(
+  projectId: string,
+  events: AiUsageEventPayload[],
+): Promise<{ accepted: number; skipped: number; events: AiUsageEventRead[] }> {
+  return apiFetch(`/api/v1/projects/${projectId}/usage/events/batch`, {
+    method: 'POST',
+    body: JSON.stringify({ events }),
+  })
+}
+
+export async function getUsageSummary(
+  orgId: string,
+  params: {
+    scope?: 'me' | 'org'
+    from?: string
+    to?: string
+    project_id?: string
+  } = {},
+): Promise<AiUsageSummary> {
+  const q = new URLSearchParams()
+  if (params.scope) q.set('scope', params.scope)
+  if (params.from) q.set('from', params.from)
+  if (params.to) q.set('to', params.to)
+  if (params.project_id) q.set('project_id', params.project_id)
+  const qs = q.toString()
+  return apiFetch(`/api/v1/orgs/${orgId}/usage/summary${qs ? `?${qs}` : ''}`)
 }
 
 export { API_BASE }

@@ -13,20 +13,25 @@ import {
   TextInput,
 } from '@patternfly/react-core'
 import PlugIcon from '@patternfly/react-icons/dist/esm/icons/plug-icon'
+import { Link } from 'react-router-dom'
 import { CreateResourceModal } from '@/components/studio/CreateResourceModal'
 import { EmptySplash } from '@/components/studio/EmptySplash'
+import { LOCAL_MARKETPLACE_CATALOG } from '@/data/marketplace'
 import { getProject } from '@/data/projects'
 import {
   getOpenCodeHarness,
+  isSystemMcp,
   putOpenCodeHarness,
   slugifyAgentName,
 } from '@/lib/harness/opencodePack'
 import {
   createHttpTool,
   deleteHttpTool,
+  getMarketplaceInstalled,
   isDemoMode,
   listHttpTools,
   testHttpTool,
+  uninstallMarketplaceItem,
   updateHttpTool,
   type ApiHttpTool,
 } from '@/lib/api'
@@ -35,6 +40,14 @@ import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { useProjectStudio, useStudioDemoStore } from '@/store/studioDemoStore'
 import type { HttpToolDef, McpServerDef } from '@/types/studio'
+
+type PluginRow = {
+  id: string
+  name: string
+  source: string
+  description?: string
+  npmPackage?: string
+}
 
 function mcpConfigFromForm(
   name: string,
@@ -87,11 +100,14 @@ export function ToolsPanel() {
   const toggleTool = useStudioDemoStore((s) => s.toggleTool)
   const toggleMcp = useStudioDemoStore((s) => s.toggleMcp)
 
-  const [sub, setSub] = useState<'tools' | 'mcps'>('tools')
+  const [sub, setSub] = useState<'tools' | 'mcps' | 'plugins'>('tools')
   const [toolOpen, setToolOpen] = useState(false)
   const [mcpOpen, setMcpOpen] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [liveMcp, setLiveMcp] = useState<McpServerDef[] | null>(null)
+  const [plugins, setPlugins] = useState<PluginRow[]>([])
+  const [pluginsLoading, setPluginsLoading] = useState(false)
+  const [pluginBusyId, setPluginBusyId] = useState<string | null>(null)
 
   const [apiTools, setApiTools] = useState<HttpToolDef[]>([])
   const [toolsLoading, setToolsLoading] = useState(false)
@@ -171,22 +187,110 @@ export function ToolsPanel() {
     }
   }, [isApi, sandboxReady, projectId])
 
+  const refreshPlugins = useCallback(async () => {
+    if (!isApi || !sandboxReady) {
+      setPlugins([])
+      return
+    }
+    setPluginsLoading(true)
+    try {
+      const [installed, harness] = await Promise.all([
+        getMarketplaceInstalled(projectId).catch(() => null),
+        getOpenCodeHarness(projectId).catch(() => null),
+      ])
+      const catalogPlugins = LOCAL_MARKETPLACE_CATALOG.plugins
+      const byId = new Map(catalogPlugins.map((p) => [p.id, p]))
+      const rows: PluginRow[] = []
+      const seen = new Set<string>()
+
+      for (const item of installed?.items || []) {
+        if (item.kind !== 'plugin') continue
+        const cat = byId.get(item.id)
+        rows.push({
+          id: item.id,
+          name: cat?.name || item.name || item.id,
+          source: item.source || cat?.source || 'marketplace',
+          description: cat?.description,
+          npmPackage: cat?.install?.plugin?.[0],
+        })
+        seen.add(item.id)
+      }
+      for (const pkg of harness?.plugins || installed?.plugins || []) {
+        const name = String(pkg)
+        if (seen.has(name)) continue
+        const cat = byId.get(name)
+        rows.push({
+          id: name,
+          name: cat?.name || name,
+          source: 'opencode.json',
+          description: cat?.description,
+          npmPackage: name,
+        })
+        seen.add(name)
+      }
+      setPlugins(rows)
+    } catch {
+      setPlugins([])
+    } finally {
+      setPluginsLoading(false)
+    }
+  }, [isApi, sandboxReady, projectId])
+
   useEffect(() => {
     void refreshLiveMcp()
   }, [refreshLiveMcp])
+
+  useEffect(() => {
+    void refreshPlugins()
+  }, [refreshPlugins])
 
   useEffect(() => {
     const onHarness = (ev: Event) => {
       const detail = (ev as CustomEvent<{ projectId?: string }>).detail
       if (detail?.projectId && detail.projectId !== projectId) return
       void refreshLiveMcp()
+      void refreshPlugins()
     }
     window.addEventListener('everflow:harness-updated', onHarness)
     return () => window.removeEventListener('everflow:harness-updated', onHarness)
-  }, [projectId, refreshLiveMcp])
+  }, [projectId, refreshLiveMcp, refreshPlugins])
 
   const mcps = liveMcp && liveMcp.length > 0 ? liveMcp : localMcps
-  const empty = httpTools.length === 0 && mcps.length === 0 && !toolsLoading
+  const systemMcps = mcps.filter((m) => isSystemMcp(m.name) || isSystemMcp(m.id))
+  const userMcps = mcps.filter((m) => !isSystemMcp(m.name) && !isSystemMcp(m.id))
+  const empty =
+    sub !== 'plugins' && httpTools.length === 0 && mcps.length === 0 && !toolsLoading
+
+  const handleRemovePlugin = async (plugin: PluginRow) => {
+    if (!isApi || !sandboxReady) {
+      pushToast('Start the sandbox to manage plugins', { kind: 'warning' })
+      return
+    }
+    setPluginBusyId(plugin.id)
+    try {
+      const inCatalog = LOCAL_MARKETPLACE_CATALOG.plugins.some((p) => p.id === plugin.id)
+      if (inCatalog) {
+        await uninstallMarketplaceItem(projectId, 'plugin', plugin.id)
+      } else {
+        await putOpenCodeHarness(projectId, {
+          remove_plugins: [plugin.npmPackage || plugin.id],
+          remove_marketplace_items: [{ kind: 'plugin', id: plugin.id }],
+        })
+      }
+      try {
+        await ensureOpenCode(projectId, true)
+      } catch {
+        /* optional */
+      }
+      await refreshPlugins()
+      window.dispatchEvent(new CustomEvent('everflow:harness-updated', { detail: { projectId } }))
+      pushToast(`Removed plugin “${plugin.name}”`, { kind: 'warning' })
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Failed to remove plugin', { kind: 'danger' })
+    } finally {
+      setPluginBusyId(null)
+    }
+  }
 
   const syncMcpToOpenCode = async (
     name: string,
@@ -249,6 +353,12 @@ export function ToolsPanel() {
   }
 
   const handleDeleteMcp = async (m: McpServerDef) => {
+    if (isSystemMcp(m.name) || isSystemMcp(m.id)) {
+      pushToast('Everflow MCP is a system server and cannot be deleted. Disable it per prompt in chat.', {
+        kind: 'warning',
+      })
+      return
+    }
     deleteMcp(projectId, m.id)
     if (isApi && sandboxReady) {
       setSyncing(true)
@@ -386,7 +496,14 @@ export function ToolsPanel() {
               </TabTitleText>
             }
           />
-          <Tab eventKey="mcps" title={<TabTitleText>MCP servers ({mcps.length})</TabTitleText>} />
+          <Tab
+            eventKey="mcps"
+            title={<TabTitleText>MCP servers ({userMcps.length})</TabTitleText>}
+          />
+          <Tab
+            eventKey="plugins"
+            title={<TabTitleText>Plugins ({plugins.length})</TabTitleText>}
+          />
         </Tabs>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {sub === 'tools' && isApi ? (
@@ -412,14 +529,30 @@ export function ToolsPanel() {
               {syncing ? 'Syncing…' : 'Refresh status'}
             </Button>
           ) : null}
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => (sub === 'tools' ? setToolOpen(true) : setMcpOpen(true))}
-            isDisabled={syncing}
-          >
-            {sub === 'tools' ? 'Create tool' : 'Create MCP'}
-          </Button>
+          {sub === 'plugins' && isApi ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void refreshPlugins()}
+              isDisabled={pluginsLoading || !sandboxReady}
+            >
+              {pluginsLoading ? 'Loading…' : 'Refresh'}
+            </Button>
+          ) : null}
+          {sub === 'plugins' ? (
+            <Link className="pf-v6-c-button pf-m-primary pf-m-small" to="/marketplace?tab=plugins">
+              Browse Marketplace
+            </Link>
+          ) : (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => (sub === 'tools' ? setToolOpen(true) : setMcpOpen(true))}
+              isDisabled={syncing}
+            >
+              {sub === 'tools' ? 'Create tool' : 'Create MCP'}
+            </Button>
+          )}
         </div>
       </div>
       <div className="panel-scroll">
@@ -437,11 +570,78 @@ export function ToolsPanel() {
               : liveMcp
                 ? syncing
                   ? 'Syncing harness pack to OpenCode…'
-                  : 'Synced from the OpenCode harness (opencode.json). Toggle updates the pack; assign per-agent in Agents. Chat composer can further deny unchecked servers per prompt.'
+                  : 'Synced from the OpenCode harness (opencode.json). Toggle updates the pack; assign per-agent in Agents. System servers (Everflow) cannot be deleted — deny them per prompt in the chat composer.'
                 : 'Could not load live MCP status — showing local catalog. Use Refresh status when the sandbox is healthy.'}
           </p>
         ) : null}
-        {sub === 'tools' && isApi && toolsLoading && httpTools.length === 0 ? (
+        {sub === 'plugins' ? (
+          <p className="lc-meta" style={{ marginTop: 0 }}>
+            {!isApi
+              ? 'Open an API project to manage OpenCode plugins installed from the Marketplace.'
+              : !sandboxReady
+                ? 'Start the sandbox to list and remove OpenCode plugins (opencode.json plugin array + marketplace skills/MCP).'
+                : 'Plugins installed from Marketplace (Graphify, Oh My OpenCode, Headroom, …). Remove uninstalls the harness recipe.'}
+          </p>
+        ) : null}
+        {sub === 'plugins' ? (
+          !isApi || !sandboxReady ? (
+            <EmptySplash
+              title="Plugins unavailable"
+              body={
+                !isApi
+                  ? 'Plugins are managed on API projects with a running OpenCode sandbox.'
+                  : 'Start the project sandbox, then refresh to see installed plugins.'
+              }
+              primaryLabel="Browse Marketplace"
+              onPrimary={() => {
+                window.location.href = '/marketplace?tab=plugins'
+              }}
+              icon={PlugIcon}
+            />
+          ) : pluginsLoading && plugins.length === 0 ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
+              <Spinner size="lg" aria-label="Loading plugins" />
+            </div>
+          ) : plugins.length === 0 ? (
+            <EmptySplash
+              title="No plugins installed"
+              body="Add Graphify, Oh My OpenCode, Headroom, and more from the Marketplace."
+              primaryLabel="Browse Marketplace"
+              onPrimary={() => {
+                window.location.href = '/marketplace?tab=plugins'
+              }}
+              icon={PlugIcon}
+            />
+          ) : (
+            plugins.map((p) => (
+              <div className="list-card" key={p.id}>
+                <div className="lc-row">
+                  <div>
+                    <div className="lc-title">{p.name}</div>
+                    <div className="lc-meta">
+                      {p.description || p.source}
+                      {p.npmPackage ? ` · ${p.npmPackage}` : ''}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Label color="blue" isCompact>
+                      plugin
+                    </Label>
+                    <Button
+                      variant="link"
+                      isDanger
+                      size="sm"
+                      onClick={() => void handleRemovePlugin(p)}
+                      isDisabled={pluginBusyId === p.id || syncing}
+                    >
+                      {pluginBusyId === p.id ? 'Removing…' : 'Remove'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))
+          )
+        ) : sub === 'tools' && isApi && toolsLoading && httpTools.length === 0 ? (
           <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
             <Spinner size="lg" aria-label="Loading HTTP tools" />
           </div>
@@ -516,71 +716,126 @@ export function ToolsPanel() {
               </div>
             ))
           )
-        ) : mcps.length === 0 ? (
-          <EmptySplash
-            title="No MCP servers"
-            body="Connect an MCP server over HTTP/SSE or stdio. It will sync to OpenCode when the sandbox is running."
-            primaryLabel="Create MCP server"
-            onPrimary={() => setMcpOpen(true)}
-          />
         ) : (
-          mcps.map((m) => {
-            const status = (m.status || '').toLowerCase()
-            const statusColor =
-              status.includes('connect') || status === 'ready' || status === 'ok'
-                ? 'green'
-                : status.includes('fail') || status.includes('error') || status === 'disconnected'
-                  ? 'red'
-                  : status
-                    ? 'grey'
-                    : null
-            return (
-              <div className="list-card" key={m.id}>
-                <div className="lc-row">
-                  <div>
-                    <div className="lc-title">{m.name}</div>
-                    <div className="lc-meta">
-                      {m.transport}
-                      {m.endpoint ? ` · ${m.endpoint}` : ''}
+          <>
+            {systemMcps.length > 0 ? (
+              <>
+                <div className="section-label">System</div>
+                {systemMcps.map((m) => {
+                  const status = (m.status || '').toLowerCase()
+                  const statusColor =
+                    status.includes('connect') || status === 'ready' || status === 'ok'
+                      ? 'green'
+                      : status.includes('fail') ||
+                          status.includes('error') ||
+                          status === 'disconnected'
+                        ? 'red'
+                        : status
+                          ? 'grey'
+                          : null
+                  return (
+                    <div className="list-card" key={m.id}>
+                      <div className="lc-row">
+                        <div>
+                          <div className="lc-title">{m.name}</div>
+                          <div className="lc-meta">
+                            Managed by Everflow — deny per prompt in chat
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Label color="grey" isCompact>
+                            system
+                          </Label>
+                          {statusColor && m.status ? (
+                            <Label color={statusColor} isCompact>
+                              {m.status}
+                            </Label>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </>
+            ) : null}
+            <div
+              className="section-label"
+              style={systemMcps.length > 0 ? { marginTop: 12 } : undefined}
+            >
+              MCP servers
+            </div>
+            {userMcps.length === 0 ? (
+              <EmptySplash
+                title="No MCP servers"
+                body="Connect an MCP server over HTTP/SSE or stdio. It will sync to OpenCode when the sandbox is running."
+                primaryLabel="Create MCP server"
+                onPrimary={() => setMcpOpen(true)}
+              />
+            ) : (
+              userMcps.map((m) => {
+                const status = (m.status || '').toLowerCase()
+                const statusColor =
+                  status.includes('connect') || status === 'ready' || status === 'ok'
+                    ? 'green'
+                    : status.includes('fail') ||
+                        status.includes('error') ||
+                        status === 'disconnected'
+                      ? 'red'
+                      : status
+                        ? 'grey'
+                        : null
+                return (
+                  <div className="list-card" key={m.id}>
+                    <div className="lc-row">
+                      <div>
+                        <div className="lc-title">{m.name}</div>
+                        <div className="lc-meta">
+                          {[m.transport, m.endpoint ? m.endpoint : null]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Label color={m.on ? 'green' : 'grey'}>
+                          {m.on ? 'enabled' : 'disabled'}
+                        </Label>
+                        {statusColor && m.status ? (
+                          <Label color={statusColor} isCompact>
+                            {m.status}
+                          </Label>
+                        ) : null}
+                        {isApi && sandboxReady && liveMcp?.some((x) => x.id === m.id) ? (
+                          <Label color="blue" isCompact>
+                            harness
+                          </Label>
+                        ) : isApi && !sandboxReady ? (
+                          <Label color="grey" isCompact>
+                            local
+                          </Label>
+                        ) : null}
+                        <Switch
+                          id={`mcp-${m.id}`}
+                          isChecked={m.on}
+                          onChange={() => void handleToggleMcp(m)}
+                          aria-label={`Toggle ${m.name}`}
+                          isDisabled={syncing}
+                        />
+                        <Button
+                          variant="link"
+                          isDanger
+                          size="sm"
+                          onClick={() => void handleDeleteMcp(m)}
+                          isDisabled={syncing}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Label color={m.on ? 'green' : 'grey'}>{m.on ? 'enabled' : 'disabled'}</Label>
-                    {statusColor && m.status ? (
-                      <Label color={statusColor} isCompact>
-                        {m.status}
-                      </Label>
-                    ) : null}
-                    {isApi && sandboxReady && liveMcp?.some((x) => x.id === m.id) ? (
-                      <Label color="blue" isCompact>
-                        harness
-                      </Label>
-                    ) : isApi && !sandboxReady ? (
-                      <Label color="grey" isCompact>
-                        local
-                      </Label>
-                    ) : null}
-                    <Switch
-                      id={`mcp-${m.id}`}
-                      isChecked={m.on}
-                      onChange={() => void handleToggleMcp(m)}
-                      aria-label={`Toggle ${m.name}`}
-                      isDisabled={syncing}
-                    />
-                    <Button
-                      variant="link"
-                      isDanger
-                      size="sm"
-                      onClick={() => void handleDeleteMcp(m)}
-                      isDisabled={syncing}
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            )
-          })
+                )
+              })
+            )}
+          </>
         )}
       </div>
 

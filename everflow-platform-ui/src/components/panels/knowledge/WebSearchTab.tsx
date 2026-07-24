@@ -1,7 +1,15 @@
 import { useCallback, useState } from 'react'
 import { Button, TextInput } from '@patternfly/react-core'
 import { EmptySplash } from '@/components/studio/EmptySplash'
-import { ApiError, searchKnowledgeWeb } from '@/lib/api'
+import { getProject } from '@/data/projects'
+import {
+  ApiError,
+  createKnowledgeCanvas,
+  isDemoMode,
+  reindexKnowledgeCanvas,
+  searchKnowledgeWeb,
+} from '@/lib/api'
+import { mapApiCanvas } from '@/lib/studioMap'
 import { pushToast } from '@/lib/studioToast'
 import { useStudioDemoStore } from '@/store/studioDemoStore'
 import type { WebSearchHit } from '@/types/studio'
@@ -11,14 +19,24 @@ interface WebSearchTabProps {
   projectId: string
 }
 
+function truncateName(name: string, max = 200): string {
+  const t = name.trim() || 'Untitled'
+  return t.length <= max ? t : `${t.slice(0, max - 1)}…`
+}
+
 export function WebSearchTab({ projectId }: WebSearchTabProps) {
+  const project = getProject(projectId === 'default' ? null : projectId)
+  const useApi = Boolean(project?.fromApi) && !isDemoMode()
+
   const createCanvas = useStudioDemoStore((s) => s.createCanvas)
   const updateCanvas = useStudioDemoStore((s) => s.updateCanvas)
+  const replaceCanvases = useStudioDemoStore((s) => s.update)
 
   const [searchQ, setSearchQ] = useState('')
   const [hits, setHits] = useState<WebSearchHit[]>([])
   const [readerId, setReaderId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [adding, setAdding] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const reader = hits.find((h) => h.id === readerId) ?? null
@@ -73,16 +91,7 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
     )
   }, [])
 
-  const addToKnowledge = (hit: WebSearchHit) => {
-    const md =
-      hit.readerMarkdown ||
-      `# ${hit.title}\n\nSource: ${hit.url}\n\n${hit.snippet}\n`
-    const id = createCanvas(projectId, {
-      name: hit.title,
-      contentMd: md,
-      origin: 'web',
-      desc: hit.url,
-    })
+  const runDemoPipeline = (id: string) => {
     updateCanvas(projectId, id, { status: 'chunking', chunks: 0 })
     window.setTimeout(() => updateCanvas(projectId, id, { status: 'embedding' }), 600)
     window.setTimeout(() => {
@@ -91,6 +100,63 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
         chunks: 18 + Math.floor(Math.random() * 40),
       })
     }, 1400)
+  }
+
+  const addToKnowledge = async (hit: WebSearchHit) => {
+    const md =
+      hit.readerMarkdown ||
+      `# ${hit.title}\n\nSource: ${hit.url}\n\n${hit.snippet}\n`
+    const name = truncateName(hit.title)
+
+    if (useApi) {
+      if (adding) return
+      setAdding(true)
+      try {
+        const created = await createKnowledgeCanvas(projectId, {
+          name,
+          description: hit.url,
+          content_md: md,
+          origin: 'web',
+          source_url: hit.url,
+        })
+        const mapped = mapApiCanvas(created)
+        replaceCanvases(projectId, (s) => ({
+          ...s,
+          canvases: [mapped, ...s.canvases.filter((c) => c.id !== mapped.id)],
+        }))
+        try {
+          const indexed = await reindexKnowledgeCanvas(projectId, mapped.id)
+          replaceCanvases(projectId, (s) => ({
+            ...s,
+            canvases: s.canvases.map((c) =>
+              c.id === mapped.id ? mapApiCanvas(indexed) : c,
+            ),
+          }))
+        } catch {
+          // Canvas saved; reindex may be unavailable until Phase 1 backend is up
+          runDemoPipeline(mapped.id)
+        }
+        pushToast('Added to knowledge', {
+          description: 'Pinned reader text as a canvas and started embed pipeline',
+          kind: 'success',
+        })
+      } catch (e) {
+        pushToast(e instanceof Error ? e.message : 'Add to knowledge failed', {
+          kind: 'danger',
+        })
+      } finally {
+        setAdding(false)
+      }
+      return
+    }
+
+    const id = createCanvas(projectId, {
+      name,
+      contentMd: md,
+      origin: 'web',
+      desc: hit.url,
+    })
+    runDemoPipeline(id)
     pushToast('Added to knowledge', {
       description: 'Pinned reader text as a canvas and started embed pipeline',
       kind: 'success',
@@ -103,7 +169,7 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
         hit={reader}
         projectId={projectId}
         onBack={() => setReaderId(null)}
-        onAddToKnowledge={addToKnowledge}
+        onAddToKnowledge={(h) => void addToKnowledge(h)}
         onContentLoaded={onContentLoaded}
       />
     )
@@ -164,7 +230,13 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
               >
                 Open original
               </Button>
-              <Button size="sm" variant="link" isInline onClick={() => addToKnowledge(h)}>
+              <Button
+                size="sm"
+                variant="link"
+                isInline
+                isDisabled={adding}
+                onClick={() => void addToKnowledge(h)}
+              >
                 Add to knowledge
               </Button>
             </div>

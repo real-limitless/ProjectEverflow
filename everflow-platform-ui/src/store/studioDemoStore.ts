@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { create } from 'zustand'
 import { getStudioExtras } from '@/data/studioExtras'
 import { getProject } from '@/data/projects'
+import { isSystemMcp } from '@/lib/harness/opencodePack'
 import { categoryToLegacyKind, deriveN8nGraph } from '@/lib/n8nImport'
 import type {
   AgentDefinition,
@@ -1107,7 +1108,13 @@ export const useStudioDemoStore = create<StudioDemoState>((set, get) => ({
   },
 
   deleteMcp: (projectId, id) => {
-    get().update(projectId, (s) => ({ ...s, mcps: s.mcps.filter((m) => m.id !== id) }))
+    // Platform-injected system MCPs (e.g. Everflow) are not user-removable.
+    if (isSystemMcp(id)) return
+    get().update(projectId, (s) => {
+      const target = s.mcps.find((m) => m.id === id)
+      if (target && isSystemMcp(target.name)) return s
+      return { ...s, mcps: s.mcps.filter((m) => m.id !== id) }
+    })
   },
 
   toggleTool: (projectId, id) => {

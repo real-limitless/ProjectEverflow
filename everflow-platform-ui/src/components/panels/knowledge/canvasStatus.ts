@@ -17,6 +17,10 @@ export function kindLabel(origin: KnowledgeOrigin): string | null {
       return 'Uploaded file'
     case 'web':
       return 'From web'
+    case 'repo':
+      return 'From repo'
+    case 'research':
+      return 'From research'
     case 'created':
     default:
       return null

@@ -1,0 +1,5697 @@
+{
+  "version": 1,
+  "source": {
+    "ecc": "https://github.com/affaan-m/ECC",
+    "ref": "main"
+  },
+  "skills": [
+    {
+      "id": "accessibility",
+      "kind": "skill",
+      "name": "accessibility",
+      "description": "ECC skill: accessibility",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/accessibility/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "agent-architecture-audit",
+      "kind": "skill",
+      "name": "Agent Architecture Audit",
+      "description": "ECC skill: agent-architecture-audit",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/agent-architecture-audit/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "agent-eval",
+      "kind": "skill",
+      "name": "Agent Eval",
+      "description": "ECC skill: agent-eval",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/agent-eval/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "agent-harness-construction",
+      "kind": "skill",
+      "name": "Agent Harness Construction",
+      "description": "ECC skill: agent-harness-construction",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/agent-harness-construction/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "agent-introspection-debugging",
+      "kind": "skill",
+      "name": "Agent Introspection Debugging",
+      "description": "ECC skill: agent-introspection-debugging",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/agent-introspection-debugging/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "agent-payment-x402",
+      "kind": "skill",
+      "name": "Agent Payment X402",
+      "description": "ECC skill: agent-payment-x402",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/agent-payment-x402/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "agent-self-evaluation",
+      "kind": "skill",
+      "name": "Agent Self Evaluation",
+      "description": "ECC skill: agent-self-evaluation",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/agent-self-evaluation/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "agent-sort",
+      "kind": "skill",
+      "name": "Agent Sort",
+      "description": "ECC skill: agent-sort",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/agent-sort/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "agentic-engineering",
+      "kind": "skill",
+      "name": "Agentic Engineering",
+      "description": "ECC skill: agentic-engineering",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/agentic-engineering/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "agentic-os",
+      "kind": "skill",
+      "name": "Agentic Os",
+      "description": "ECC skill: agentic-os",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/agentic-os/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ai-first-engineering",
+      "kind": "skill",
+      "name": "Ai First Engineering",
+      "description": "ECC skill: ai-first-engineering",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ai-first-engineering/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ai-regression-testing",
+      "kind": "skill",
+      "name": "Ai Regression Testing",
+      "description": "ECC skill: ai-regression-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ai-regression-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "android-clean-architecture",
+      "kind": "skill",
+      "name": "Android Clean Architecture",
+      "description": "ECC skill: android-clean-architecture",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/android-clean-architecture/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "angular-developer",
+      "kind": "skill",
+      "name": "Angular Developer",
+      "description": "ECC skill: angular-developer",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/angular-developer/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "api-connector-builder",
+      "kind": "skill",
+      "name": "Api Connector Builder",
+      "description": "ECC skill: api-connector-builder",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/api-connector-builder/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "api-design",
+      "kind": "skill",
+      "name": "Api Design",
+      "description": "ECC skill: api-design",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/api-design/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "architecture-decision-records",
+      "kind": "skill",
+      "name": "Architecture Decision Records",
+      "description": "ECC skill: architecture-decision-records",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/architecture-decision-records/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "article-writing",
+      "kind": "skill",
+      "name": "Article Writing",
+      "description": "ECC skill: article-writing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/article-writing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "automation-audit-ops",
+      "kind": "skill",
+      "name": "Automation Audit Ops",
+      "description": "ECC skill: automation-audit-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/automation-audit-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "autonomous-agent-harness",
+      "kind": "skill",
+      "name": "Autonomous Agent Harness",
+      "description": "ECC skill: autonomous-agent-harness",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/autonomous-agent-harness/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "autonomous-loops",
+      "kind": "skill",
+      "name": "Autonomous Loops",
+      "description": "ECC skill: autonomous-loops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/autonomous-loops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "backend-patterns",
+      "kind": "skill",
+      "name": "Backend Patterns",
+      "description": "ECC skill: backend-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/backend-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "benchmark",
+      "kind": "skill",
+      "name": "benchmark",
+      "description": "ECC skill: benchmark",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/benchmark/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "benchmark-methodology",
+      "kind": "skill",
+      "name": "Benchmark Methodology",
+      "description": "ECC skill: benchmark-methodology",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/benchmark-methodology/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "benchmark-optimization-loop",
+      "kind": "skill",
+      "name": "Benchmark Optimization Loop",
+      "description": "ECC skill: benchmark-optimization-loop",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/benchmark-optimization-loop/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "blender-motion-state-inspection",
+      "kind": "skill",
+      "name": "Blender Motion State Inspection",
+      "description": "ECC skill: blender-motion-state-inspection",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/blender-motion-state-inspection/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "blueprint",
+      "kind": "skill",
+      "name": "blueprint",
+      "description": "ECC skill: blueprint",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/blueprint/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "brand-discovery",
+      "kind": "skill",
+      "name": "Brand Discovery",
+      "description": "ECC skill: brand-discovery",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/brand-discovery/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "brand-voice",
+      "kind": "skill",
+      "name": "Brand Voice",
+      "description": "ECC skill: brand-voice",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/brand-voice/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "browser-qa",
+      "kind": "skill",
+      "name": "Browser Qa",
+      "description": "ECC skill: browser-qa",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/browser-qa/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "bun-runtime",
+      "kind": "skill",
+      "name": "Bun Runtime",
+      "description": "ECC skill: bun-runtime",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/bun-runtime/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "canary-watch",
+      "kind": "skill",
+      "name": "Canary Watch",
+      "description": "ECC skill: canary-watch",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/canary-watch/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "carrier-relationship-management",
+      "kind": "skill",
+      "name": "Carrier Relationship Management",
+      "description": "ECC skill: carrier-relationship-management",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/carrier-relationship-management/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "cisco-ios-patterns",
+      "kind": "skill",
+      "name": "Cisco Ios Patterns",
+      "description": "ECC skill: cisco-ios-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/cisco-ios-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ck",
+      "kind": "skill",
+      "name": "ck",
+      "description": "ECC skill: ck",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ck/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "claude-devfleet",
+      "kind": "skill",
+      "name": "Claude Devfleet",
+      "description": "ECC skill: claude-devfleet",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/claude-devfleet/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "click-path-audit",
+      "kind": "skill",
+      "name": "Click Path Audit",
+      "description": "ECC skill: click-path-audit",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/click-path-audit/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "clickhouse-io",
+      "kind": "skill",
+      "name": "Clickhouse Io",
+      "description": "ECC skill: clickhouse-io",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/clickhouse-io/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "code-tour",
+      "kind": "skill",
+      "name": "Code Tour",
+      "description": "ECC skill: code-tour",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/code-tour/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "codebase-onboarding",
+      "kind": "skill",
+      "name": "Codebase Onboarding",
+      "description": "ECC skill: codebase-onboarding",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/codebase-onboarding/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "codehealth-mcp",
+      "kind": "skill",
+      "name": "Codehealth Mcp",
+      "description": "ECC skill: codehealth-mcp",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/codehealth-mcp/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "coding-standards",
+      "kind": "skill",
+      "name": "Coding Standards",
+      "description": "ECC skill: coding-standards",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/coding-standards/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "competitive-platform-analysis",
+      "kind": "skill",
+      "name": "Competitive Platform Analysis",
+      "description": "ECC skill: competitive-platform-analysis",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/competitive-platform-analysis/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "competitive-report-structure",
+      "kind": "skill",
+      "name": "Competitive Report Structure",
+      "description": "ECC skill: competitive-report-structure",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/competitive-report-structure/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "compose-multiplatform-patterns",
+      "kind": "skill",
+      "name": "Compose Multiplatform Patterns",
+      "description": "ECC skill: compose-multiplatform-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/compose-multiplatform-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "config-gc",
+      "kind": "skill",
+      "name": "Config Gc",
+      "description": "ECC skill: config-gc",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/config-gc/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "configure-ecc",
+      "kind": "skill",
+      "name": "Configure Ecc",
+      "description": "ECC skill: configure-ecc",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/configure-ecc/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "connections-optimizer",
+      "kind": "skill",
+      "name": "Connections Optimizer",
+      "description": "ECC skill: connections-optimizer",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/connections-optimizer/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "content-engine",
+      "kind": "skill",
+      "name": "Content Engine",
+      "description": "ECC skill: content-engine",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/content-engine/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "content-hash-cache-pattern",
+      "kind": "skill",
+      "name": "Content Hash Cache Pattern",
+      "description": "ECC skill: content-hash-cache-pattern",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/content-hash-cache-pattern/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "context-budget",
+      "kind": "skill",
+      "name": "Context Budget",
+      "description": "ECC skill: context-budget",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/context-budget/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "continuous-agent-loop",
+      "kind": "skill",
+      "name": "Continuous Agent Loop",
+      "description": "ECC skill: continuous-agent-loop",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/continuous-agent-loop/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "continuous-learning",
+      "kind": "skill",
+      "name": "Continuous Learning",
+      "description": "ECC skill: continuous-learning",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/continuous-learning/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "continuous-learning-v2",
+      "kind": "skill",
+      "name": "Continuous Learning V2",
+      "description": "ECC skill: continuous-learning-v2",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/continuous-learning-v2/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "cost-aware-llm-pipeline",
+      "kind": "skill",
+      "name": "Cost Aware Llm Pipeline",
+      "description": "ECC skill: cost-aware-llm-pipeline",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/cost-aware-llm-pipeline/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "cost-tracking",
+      "kind": "skill",
+      "name": "Cost Tracking",
+      "description": "ECC skill: cost-tracking",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/cost-tracking/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "council",
+      "kind": "skill",
+      "name": "council",
+      "description": "ECC skill: council",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/council/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "cpp-coding-standards",
+      "kind": "skill",
+      "name": "Cpp Coding Standards",
+      "description": "ECC skill: cpp-coding-standards",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/cpp-coding-standards/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "cpp-testing",
+      "kind": "skill",
+      "name": "Cpp Testing",
+      "description": "ECC skill: cpp-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/cpp-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "crosspost",
+      "kind": "skill",
+      "name": "crosspost",
+      "description": "ECC skill: crosspost",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/crosspost/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "csharp-testing",
+      "kind": "skill",
+      "name": "Csharp Testing",
+      "description": "ECC skill: csharp-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/csharp-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "customer-billing-ops",
+      "kind": "skill",
+      "name": "Customer Billing Ops",
+      "description": "ECC skill: customer-billing-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/customer-billing-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "customs-trade-compliance",
+      "kind": "skill",
+      "name": "Customs Trade Compliance",
+      "description": "ECC skill: customs-trade-compliance",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/customs-trade-compliance/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "dart-flutter-patterns",
+      "kind": "skill",
+      "name": "Dart Flutter Patterns",
+      "description": "ECC skill: dart-flutter-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/dart-flutter-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "dashboard-builder",
+      "kind": "skill",
+      "name": "Dashboard Builder",
+      "description": "ECC skill: dashboard-builder",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/dashboard-builder/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "data-scraper-agent",
+      "kind": "skill",
+      "name": "Data Scraper Agent",
+      "description": "ECC skill: data-scraper-agent",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/data-scraper-agent/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "data-throughput-accelerator",
+      "kind": "skill",
+      "name": "Data Throughput Accelerator",
+      "description": "ECC skill: data-throughput-accelerator",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/data-throughput-accelerator/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "database-migrations",
+      "kind": "skill",
+      "name": "Database Migrations",
+      "description": "ECC skill: database-migrations",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/database-migrations/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "deep-research",
+      "kind": "skill",
+      "name": "Deep Research",
+      "description": "ECC skill: deep-research",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/deep-research/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "defi-amm-security",
+      "kind": "skill",
+      "name": "Defi Amm Security",
+      "description": "ECC skill: defi-amm-security",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/defi-amm-security/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "delivery-gate",
+      "kind": "skill",
+      "name": "Delivery Gate",
+      "description": "ECC skill: delivery-gate",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/delivery-gate/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "deployment-patterns",
+      "kind": "skill",
+      "name": "Deployment Patterns",
+      "description": "ECC skill: deployment-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/deployment-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "design-system",
+      "kind": "skill",
+      "name": "Design System",
+      "description": "ECC skill: design-system",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/design-system/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "django-celery",
+      "kind": "skill",
+      "name": "Django Celery",
+      "description": "ECC skill: django-celery",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/django-celery/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "django-patterns",
+      "kind": "skill",
+      "name": "Django Patterns",
+      "description": "ECC skill: django-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/django-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "django-security",
+      "kind": "skill",
+      "name": "Django Security",
+      "description": "ECC skill: django-security",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/django-security/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "django-tdd",
+      "kind": "skill",
+      "name": "Django Tdd",
+      "description": "ECC skill: django-tdd",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/django-tdd/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "django-verification",
+      "kind": "skill",
+      "name": "Django Verification",
+      "description": "ECC skill: django-verification",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/django-verification/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "dmux-workflows",
+      "kind": "skill",
+      "name": "Dmux Workflows",
+      "description": "ECC skill: dmux-workflows",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/dmux-workflows/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "docker-patterns",
+      "kind": "skill",
+      "name": "Docker Patterns",
+      "description": "ECC skill: docker-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/docker-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "documentation-lookup",
+      "kind": "skill",
+      "name": "Documentation Lookup",
+      "description": "ECC skill: documentation-lookup",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/documentation-lookup/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "dotnet-patterns",
+      "kind": "skill",
+      "name": "Dotnet Patterns",
+      "description": "ECC skill: dotnet-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/dotnet-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "dynamic-workflow-mode",
+      "kind": "skill",
+      "name": "Dynamic Workflow Mode",
+      "description": "ECC skill: dynamic-workflow-mode",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/dynamic-workflow-mode/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "e2e-testing",
+      "kind": "skill",
+      "name": "E2E Testing",
+      "description": "ECC skill: e2e-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/e2e-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ecc-guide",
+      "kind": "skill",
+      "name": "Ecc Guide",
+      "description": "ECC skill: ecc-guide",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ecc-guide/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ecc-recipes",
+      "kind": "skill",
+      "name": "Ecc Recipes",
+      "description": "ECC skill: ecc-recipes",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ecc-recipes/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ecc-tools-cost-audit",
+      "kind": "skill",
+      "name": "Ecc Tools Cost Audit",
+      "description": "ECC skill: ecc-tools-cost-audit",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ecc-tools-cost-audit/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "email-ops",
+      "kind": "skill",
+      "name": "Email Ops",
+      "description": "ECC skill: email-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/email-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "energy-procurement",
+      "kind": "skill",
+      "name": "Energy Procurement",
+      "description": "ECC skill: energy-procurement",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/energy-procurement/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "enterprise-agent-ops",
+      "kind": "skill",
+      "name": "Enterprise Agent Ops",
+      "description": "ECC skill: enterprise-agent-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/enterprise-agent-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "error-handling",
+      "kind": "skill",
+      "name": "Error Handling",
+      "description": "ECC skill: error-handling",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/error-handling/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "eval-harness",
+      "kind": "skill",
+      "name": "Eval Harness",
+      "description": "ECC skill: eval-harness",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/eval-harness/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "evm-token-decimals",
+      "kind": "skill",
+      "name": "Evm Token Decimals",
+      "description": "ECC skill: evm-token-decimals",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/evm-token-decimals/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "exa-search",
+      "kind": "skill",
+      "name": "Exa Search",
+      "description": "ECC skill: exa-search",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/exa-search/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "fal-ai-media",
+      "kind": "skill",
+      "name": "Fal Ai Media",
+      "description": "ECC skill: fal-ai-media",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/fal-ai-media/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "fastapi-patterns",
+      "kind": "skill",
+      "name": "Fastapi Patterns",
+      "description": "ECC skill: fastapi-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/fastapi-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "finance-billing-ops",
+      "kind": "skill",
+      "name": "Finance Billing Ops",
+      "description": "ECC skill: finance-billing-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/finance-billing-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "flox-environments",
+      "kind": "skill",
+      "name": "Flox Environments",
+      "description": "ECC skill: flox-environments",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/flox-environments/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "flutter-dart-code-review",
+      "kind": "skill",
+      "name": "Flutter Dart Code Review",
+      "description": "ECC skill: flutter-dart-code-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/flutter-dart-code-review/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "foundation-models-on-device",
+      "kind": "skill",
+      "name": "Foundation Models On Device",
+      "description": "ECC skill: foundation-models-on-device",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/foundation-models-on-device/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "frontend-a11y",
+      "kind": "skill",
+      "name": "Frontend A11Y",
+      "description": "ECC skill: frontend-a11y",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/frontend-a11y/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "frontend-design-direction",
+      "kind": "skill",
+      "name": "Frontend Design Direction",
+      "description": "ECC skill: frontend-design-direction",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/frontend-design-direction/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "frontend-patterns",
+      "kind": "skill",
+      "name": "Frontend Patterns",
+      "description": "ECC skill: frontend-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/frontend-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "frontend-slides",
+      "kind": "skill",
+      "name": "Frontend Slides",
+      "description": "ECC skill: frontend-slides",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/frontend-slides/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "fsharp-testing",
+      "kind": "skill",
+      "name": "Fsharp Testing",
+      "description": "ECC skill: fsharp-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/fsharp-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "gan-style-harness",
+      "kind": "skill",
+      "name": "Gan Style Harness",
+      "description": "ECC skill: gan-style-harness",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/gan-style-harness/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "gateguard",
+      "kind": "skill",
+      "name": "gateguard",
+      "description": "ECC skill: gateguard",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/gateguard/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "generating-python-installer",
+      "kind": "skill",
+      "name": "Generating Python Installer",
+      "description": "ECC skill: generating-python-installer",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/generating-python-installer/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "git-workflow",
+      "kind": "skill",
+      "name": "Git Workflow",
+      "description": "ECC skill: git-workflow",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/git-workflow/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "github-ops",
+      "kind": "skill",
+      "name": "Github Ops",
+      "description": "ECC skill: github-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/github-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "golang-patterns",
+      "kind": "skill",
+      "name": "Golang Patterns",
+      "description": "ECC skill: golang-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/golang-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "golang-testing",
+      "kind": "skill",
+      "name": "Golang Testing",
+      "description": "ECC skill: golang-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/golang-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "google-workspace-ops",
+      "kind": "skill",
+      "name": "Google Workspace Ops",
+      "description": "ECC skill: google-workspace-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/google-workspace-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "growth-log",
+      "kind": "skill",
+      "name": "Growth Log",
+      "description": "ECC skill: growth-log",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/growth-log/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "healthcare-cdss-patterns",
+      "kind": "skill",
+      "name": "Healthcare Cdss Patterns",
+      "description": "ECC skill: healthcare-cdss-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/healthcare-cdss-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "healthcare-emr-patterns",
+      "kind": "skill",
+      "name": "Healthcare Emr Patterns",
+      "description": "ECC skill: healthcare-emr-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/healthcare-emr-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "healthcare-eval-harness",
+      "kind": "skill",
+      "name": "Healthcare Eval Harness",
+      "description": "ECC skill: healthcare-eval-harness",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/healthcare-eval-harness/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "healthcare-phi-compliance",
+      "kind": "skill",
+      "name": "Healthcare Phi Compliance",
+      "description": "ECC skill: healthcare-phi-compliance",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/healthcare-phi-compliance/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "hermes-imports",
+      "kind": "skill",
+      "name": "Hermes Imports",
+      "description": "ECC skill: hermes-imports",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/hermes-imports/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "hexagonal-architecture",
+      "kind": "skill",
+      "name": "Hexagonal Architecture",
+      "description": "ECC skill: hexagonal-architecture",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/hexagonal-architecture/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "hipaa-compliance",
+      "kind": "skill",
+      "name": "Hipaa Compliance",
+      "description": "ECC skill: hipaa-compliance",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/hipaa-compliance/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "homelab-network-readiness",
+      "kind": "skill",
+      "name": "Homelab Network Readiness",
+      "description": "ECC skill: homelab-network-readiness",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/homelab-network-readiness/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "homelab-network-setup",
+      "kind": "skill",
+      "name": "Homelab Network Setup",
+      "description": "ECC skill: homelab-network-setup",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/homelab-network-setup/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "homelab-pihole-dns",
+      "kind": "skill",
+      "name": "Homelab Pihole Dns",
+      "description": "ECC skill: homelab-pihole-dns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/homelab-pihole-dns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "homelab-vlan-segmentation",
+      "kind": "skill",
+      "name": "Homelab Vlan Segmentation",
+      "description": "ECC skill: homelab-vlan-segmentation",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/homelab-vlan-segmentation/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "homelab-wireguard-vpn",
+      "kind": "skill",
+      "name": "Homelab Wireguard Vpn",
+      "description": "ECC skill: homelab-wireguard-vpn",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/homelab-wireguard-vpn/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "hookify-rules",
+      "kind": "skill",
+      "name": "Hookify Rules",
+      "description": "ECC skill: hookify-rules",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/hookify-rules/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "inherit-legacy-style",
+      "kind": "skill",
+      "name": "Inherit Legacy Style",
+      "description": "ECC skill: inherit-legacy-style",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/inherit-legacy-style/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "intent-driven-development",
+      "kind": "skill",
+      "name": "Intent Driven Development",
+      "description": "ECC skill: intent-driven-development",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/intent-driven-development/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "inventory-demand-planning",
+      "kind": "skill",
+      "name": "Inventory Demand Planning",
+      "description": "ECC skill: inventory-demand-planning",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/inventory-demand-planning/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "investor-materials",
+      "kind": "skill",
+      "name": "Investor Materials",
+      "description": "ECC skill: investor-materials",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/investor-materials/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "investor-outreach",
+      "kind": "skill",
+      "name": "Investor Outreach",
+      "description": "ECC skill: investor-outreach",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/investor-outreach/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ios-icon-gen",
+      "kind": "skill",
+      "name": "Ios Icon Gen",
+      "description": "ECC skill: ios-icon-gen",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ios-icon-gen/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "iterative-retrieval",
+      "kind": "skill",
+      "name": "Iterative Retrieval",
+      "description": "ECC skill: iterative-retrieval",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/iterative-retrieval/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ito-basket-compare",
+      "kind": "skill",
+      "name": "Ito Basket Compare",
+      "description": "ECC skill: ito-basket-compare",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ito-basket-compare/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ito-compute",
+      "kind": "skill",
+      "name": "Ito Compute",
+      "description": "ECC skill: ito-compute",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ito-compute/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ito-data-atlas-agent",
+      "kind": "skill",
+      "name": "Ito Data Atlas Agent",
+      "description": "ECC skill: ito-data-atlas-agent",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ito-data-atlas-agent/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ito-market-intelligence",
+      "kind": "skill",
+      "name": "Ito Market Intelligence",
+      "description": "ECC skill: ito-market-intelligence",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ito-market-intelligence/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ito-trade-planner",
+      "kind": "skill",
+      "name": "Ito Trade Planner",
+      "description": "ECC skill: ito-trade-planner",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ito-trade-planner/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "java-coding-standards",
+      "kind": "skill",
+      "name": "Java Coding Standards",
+      "description": "ECC skill: java-coding-standards",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/java-coding-standards/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "jira-integration",
+      "kind": "skill",
+      "name": "Jira Integration",
+      "description": "ECC skill: jira-integration",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/jira-integration/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "jpa-patterns",
+      "kind": "skill",
+      "name": "Jpa Patterns",
+      "description": "ECC skill: jpa-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/jpa-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "knowledge-ops",
+      "kind": "skill",
+      "name": "Knowledge Ops",
+      "description": "ECC skill: knowledge-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/knowledge-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "kotlin-coroutines-flows",
+      "kind": "skill",
+      "name": "Kotlin Coroutines Flows",
+      "description": "ECC skill: kotlin-coroutines-flows",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/kotlin-coroutines-flows/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "kotlin-exposed-patterns",
+      "kind": "skill",
+      "name": "Kotlin Exposed Patterns",
+      "description": "ECC skill: kotlin-exposed-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/kotlin-exposed-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "kotlin-ktor-patterns",
+      "kind": "skill",
+      "name": "Kotlin Ktor Patterns",
+      "description": "ECC skill: kotlin-ktor-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/kotlin-ktor-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "kotlin-patterns",
+      "kind": "skill",
+      "name": "Kotlin Patterns",
+      "description": "ECC skill: kotlin-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/kotlin-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "kotlin-testing",
+      "kind": "skill",
+      "name": "Kotlin Testing",
+      "description": "ECC skill: kotlin-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/kotlin-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "kubernetes-patterns",
+      "kind": "skill",
+      "name": "Kubernetes Patterns",
+      "description": "ECC skill: kubernetes-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/kubernetes-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "laravel-patterns",
+      "kind": "skill",
+      "name": "Laravel Patterns",
+      "description": "ECC skill: laravel-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/laravel-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "laravel-plugin-discovery",
+      "kind": "skill",
+      "name": "Laravel Plugin Discovery",
+      "description": "ECC skill: laravel-plugin-discovery",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/laravel-plugin-discovery/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "laravel-security",
+      "kind": "skill",
+      "name": "Laravel Security",
+      "description": "ECC skill: laravel-security",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/laravel-security/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "laravel-tdd",
+      "kind": "skill",
+      "name": "Laravel Tdd",
+      "description": "ECC skill: laravel-tdd",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/laravel-tdd/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "laravel-verification",
+      "kind": "skill",
+      "name": "Laravel Verification",
+      "description": "ECC skill: laravel-verification",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/laravel-verification/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "latency-critical-systems",
+      "kind": "skill",
+      "name": "Latency Critical Systems",
+      "description": "ECC skill: latency-critical-systems",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/latency-critical-systems/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "lead-intelligence",
+      "kind": "skill",
+      "name": "Lead Intelligence",
+      "description": "ECC skill: lead-intelligence",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/lead-intelligence/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "liquid-glass-design",
+      "kind": "skill",
+      "name": "Liquid Glass Design",
+      "description": "ECC skill: liquid-glass-design",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/liquid-glass-design/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "llm-trading-agent-security",
+      "kind": "skill",
+      "name": "Llm Trading Agent Security",
+      "description": "ECC skill: llm-trading-agent-security",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/llm-trading-agent-security/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "logistics-exception-management",
+      "kind": "skill",
+      "name": "Logistics Exception Management",
+      "description": "ECC skill: logistics-exception-management",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/logistics-exception-management/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "loop-design-check",
+      "kind": "skill",
+      "name": "Loop Design Check",
+      "description": "ECC skill: loop-design-check",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/loop-design-check/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "mailtrap-email-integration",
+      "kind": "skill",
+      "name": "Mailtrap Email Integration",
+      "description": "ECC skill: mailtrap-email-integration",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/mailtrap-email-integration/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "make-interfaces-feel-better",
+      "kind": "skill",
+      "name": "Make Interfaces Feel Better",
+      "description": "ECC skill: make-interfaces-feel-better",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/make-interfaces-feel-better/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "manim-video",
+      "kind": "skill",
+      "name": "Manim Video",
+      "description": "ECC skill: manim-video",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/manim-video/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "market-research",
+      "kind": "skill",
+      "name": "Market Research",
+      "description": "ECC skill: market-research",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/market-research/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "marketing-campaign",
+      "kind": "skill",
+      "name": "Marketing Campaign",
+      "description": "ECC skill: marketing-campaign",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/marketing-campaign/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "mcp-server-patterns",
+      "kind": "skill",
+      "name": "Mcp Server Patterns",
+      "description": "ECC skill: mcp-server-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/mcp-server-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "messages-ops",
+      "kind": "skill",
+      "name": "Messages Ops",
+      "description": "ECC skill: messages-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/messages-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ml-adoption-playbook",
+      "kind": "skill",
+      "name": "Ml Adoption Playbook",
+      "description": "ECC skill: ml-adoption-playbook",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ml-adoption-playbook/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "mle-workflow",
+      "kind": "skill",
+      "name": "Mle Workflow",
+      "description": "ECC skill: mle-workflow",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/mle-workflow/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "motion-advanced",
+      "kind": "skill",
+      "name": "Motion Advanced",
+      "description": "ECC skill: motion-advanced",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/motion-advanced/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "motion-foundations",
+      "kind": "skill",
+      "name": "Motion Foundations",
+      "description": "ECC skill: motion-foundations",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/motion-foundations/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "motion-patterns",
+      "kind": "skill",
+      "name": "Motion Patterns",
+      "description": "ECC skill: motion-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/motion-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "motion-ui",
+      "kind": "skill",
+      "name": "Motion Ui",
+      "description": "ECC skill: motion-ui",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/motion-ui/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "mysql-patterns",
+      "kind": "skill",
+      "name": "Mysql Patterns",
+      "description": "ECC skill: mysql-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/mysql-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "nanoclaw-repl",
+      "kind": "skill",
+      "name": "Nanoclaw Repl",
+      "description": "ECC skill: nanoclaw-repl",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/nanoclaw-repl/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "nestjs-patterns",
+      "kind": "skill",
+      "name": "Nestjs Patterns",
+      "description": "ECC skill: nestjs-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/nestjs-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "netmiko-ssh-automation",
+      "kind": "skill",
+      "name": "Netmiko Ssh Automation",
+      "description": "ECC skill: netmiko-ssh-automation",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/netmiko-ssh-automation/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "network-bgp-diagnostics",
+      "kind": "skill",
+      "name": "Network Bgp Diagnostics",
+      "description": "ECC skill: network-bgp-diagnostics",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/network-bgp-diagnostics/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "network-config-validation",
+      "kind": "skill",
+      "name": "Network Config Validation",
+      "description": "ECC skill: network-config-validation",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/network-config-validation/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "network-interface-health",
+      "kind": "skill",
+      "name": "Network Interface Health",
+      "description": "ECC skill: network-interface-health",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/network-interface-health/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "nextjs-turbopack",
+      "kind": "skill",
+      "name": "Nextjs Turbopack",
+      "description": "ECC skill: nextjs-turbopack",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/nextjs-turbopack/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "nodejs-keccak256",
+      "kind": "skill",
+      "name": "Nodejs Keccak256",
+      "description": "ECC skill: nodejs-keccak256",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/nodejs-keccak256/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "nutrient-document-processing",
+      "kind": "skill",
+      "name": "Nutrient Document Processing",
+      "description": "ECC skill: nutrient-document-processing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/nutrient-document-processing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "nuxt4-patterns",
+      "kind": "skill",
+      "name": "Nuxt4 Patterns",
+      "description": "ECC skill: nuxt4-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/nuxt4-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "openclaw-persona-forge",
+      "kind": "skill",
+      "name": "Openclaw Persona Forge",
+      "description": "ECC skill: openclaw-persona-forge",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/openclaw-persona-forge/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "opensource-pipeline",
+      "kind": "skill",
+      "name": "Opensource Pipeline",
+      "description": "ECC skill: opensource-pipeline",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/opensource-pipeline/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "orch-add-feature",
+      "kind": "skill",
+      "name": "Orch Add Feature",
+      "description": "ECC skill: orch-add-feature",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/orch-add-feature/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "orch-build-mvp",
+      "kind": "skill",
+      "name": "Orch Build Mvp",
+      "description": "ECC skill: orch-build-mvp",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/orch-build-mvp/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "orch-change-feature",
+      "kind": "skill",
+      "name": "Orch Change Feature",
+      "description": "ECC skill: orch-change-feature",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/orch-change-feature/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "orch-fix-defect",
+      "kind": "skill",
+      "name": "Orch Fix Defect",
+      "description": "ECC skill: orch-fix-defect",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/orch-fix-defect/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "orch-pipeline",
+      "kind": "skill",
+      "name": "Orch Pipeline",
+      "description": "ECC skill: orch-pipeline",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/orch-pipeline/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "orch-refine-code",
+      "kind": "skill",
+      "name": "Orch Refine Code",
+      "description": "ECC skill: orch-refine-code",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/orch-refine-code/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "parallel-execution-optimizer",
+      "kind": "skill",
+      "name": "Parallel Execution Optimizer",
+      "description": "ECC skill: parallel-execution-optimizer",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/parallel-execution-optimizer/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "perl-patterns",
+      "kind": "skill",
+      "name": "Perl Patterns",
+      "description": "ECC skill: perl-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/perl-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "perl-security",
+      "kind": "skill",
+      "name": "Perl Security",
+      "description": "ECC skill: perl-security",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/perl-security/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "perl-testing",
+      "kind": "skill",
+      "name": "Perl Testing",
+      "description": "ECC skill: perl-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/perl-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "plan-canvas",
+      "kind": "skill",
+      "name": "Plan Canvas",
+      "description": "ECC skill: plan-canvas",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/plan-canvas/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "plan-orchestrate",
+      "kind": "skill",
+      "name": "Plan Orchestrate",
+      "description": "ECC skill: plan-orchestrate",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/plan-orchestrate/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "plankton-code-quality",
+      "kind": "skill",
+      "name": "Plankton Code Quality",
+      "description": "ECC skill: plankton-code-quality",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/plankton-code-quality/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "postgres-patterns",
+      "kind": "skill",
+      "name": "Postgres Patterns",
+      "description": "ECC skill: postgres-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/postgres-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "prediction-market-oracle-research",
+      "kind": "skill",
+      "name": "Prediction Market Oracle Research",
+      "description": "ECC skill: prediction-market-oracle-research",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/prediction-market-oracle-research/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "prediction-market-risk-review",
+      "kind": "skill",
+      "name": "Prediction Market Risk Review",
+      "description": "ECC skill: prediction-market-risk-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/prediction-market-risk-review/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "prisma-patterns",
+      "kind": "skill",
+      "name": "Prisma Patterns",
+      "description": "ECC skill: prisma-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/prisma-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "product-capability",
+      "kind": "skill",
+      "name": "Product Capability",
+      "description": "ECC skill: product-capability",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/product-capability/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "product-lens",
+      "kind": "skill",
+      "name": "Product Lens",
+      "description": "ECC skill: product-lens",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/product-lens/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "production-audit",
+      "kind": "skill",
+      "name": "Production Audit",
+      "description": "ECC skill: production-audit",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/production-audit/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "production-scheduling",
+      "kind": "skill",
+      "name": "Production Scheduling",
+      "description": "ECC skill: production-scheduling",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/production-scheduling/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "project-flow-ops",
+      "kind": "skill",
+      "name": "Project Flow Ops",
+      "description": "ECC skill: project-flow-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/project-flow-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "prompt-optimizer",
+      "kind": "skill",
+      "name": "Prompt Optimizer",
+      "description": "ECC skill: prompt-optimizer",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/prompt-optimizer/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "python-patterns",
+      "kind": "skill",
+      "name": "Python Patterns",
+      "description": "ECC skill: python-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/python-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "python-testing",
+      "kind": "skill",
+      "name": "Python Testing",
+      "description": "ECC skill: python-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/python-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "pytorch-patterns",
+      "kind": "skill",
+      "name": "Pytorch Patterns",
+      "description": "ECC skill: pytorch-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/pytorch-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "quality-nonconformance",
+      "kind": "skill",
+      "name": "Quality Nonconformance",
+      "description": "ECC skill: quality-nonconformance",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/quality-nonconformance/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "quarkus-patterns",
+      "kind": "skill",
+      "name": "Quarkus Patterns",
+      "description": "ECC skill: quarkus-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/quarkus-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "quarkus-security",
+      "kind": "skill",
+      "name": "Quarkus Security",
+      "description": "ECC skill: quarkus-security",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/quarkus-security/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "quarkus-tdd",
+      "kind": "skill",
+      "name": "Quarkus Tdd",
+      "description": "ECC skill: quarkus-tdd",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/quarkus-tdd/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "quarkus-verification",
+      "kind": "skill",
+      "name": "Quarkus Verification",
+      "description": "ECC skill: quarkus-verification",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/quarkus-verification/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ralphinho-rfc-pipeline",
+      "kind": "skill",
+      "name": "Ralphinho Rfc Pipeline",
+      "description": "ECC skill: ralphinho-rfc-pipeline",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ralphinho-rfc-pipeline/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "react-native-patterns",
+      "kind": "skill",
+      "name": "React Native Patterns",
+      "description": "ECC skill: react-native-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/react-native-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "react-patterns",
+      "kind": "skill",
+      "name": "React Patterns",
+      "description": "ECC skill: react-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/react-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "react-performance",
+      "kind": "skill",
+      "name": "React Performance",
+      "description": "ECC skill: react-performance",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/react-performance/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "react-testing",
+      "kind": "skill",
+      "name": "React Testing",
+      "description": "ECC skill: react-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/react-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "recsys-pipeline-architect",
+      "kind": "skill",
+      "name": "Recsys Pipeline Architect",
+      "description": "ECC skill: recsys-pipeline-architect",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/recsys-pipeline-architect/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "recursive-decision-ledger",
+      "kind": "skill",
+      "name": "Recursive Decision Ledger",
+      "description": "ECC skill: recursive-decision-ledger",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/recursive-decision-ledger/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "redis-patterns",
+      "kind": "skill",
+      "name": "Redis Patterns",
+      "description": "ECC skill: redis-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/redis-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "regex-vs-llm-structured-text",
+      "kind": "skill",
+      "name": "Regex Vs Llm Structured Text",
+      "description": "ECC skill: regex-vs-llm-structured-text",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/regex-vs-llm-structured-text/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "remotion-video-creation",
+      "kind": "skill",
+      "name": "Remotion Video Creation",
+      "description": "ECC skill: remotion-video-creation",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/remotion-video-creation/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "repo-scan",
+      "kind": "skill",
+      "name": "Repo Scan",
+      "description": "ECC skill: repo-scan",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/repo-scan/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "research-ops",
+      "kind": "skill",
+      "name": "Research Ops",
+      "description": "ECC skill: research-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/research-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "returns-reverse-logistics",
+      "kind": "skill",
+      "name": "Returns Reverse Logistics",
+      "description": "ECC skill: returns-reverse-logistics",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/returns-reverse-logistics/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "rules-distill",
+      "kind": "skill",
+      "name": "Rules Distill",
+      "description": "ECC skill: rules-distill",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/rules-distill/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "rust-patterns",
+      "kind": "skill",
+      "name": "Rust Patterns",
+      "description": "ECC skill: rust-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/rust-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "rust-testing",
+      "kind": "skill",
+      "name": "Rust Testing",
+      "description": "ECC skill: rust-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/rust-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "safety-guard",
+      "kind": "skill",
+      "name": "Safety Guard",
+      "description": "ECC skill: safety-guard",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/safety-guard/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "santa-method",
+      "kind": "skill",
+      "name": "Santa Method",
+      "description": "ECC skill: santa-method",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/santa-method/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "scientific-db-pubmed-database",
+      "kind": "skill",
+      "name": "Scientific Db Pubmed Database",
+      "description": "ECC skill: scientific-db-pubmed-database",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/scientific-db-pubmed-database/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "scientific-db-uspto-database",
+      "kind": "skill",
+      "name": "Scientific Db Uspto Database",
+      "description": "ECC skill: scientific-db-uspto-database",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/scientific-db-uspto-database/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "scientific-pkg-gget",
+      "kind": "skill",
+      "name": "Scientific Pkg Gget",
+      "description": "ECC skill: scientific-pkg-gget",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/scientific-pkg-gget/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "scientific-thinking-literature-review",
+      "kind": "skill",
+      "name": "Scientific Thinking Literature Review",
+      "description": "ECC skill: scientific-thinking-literature-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/scientific-thinking-literature-review/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "scientific-thinking-scholar-evaluation",
+      "kind": "skill",
+      "name": "Scientific Thinking Scholar Evaluation",
+      "description": "ECC skill: scientific-thinking-scholar-evaluation",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/scientific-thinking-scholar-evaluation/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "search-first",
+      "kind": "skill",
+      "name": "Search First",
+      "description": "ECC skill: search-first",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/search-first/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "security-bounty-hunter",
+      "kind": "skill",
+      "name": "Security Bounty Hunter",
+      "description": "ECC skill: security-bounty-hunter",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/security-bounty-hunter/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "security-review",
+      "kind": "skill",
+      "name": "Security Review",
+      "description": "ECC skill: security-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/security-review/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "security-scan",
+      "kind": "skill",
+      "name": "Security Scan",
+      "description": "ECC skill: security-scan",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/security-scan/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "seo",
+      "kind": "skill",
+      "name": "seo",
+      "description": "ECC skill: seo",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/seo/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "skill-comply",
+      "kind": "skill",
+      "name": "Skill Comply",
+      "description": "ECC skill: skill-comply",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/skill-comply/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "skill-scout",
+      "kind": "skill",
+      "name": "Skill Scout",
+      "description": "ECC skill: skill-scout",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/skill-scout/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "skill-stocktake",
+      "kind": "skill",
+      "name": "Skill Stocktake",
+      "description": "ECC skill: skill-stocktake",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/skill-stocktake/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "social-graph-ranker",
+      "kind": "skill",
+      "name": "Social Graph Ranker",
+      "description": "ECC skill: social-graph-ranker",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/social-graph-ranker/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "social-publisher",
+      "kind": "skill",
+      "name": "Social Publisher",
+      "description": "ECC skill: social-publisher",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/social-publisher/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "springboot-patterns",
+      "kind": "skill",
+      "name": "Springboot Patterns",
+      "description": "ECC skill: springboot-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/springboot-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "springboot-security",
+      "kind": "skill",
+      "name": "Springboot Security",
+      "description": "ECC skill: springboot-security",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/springboot-security/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "springboot-tdd",
+      "kind": "skill",
+      "name": "Springboot Tdd",
+      "description": "ECC skill: springboot-tdd",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/springboot-tdd/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "springboot-verification",
+      "kind": "skill",
+      "name": "Springboot Verification",
+      "description": "ECC skill: springboot-verification",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/springboot-verification/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "strategic-compact",
+      "kind": "skill",
+      "name": "Strategic Compact",
+      "description": "ECC skill: strategic-compact",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/strategic-compact/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "swift-actor-persistence",
+      "kind": "skill",
+      "name": "Swift Actor Persistence",
+      "description": "ECC skill: swift-actor-persistence",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/swift-actor-persistence/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "swift-concurrency-6-2",
+      "kind": "skill",
+      "name": "Swift Concurrency 6 2",
+      "description": "ECC skill: swift-concurrency-6-2",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/swift-concurrency-6-2/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "swift-protocol-di-testing",
+      "kind": "skill",
+      "name": "Swift Protocol Di Testing",
+      "description": "ECC skill: swift-protocol-di-testing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/swift-protocol-di-testing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "swiftui-patterns",
+      "kind": "skill",
+      "name": "Swiftui Patterns",
+      "description": "ECC skill: swiftui-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/swiftui-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "taste",
+      "kind": "skill",
+      "name": "taste",
+      "description": "ECC skill: taste",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/taste/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "tdd-workflow",
+      "kind": "skill",
+      "name": "Tdd Workflow",
+      "description": "ECC skill: tdd-workflow",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/tdd-workflow/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "team-agent-orchestration",
+      "kind": "skill",
+      "name": "Team Agent Orchestration",
+      "description": "ECC skill: team-agent-orchestration",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/team-agent-orchestration/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "team-builder",
+      "kind": "skill",
+      "name": "Team Builder",
+      "description": "ECC skill: team-builder",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/team-builder/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "terminal-ops",
+      "kind": "skill",
+      "name": "Terminal Ops",
+      "description": "ECC skill: terminal-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/terminal-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "tinystruct-patterns",
+      "kind": "skill",
+      "name": "Tinystruct Patterns",
+      "description": "ECC skill: tinystruct-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/tinystruct-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "token-budget-advisor",
+      "kind": "skill",
+      "name": "Token Budget Advisor",
+      "description": "ECC skill: token-budget-advisor",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/token-budget-advisor/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ui-demo",
+      "kind": "skill",
+      "name": "Ui Demo",
+      "description": "ECC skill: ui-demo",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ui-demo/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "ui-to-vue",
+      "kind": "skill",
+      "name": "Ui To Vue",
+      "description": "ECC skill: ui-to-vue",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/ui-to-vue/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "uncloud",
+      "kind": "skill",
+      "name": "uncloud",
+      "description": "ECC skill: uncloud",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/uncloud/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "unified-notifications-ops",
+      "kind": "skill",
+      "name": "Unified Notifications Ops",
+      "description": "ECC skill: unified-notifications-ops",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/unified-notifications-ops/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "verification-loop",
+      "kind": "skill",
+      "name": "Verification Loop",
+      "description": "ECC skill: verification-loop",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/verification-loop/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "video-editing",
+      "kind": "skill",
+      "name": "Video Editing",
+      "description": "ECC skill: video-editing",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/video-editing/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "videodb",
+      "kind": "skill",
+      "name": "videodb",
+      "description": "ECC skill: videodb",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/videodb/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "visa-doc-translate",
+      "kind": "skill",
+      "name": "Visa Doc Translate",
+      "description": "ECC skill: visa-doc-translate",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/visa-doc-translate/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "vite-patterns",
+      "kind": "skill",
+      "name": "Vite Patterns",
+      "description": "ECC skill: vite-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/vite-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "vue-patterns",
+      "kind": "skill",
+      "name": "Vue Patterns",
+      "description": "ECC skill: vue-patterns",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/vue-patterns/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "windows-desktop-e2e",
+      "kind": "skill",
+      "name": "Windows Desktop E2E",
+      "description": "ECC skill: windows-desktop-e2e",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/windows-desktop-e2e/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "workspace-surface-audit",
+      "kind": "skill",
+      "name": "Workspace Surface Audit",
+      "description": "ECC skill: workspace-surface-audit",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/workspace-surface-audit/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    },
+    {
+      "id": "x-api",
+      "kind": "skill",
+      "name": "X Api",
+      "description": "ECC skill: x-api",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/skills/x-api/SKILL.md",
+      "tags": [
+        "ecc",
+        "skill"
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "id": "aside",
+      "kind": "command",
+      "name": "aside",
+      "description": "ECC slash command /aside",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/aside.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "auto-update",
+      "kind": "command",
+      "name": "auto-update",
+      "description": "ECC slash command /auto-update",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/auto-update.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "build-fix",
+      "kind": "command",
+      "name": "build-fix",
+      "description": "ECC slash command /build-fix",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/build-fix.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "checkpoint",
+      "kind": "command",
+      "name": "checkpoint",
+      "description": "ECC slash command /checkpoint",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/checkpoint.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "code-review",
+      "kind": "command",
+      "name": "code-review",
+      "description": "ECC slash command /code-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/code-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "cost-report",
+      "kind": "command",
+      "name": "cost-report",
+      "description": "ECC slash command /cost-report",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/cost-report.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "cpp-build",
+      "kind": "command",
+      "name": "cpp-build",
+      "description": "ECC slash command /cpp-build",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/cpp-build.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "cpp-review",
+      "kind": "command",
+      "name": "cpp-review",
+      "description": "ECC slash command /cpp-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/cpp-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "cpp-test",
+      "kind": "command",
+      "name": "cpp-test",
+      "description": "ECC slash command /cpp-test",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/cpp-test.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "ecc-guide",
+      "kind": "command",
+      "name": "ecc-guide",
+      "description": "ECC slash command /ecc-guide",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/ecc-guide.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "epic-claim",
+      "kind": "command",
+      "name": "epic-claim",
+      "description": "ECC slash command /epic-claim",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/epic-claim.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "epic-decompose",
+      "kind": "command",
+      "name": "epic-decompose",
+      "description": "ECC slash command /epic-decompose",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/epic-decompose.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "epic-publish",
+      "kind": "command",
+      "name": "epic-publish",
+      "description": "ECC slash command /epic-publish",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/epic-publish.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "epic-review",
+      "kind": "command",
+      "name": "epic-review",
+      "description": "ECC slash command /epic-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/epic-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "epic-sync",
+      "kind": "command",
+      "name": "epic-sync",
+      "description": "ECC slash command /epic-sync",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/epic-sync.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "epic-unblock",
+      "kind": "command",
+      "name": "epic-unblock",
+      "description": "ECC slash command /epic-unblock",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/epic-unblock.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "epic-validate",
+      "kind": "command",
+      "name": "epic-validate",
+      "description": "ECC slash command /epic-validate",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/epic-validate.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "evolve",
+      "kind": "command",
+      "name": "evolve",
+      "description": "ECC slash command /evolve",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/evolve.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "fastapi-review",
+      "kind": "command",
+      "name": "fastapi-review",
+      "description": "ECC slash command /fastapi-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/fastapi-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "feature-dev",
+      "kind": "command",
+      "name": "feature-dev",
+      "description": "ECC slash command /feature-dev",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/feature-dev.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "flutter-build",
+      "kind": "command",
+      "name": "flutter-build",
+      "description": "ECC slash command /flutter-build",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/flutter-build.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "flutter-review",
+      "kind": "command",
+      "name": "flutter-review",
+      "description": "ECC slash command /flutter-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/flutter-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "flutter-test",
+      "kind": "command",
+      "name": "flutter-test",
+      "description": "ECC slash command /flutter-test",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/flutter-test.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "gan-build",
+      "kind": "command",
+      "name": "gan-build",
+      "description": "ECC slash command /gan-build",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/gan-build.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "gan-design",
+      "kind": "command",
+      "name": "gan-design",
+      "description": "ECC slash command /gan-design",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/gan-design.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "go-build",
+      "kind": "command",
+      "name": "go-build",
+      "description": "ECC slash command /go-build",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/go-build.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "go-review",
+      "kind": "command",
+      "name": "go-review",
+      "description": "ECC slash command /go-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/go-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "go-test",
+      "kind": "command",
+      "name": "go-test",
+      "description": "ECC slash command /go-test",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/go-test.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "gradle-build",
+      "kind": "command",
+      "name": "gradle-build",
+      "description": "ECC slash command /gradle-build",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/gradle-build.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "harness-audit",
+      "kind": "command",
+      "name": "harness-audit",
+      "description": "ECC slash command /harness-audit",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/harness-audit.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "hookify",
+      "kind": "command",
+      "name": "hookify",
+      "description": "ECC slash command /hookify",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/hookify.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "hookify-configure",
+      "kind": "command",
+      "name": "hookify-configure",
+      "description": "ECC slash command /hookify-configure",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/hookify-configure.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "hookify-help",
+      "kind": "command",
+      "name": "hookify-help",
+      "description": "ECC slash command /hookify-help",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/hookify-help.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "hookify-list",
+      "kind": "command",
+      "name": "hookify-list",
+      "description": "ECC slash command /hookify-list",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/hookify-list.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "instinct-export",
+      "kind": "command",
+      "name": "instinct-export",
+      "description": "ECC slash command /instinct-export",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/instinct-export.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "instinct-import",
+      "kind": "command",
+      "name": "instinct-import",
+      "description": "ECC slash command /instinct-import",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/instinct-import.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "instinct-status",
+      "kind": "command",
+      "name": "instinct-status",
+      "description": "ECC slash command /instinct-status",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/instinct-status.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "jira",
+      "kind": "command",
+      "name": "jira",
+      "description": "ECC slash command /jira",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/jira.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "kotlin-build",
+      "kind": "command",
+      "name": "kotlin-build",
+      "description": "ECC slash command /kotlin-build",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/kotlin-build.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "kotlin-review",
+      "kind": "command",
+      "name": "kotlin-review",
+      "description": "ECC slash command /kotlin-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/kotlin-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "kotlin-test",
+      "kind": "command",
+      "name": "kotlin-test",
+      "description": "ECC slash command /kotlin-test",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/kotlin-test.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "learn",
+      "kind": "command",
+      "name": "learn",
+      "description": "ECC slash command /learn",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/learn.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "learn-eval",
+      "kind": "command",
+      "name": "learn-eval",
+      "description": "ECC slash command /learn-eval",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/learn-eval.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "loop-start",
+      "kind": "command",
+      "name": "loop-start",
+      "description": "ECC slash command /loop-start",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/loop-start.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "loop-status",
+      "kind": "command",
+      "name": "loop-status",
+      "description": "ECC slash command /loop-status",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/loop-status.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "marketing-campaign",
+      "kind": "command",
+      "name": "marketing-campaign",
+      "description": "ECC slash command /marketing-campaign",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/marketing-campaign.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "model-route",
+      "kind": "command",
+      "name": "model-route",
+      "description": "ECC slash command /model-route",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/model-route.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "multi-backend",
+      "kind": "command",
+      "name": "multi-backend",
+      "description": "ECC slash command /multi-backend",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/multi-backend.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "multi-execute",
+      "kind": "command",
+      "name": "multi-execute",
+      "description": "ECC slash command /multi-execute",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/multi-execute.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "multi-frontend",
+      "kind": "command",
+      "name": "multi-frontend",
+      "description": "ECC slash command /multi-frontend",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/multi-frontend.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "multi-plan",
+      "kind": "command",
+      "name": "multi-plan",
+      "description": "ECC slash command /multi-plan",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/multi-plan.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "multi-workflow",
+      "kind": "command",
+      "name": "multi-workflow",
+      "description": "ECC slash command /multi-workflow",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/multi-workflow.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "orch-add-feature",
+      "kind": "command",
+      "name": "orch-add-feature",
+      "description": "ECC slash command /orch-add-feature",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/orch-add-feature.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "orch-build-mvp",
+      "kind": "command",
+      "name": "orch-build-mvp",
+      "description": "ECC slash command /orch-build-mvp",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/orch-build-mvp.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "orch-change-feature",
+      "kind": "command",
+      "name": "orch-change-feature",
+      "description": "ECC slash command /orch-change-feature",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/orch-change-feature.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "orch-fix-defect",
+      "kind": "command",
+      "name": "orch-fix-defect",
+      "description": "ECC slash command /orch-fix-defect",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/orch-fix-defect.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "orch-refine-code",
+      "kind": "command",
+      "name": "orch-refine-code",
+      "description": "ECC slash command /orch-refine-code",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/orch-refine-code.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "orch-review",
+      "kind": "command",
+      "name": "orch-review",
+      "description": "ECC slash command /orch-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/orch-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "plan",
+      "kind": "command",
+      "name": "plan",
+      "description": "ECC slash command /plan",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/plan.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "plan-canvas",
+      "kind": "command",
+      "name": "plan-canvas",
+      "description": "ECC slash command /plan-canvas",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/plan-canvas.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "plan-prd",
+      "kind": "command",
+      "name": "plan-prd",
+      "description": "ECC slash command /plan-prd",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/plan-prd.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "pm2",
+      "kind": "command",
+      "name": "pm2",
+      "description": "ECC slash command /pm2",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/pm2.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "pr",
+      "kind": "command",
+      "name": "pr",
+      "description": "ECC slash command /pr",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/pr.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "project-init",
+      "kind": "command",
+      "name": "project-init",
+      "description": "ECC slash command /project-init",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/project-init.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "projects",
+      "kind": "command",
+      "name": "projects",
+      "description": "ECC slash command /projects",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/projects.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "promote",
+      "kind": "command",
+      "name": "promote",
+      "description": "ECC slash command /promote",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/promote.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "prp-commit",
+      "kind": "command",
+      "name": "prp-commit",
+      "description": "ECC slash command /prp-commit",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/prp-commit.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "prp-implement",
+      "kind": "command",
+      "name": "prp-implement",
+      "description": "ECC slash command /prp-implement",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/prp-implement.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "prp-plan",
+      "kind": "command",
+      "name": "prp-plan",
+      "description": "ECC slash command /prp-plan",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/prp-plan.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "prp-pr",
+      "kind": "command",
+      "name": "prp-pr",
+      "description": "ECC slash command /prp-pr",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/prp-pr.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "prp-prd",
+      "kind": "command",
+      "name": "prp-prd",
+      "description": "ECC slash command /prp-prd",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/prp-prd.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "prune",
+      "kind": "command",
+      "name": "prune",
+      "description": "ECC slash command /prune",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/prune.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "python-review",
+      "kind": "command",
+      "name": "python-review",
+      "description": "ECC slash command /python-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/python-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "quality-gate",
+      "kind": "command",
+      "name": "quality-gate",
+      "description": "ECC slash command /quality-gate",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/quality-gate.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "react-build",
+      "kind": "command",
+      "name": "react-build",
+      "description": "ECC slash command /react-build",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/react-build.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "react-review",
+      "kind": "command",
+      "name": "react-review",
+      "description": "ECC slash command /react-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/react-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "react-test",
+      "kind": "command",
+      "name": "react-test",
+      "description": "ECC slash command /react-test",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/react-test.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "refactor-clean",
+      "kind": "command",
+      "name": "refactor-clean",
+      "description": "ECC slash command /refactor-clean",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/refactor-clean.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "resume-session",
+      "kind": "command",
+      "name": "resume-session",
+      "description": "ECC slash command /resume-session",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/resume-session.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "review-pr",
+      "kind": "command",
+      "name": "review-pr",
+      "description": "ECC slash command /review-pr",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/review-pr.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "rust-build",
+      "kind": "command",
+      "name": "rust-build",
+      "description": "ECC slash command /rust-build",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/rust-build.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "rust-review",
+      "kind": "command",
+      "name": "rust-review",
+      "description": "ECC slash command /rust-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/rust-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "rust-test",
+      "kind": "command",
+      "name": "rust-test",
+      "description": "ECC slash command /rust-test",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/rust-test.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "santa-loop",
+      "kind": "command",
+      "name": "santa-loop",
+      "description": "ECC slash command /santa-loop",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/santa-loop.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "save-session",
+      "kind": "command",
+      "name": "save-session",
+      "description": "ECC slash command /save-session",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/save-session.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "security-scan",
+      "kind": "command",
+      "name": "security-scan",
+      "description": "ECC slash command /security-scan",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/security-scan.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "sessions",
+      "kind": "command",
+      "name": "sessions",
+      "description": "ECC slash command /sessions",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/sessions.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "setup-pm",
+      "kind": "command",
+      "name": "setup-pm",
+      "description": "ECC slash command /setup-pm",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/setup-pm.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "skill-create",
+      "kind": "command",
+      "name": "skill-create",
+      "description": "ECC slash command /skill-create",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/skill-create.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "skill-health",
+      "kind": "command",
+      "name": "skill-health",
+      "description": "ECC slash command /skill-health",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/skill-health.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "test-coverage",
+      "kind": "command",
+      "name": "test-coverage",
+      "description": "ECC slash command /test-coverage",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/test-coverage.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "update-codemaps",
+      "kind": "command",
+      "name": "update-codemaps",
+      "description": "ECC slash command /update-codemaps",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/update-codemaps.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "update-docs",
+      "kind": "command",
+      "name": "update-docs",
+      "description": "ECC slash command /update-docs",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/update-docs.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    },
+    {
+      "id": "vue-review",
+      "kind": "command",
+      "name": "vue-review",
+      "description": "ECC slash command /vue-review",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "contentUrl": "https://raw.githubusercontent.com/affaan-m/ECC/main/commands/vue-review.md",
+      "tags": [
+        "ecc",
+        "command"
+      ]
+    }
+  ],
+  "plugins": [
+    {
+      "id": "graphify",
+      "kind": "plugin",
+      "name": "Graphify",
+      "description": "Knowledge graph for codebases — query, path, and explain via an OpenCode skill and optional MCP server (graphify --mcp).",
+      "origin": "curated",
+      "source": "https://github.com/Graphify-Labs/graphify",
+      "tags": [
+        "plugin",
+        "knowledge-graph",
+        "rag"
+      ],
+      "install": {
+        "skills": [
+          {
+            "id": "graphify",
+            "contentFile": "graphify/SKILL.md"
+          }
+        ],
+        "mcp": {
+          "graphify": {
+            "type": "local",
+            "command": [
+              "graphify",
+              "--mcp"
+            ],
+            "enabled": true
+          }
+        }
+      }
+    },
+    {
+      "id": "oh-my-opencode",
+      "kind": "plugin",
+      "name": "Oh My OpenCode",
+      "description": "OpenCode plugin pack with agents, hooks, skills, and embedded MCPs. Installed via opencode.json plugin array (npm auto-install at startup).",
+      "origin": "curated",
+      "source": "https://github.com/code-yeongyu/oh-my-opencode",
+      "tags": [
+        "plugin",
+        "opencode",
+        "agents"
+      ],
+      "install": {
+        "plugin": [
+          "oh-my-opencode"
+        ]
+      }
+    },
+    {
+      "id": "headroom",
+      "kind": "plugin",
+      "name": "Headroom",
+      "description": "Local-first context compression for agents — expose compress/retrieve/stats tools via MCP (requires headroom-ai in the sandbox).",
+      "origin": "curated",
+      "source": "https://github.com/headroomlabs-ai/headroom",
+      "tags": [
+        "plugin",
+        "mcp",
+        "context"
+      ],
+      "install": {
+        "mcp": {
+          "headroom": {
+            "type": "local",
+            "command": [
+              "headroom",
+              "mcp"
+            ],
+            "enabled": true
+          }
+        }
+      }
+    }
+  ],
+  "tools": [
+    {
+      "id": "httpbin-get",
+      "kind": "tool",
+      "name": "HTTPBin GET",
+      "description": "Sample GET tool against httpbin.org for testing HTTP tool wiring.",
+      "origin": "curated",
+      "source": "everflow",
+      "tags": [
+        "http-tool",
+        "sample"
+      ],
+      "httpTool": {
+        "name": "httpbin-get",
+        "method": "GET",
+        "url_template": "https://httpbin.org/get",
+        "enabled": true
+      }
+    },
+    {
+      "id": "httpbin-post",
+      "kind": "tool",
+      "name": "HTTPBin POST",
+      "description": "Sample POST tool against httpbin.org for testing HTTP tool wiring.",
+      "origin": "curated",
+      "source": "everflow",
+      "tags": [
+        "http-tool",
+        "sample"
+      ],
+      "httpTool": {
+        "name": "httpbin-post",
+        "method": "POST",
+        "url_template": "https://httpbin.org/post",
+        "enabled": true
+      }
+    },
+    {
+      "id": "jsonplaceholder-todos",
+      "kind": "tool",
+      "name": "JSONPlaceholder Todos",
+      "description": "Fetch sample todos from jsonplaceholder.typicode.com.",
+      "origin": "curated",
+      "source": "everflow",
+      "tags": [
+        "http-tool",
+        "sample"
+      ],
+      "httpTool": {
+        "name": "jsonplaceholder-todos",
+        "method": "GET",
+        "url_template": "https://jsonplaceholder.typicode.com/todos",
+        "enabled": true
+      }
+    }
+  ],
+  "mcps": [
+    {
+      "id": "browser-use",
+      "kind": "mcp",
+      "name": "browser-use",
+      "description": "ECC MCP server: browser-use",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "remote",
+        "url": "https://api.browser-use.com/mcp",
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "browserbase",
+      "kind": "mcp",
+      "name": "browserbase",
+      "description": "ECC MCP server: browserbase",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@browserbasehq/mcp-server-browserbase"
+        ],
+        "enabled": true,
+        "environment": {
+          "BROWSERBASE_API_KEY": "YOUR_BROWSERBASE_KEY_HERE"
+        }
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "clickhouse",
+      "kind": "mcp",
+      "name": "clickhouse",
+      "description": "ECC MCP server: clickhouse",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "remote",
+        "url": "https://mcp.clickhouse.cloud/mcp",
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "cloudflare-docs",
+      "kind": "mcp",
+      "name": "cloudflare-docs",
+      "description": "ECC MCP server: cloudflare-docs",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "remote",
+        "url": "https://docs.mcp.cloudflare.com/mcp",
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "cloudflare-observability",
+      "kind": "mcp",
+      "name": "cloudflare-observability",
+      "description": "ECC MCP server: cloudflare-observability",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "remote",
+        "url": "https://observability.mcp.cloudflare.com/mcp",
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "cloudflare-workers-bindings",
+      "kind": "mcp",
+      "name": "cloudflare-workers-bindings",
+      "description": "ECC MCP server: cloudflare-workers-bindings",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "remote",
+        "url": "https://bindings.mcp.cloudflare.com/mcp",
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "cloudflare-workers-builds",
+      "kind": "mcp",
+      "name": "cloudflare-workers-builds",
+      "description": "ECC MCP server: cloudflare-workers-builds",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "remote",
+        "url": "https://builds.mcp.cloudflare.com/mcp",
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "codescene",
+      "kind": "mcp",
+      "name": "codescene",
+      "description": "ECC MCP server: codescene",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@codescene/codehealth-mcp"
+        ],
+        "enabled": true,
+        "environment": {
+          "CS_ACCESS_TOKEN": "YOUR_CS_ACCESS_TOKEN_HERE"
+        }
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "confluence",
+      "kind": "mcp",
+      "name": "confluence",
+      "description": "ECC MCP server: confluence",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "confluence-mcp-server"
+        ],
+        "enabled": true,
+        "environment": {
+          "CONFLUENCE_BASE_URL": "YOUR_CONFLUENCE_URL_HERE",
+          "CONFLUENCE_EMAIL": "YOUR_EMAIL_HERE",
+          "CONFLUENCE_API_TOKEN": "YOUR_CONFLUENCE_TOKEN_HERE"
+        }
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "context7",
+      "kind": "mcp",
+      "name": "context7",
+      "description": "ECC MCP server: context7",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@upstash/context7-mcp@latest"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "devfleet",
+      "kind": "mcp",
+      "name": "devfleet",
+      "description": "ECC MCP server: devfleet",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "remote",
+        "url": "http://localhost:18801/mcp",
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "evalview",
+      "kind": "mcp",
+      "name": "evalview",
+      "description": "ECC MCP server: evalview",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "python3",
+          "-m",
+          "evalview",
+          "mcp",
+          "serve"
+        ],
+        "enabled": true,
+        "environment": {
+          "OPENAI_API_KEY": "YOUR_OPENAI_API_KEY_HERE"
+        }
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "exa-web-search",
+      "kind": "mcp",
+      "name": "exa-web-search",
+      "description": "ECC MCP server: exa-web-search",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "exa-mcp-server"
+        ],
+        "enabled": true,
+        "environment": {
+          "EXA_API_KEY": "YOUR_EXA_API_KEY_HERE"
+        }
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "fal-ai",
+      "kind": "mcp",
+      "name": "fal-ai",
+      "description": "ECC MCP server: fal-ai",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "fal-ai-mcp-server"
+        ],
+        "enabled": true,
+        "environment": {
+          "FAL_KEY": "YOUR_FAL_KEY_HERE"
+        }
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "filesystem",
+      "kind": "mcp",
+      "name": "filesystem",
+      "description": "ECC MCP server: filesystem",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "/path/to/your/projects"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "firecrawl",
+      "kind": "mcp",
+      "name": "firecrawl",
+      "description": "ECC MCP server: firecrawl",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "firecrawl-mcp"
+        ],
+        "enabled": true,
+        "environment": {
+          "FIRECRAWL_API_KEY": "YOUR_FIRECRAWL_KEY_HERE"
+        }
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "github",
+      "kind": "mcp",
+      "name": "github",
+      "description": "ECC MCP server: github",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@modelcontextprotocol/server-github"
+        ],
+        "enabled": true,
+        "environment": {
+          "GITHUB_PERSONAL_ACCESS_TOKEN": "YOUR_GITHUB_PAT_HERE"
+        }
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "ito-compute",
+      "kind": "mcp",
+      "name": "ito-compute",
+      "description": "ECC MCP server: ito-compute",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "node",
+          "/absolute/path/to/ito-cloud-runtime/cli/ito-compute-cli/dist/bin/ito-mcp.js"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "jira",
+      "kind": "mcp",
+      "name": "jira",
+      "description": "ECC MCP server: jira",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "uvx",
+          "mcp-atlassian==0.21.0"
+        ],
+        "enabled": true,
+        "environment": {
+          "JIRA_URL": "YOUR_JIRA_URL_HERE",
+          "JIRA_EMAIL": "YOUR_JIRA_EMAIL_HERE",
+          "JIRA_API_TOKEN": "YOUR_JIRA_API_TOKEN_HERE"
+        }
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "laraplugins",
+      "kind": "mcp",
+      "name": "laraplugins",
+      "description": "ECC MCP server: laraplugins",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "remote",
+        "url": "https://laraplugins.io/mcp/plugins",
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "longhand",
+      "kind": "mcp",
+      "name": "longhand",
+      "description": "ECC MCP server: longhand",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "longhand",
+          "mcp-server"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "magic",
+      "kind": "mcp",
+      "name": "magic",
+      "description": "ECC MCP server: magic",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@magicuidesign/mcp@latest"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "memory",
+      "kind": "mcp",
+      "name": "memory",
+      "description": "ECC MCP server: memory",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@modelcontextprotocol/server-memory"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "memxus",
+      "kind": "mcp",
+      "name": "memxus",
+      "description": "ECC MCP server: memxus",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "remote",
+        "url": "https://mcp.memxus.com/mcp",
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "nexus",
+      "kind": "mcp",
+      "name": "nexus",
+      "description": "ECC MCP server: nexus",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "nexus",
+          "mcp"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "omega-memory",
+      "kind": "mcp",
+      "name": "omega-memory",
+      "description": "ECC MCP server: omega-memory",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "uvx",
+          "omega-memory",
+          "serve"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "parallel-search",
+      "kind": "mcp",
+      "name": "parallel-search",
+      "description": "ECC MCP server: parallel-search",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "remote",
+        "url": "https://search.parallel.ai/mcp",
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "playwright",
+      "kind": "mcp",
+      "name": "playwright",
+      "description": "ECC MCP server: playwright",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@playwright/mcp",
+          "--browser",
+          "chrome"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "railway",
+      "kind": "mcp",
+      "name": "railway",
+      "description": "ECC MCP server: railway",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@railway/mcp-server"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "sequential-thinking",
+      "kind": "mcp",
+      "name": "sequential-thinking",
+      "description": "ECC MCP server: sequential-thinking",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@modelcontextprotocol/server-sequential-thinking"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "squish",
+      "kind": "mcp",
+      "name": "squish",
+      "description": "ECC MCP server: squish",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "squish-memory"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "supabase",
+      "kind": "mcp",
+      "name": "supabase",
+      "description": "ECC MCP server: supabase",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@supabase/mcp-server-supabase@latest",
+          "--project-ref=YOUR_PROJECT_REF"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "token-optimizer",
+      "kind": "mcp",
+      "name": "token-optimizer",
+      "description": "ECC MCP server: token-optimizer",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "token-optimizer-mcp"
+        ],
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    },
+    {
+      "id": "vercel",
+      "kind": "mcp",
+      "name": "vercel",
+      "description": "ECC MCP server: vercel",
+      "origin": "ecc",
+      "source": "https://github.com/affaan-m/ECC",
+      "mcpConfig": {
+        "type": "remote",
+        "url": "https://mcp.vercel.com",
+        "enabled": true
+      },
+      "tags": [
+        "ecc",
+        "mcp"
+      ]
+    }
+  ]
+}

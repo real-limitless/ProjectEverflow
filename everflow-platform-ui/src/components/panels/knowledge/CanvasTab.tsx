@@ -14,6 +14,21 @@ import EllipsisVIcon from '@patternfly/react-icons/dist/esm/icons/ellipsis-v-ico
 import PencilAltIcon from '@patternfly/react-icons/dist/esm/icons/pencil-alt-icon'
 import { CreateResourceModal } from '@/components/studio/CreateResourceModal'
 import { EmptySplash } from '@/components/studio/EmptySplash'
+import { getProject } from '@/data/projects'
+import {
+  createKnowledgeCollection,
+  indexKnowledgeRepo,
+  isDemoMode,
+  listKnowledgeCanvasVersions,
+  listKnowledgeCollections,
+  refreshKnowledgeCanvasSource,
+  reindexKnowledgeCanvas,
+  upsertCollectionGrant,
+  type ApiKnowledgeCollection,
+  type ApiKnowledgeVersion,
+  listProjectAgents,
+} from '@/lib/api'
+import { mapApiCanvas } from '@/lib/studioMap'
 import { pushToast } from '@/lib/studioToast'
 import { useStudioDemoStore } from '@/store/studioDemoStore'
 import type { KnowledgeCanvas } from '@/types/studio'
@@ -37,13 +52,18 @@ function isLikelyPdf(files: FileList): boolean {
 interface CanvasTabProps {
   projectId: string
   canvases: KnowledgeCanvas[]
+  onRefresh?: () => void
 }
 
-export function CanvasTab({ projectId, canvases }: CanvasTabProps) {
+export function CanvasTab({ projectId, canvases, onRefresh }: CanvasTabProps) {
+  const project = getProject(projectId === 'default' ? null : projectId)
+  const useApi = Boolean(project?.fromApi) && !isDemoMode()
+
   const createCanvas = useStudioDemoStore((s) => s.createCanvas)
   const updateCanvas = useStudioDemoStore((s) => s.updateCanvas)
   const deleteCanvas = useStudioDemoStore((s) => s.deleteCanvas)
   const uploadToCanvas = useStudioDemoStore((s) => s.uploadToCanvas)
+  const replaceCanvases = useStudioDemoStore((s) => s.update)
 
   const [activeId, setActiveId] = useState(canvases[0]?.id ?? '')
   const [createOpen, setCreateOpen] = useState(false)
@@ -57,6 +77,10 @@ export function CanvasTab({ projectId, canvases }: CanvasTabProps) {
   const [renaming, setRenaming] = useState(false)
   const [renameDraft, setRenameDraft] = useState('')
   const [overflowOpen, setOverflowOpen] = useState(false)
+  const [diffOpen, setDiffOpen] = useState(false)
+  const [versions, setVersions] = useState<ApiKnowledgeVersion[]>([])
+  const [indexingRepo, setIndexingRepo] = useState(false)
+  const [collections, setCollections] = useState<ApiKnowledgeCollection[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
   const savedTimer = useRef<number | null>(null)
   const draftRef = useRef({ name: '', md: '', baselineName: '', baselineMd: '' })
@@ -268,9 +292,29 @@ export function CanvasTab({ projectId, canvases }: CanvasTabProps) {
     })
   }
 
-  const reindex = () => {
+  const reindex = async () => {
     if (!canvas || isPipelineBusy(canvas.status)) return
     if (dirty) saveCanvas(canvas, { silent: true })
+    if (useApi) {
+      try {
+        updateCanvas(projectId, canvas.id, { status: 'chunking', chunks: 0 })
+        const indexed = await reindexKnowledgeCanvas(projectId, canvas.id)
+        replaceCanvases(projectId, (s) => ({
+          ...s,
+          canvases: s.canvases.map((c) =>
+            c.id === canvas.id ? mapApiCanvas(indexed) : c,
+          ),
+        }))
+        pushToast('Added to chatbot knowledge', {
+          description: `${indexed.chunks ?? 0} chunks indexed`,
+          kind: 'success',
+        })
+      } catch (e) {
+        updateCanvas(projectId, canvas.id, { status: 'error' })
+        pushToast(e instanceof Error ? e.message : 'Re-index failed', { kind: 'danger' })
+      }
+      return
+    }
     updateCanvas(projectId, canvas.id, { status: 'chunking', chunks: 0 })
     window.setTimeout(() => {
       updateCanvas(projectId, canvas.id, { status: 'embedding' })
@@ -283,6 +327,72 @@ export function CanvasTab({ projectId, canvases }: CanvasTabProps) {
       pushToast('Added to chatbot knowledge', { kind: 'success' })
     }, 1400)
   }
+
+  const refreshSource = async () => {
+    if (!canvas?.sourceUrl || !useApi) return
+    try {
+      const result = await refreshKnowledgeCanvasSource(projectId, canvas.id)
+      replaceCanvases(projectId, (s) => ({
+        ...s,
+        canvases: s.canvases.map((c) =>
+          c.id === canvas.id ? mapApiCanvas(result.canvas) : c,
+        ),
+      }))
+      loadCanvas(mapApiCanvas(result.canvas))
+      pushToast(
+        result.changed ? 'Source changed — re-indexed' : 'Source up to date',
+        { kind: result.changed ? 'warning' : 'success' },
+      )
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Refresh failed', { kind: 'danger' })
+    }
+  }
+
+  const showDiff = async () => {
+    if (!canvas || !useApi) {
+      setDiffOpen(true)
+      setVersions([])
+      return
+    }
+    try {
+      const v = await listKnowledgeCanvasVersions(projectId, canvas.id)
+      setVersions(v)
+      setDiffOpen(true)
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Failed to load versions', {
+        kind: 'danger',
+      })
+    }
+  }
+
+  const indexRepo = async () => {
+    if (!useApi) {
+      pushToast('Repo indexing requires an API project with a running sandbox', {
+        kind: 'warning',
+      })
+      return
+    }
+    setIndexingRepo(true)
+    try {
+      const result = await indexKnowledgeRepo(projectId)
+      pushToast('Repo indexed', {
+        description: `${result.created} created · ${result.updated} updated · ${result.skipped} skipped`,
+        kind: 'success',
+      })
+      onRefresh?.()
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Repo index failed', { kind: 'danger' })
+    } finally {
+      setIndexingRepo(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!useApi) return
+    void listKnowledgeCollections(projectId)
+      .then(setCollections)
+      .catch(() => setCollections([]))
+  }, [projectId, useApi, canvases.length])
 
   const fileInput = (
     <input
@@ -369,7 +479,63 @@ export function CanvasTab({ projectId, canvases }: CanvasTabProps) {
           <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()}>
             Upload
           </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            isLoading={indexingRepo}
+            onClick={() => void indexRepo()}
+            title="Index README, docs, ADR, OpenAPI, runbooks from the sandbox"
+          >
+            Index repo
+          </Button>
         </div>
+        {useApi ? (
+          <div style={{ padding: '0 8px 8px', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {collections.map((c) => (
+              <Label key={c.id} color="blue">
+                {c.name}
+                <span className="lc-meta"> · {c.visibility}</span>
+              </Label>
+            ))}
+            <Button
+              size="sm"
+              variant="link"
+              isInline
+              onClick={() => {
+                void (async () => {
+                  try {
+                    const col = await createKnowledgeCollection(projectId, {
+                      name: 'Team docs',
+                      visibility: 'team',
+                    })
+                    setCollections((prev) =>
+                      prev.some((x) => x.id === col.id) ? prev : [...prev, col],
+                    )
+                    const agents = await listProjectAgents(projectId)
+                    if (agents[0]) {
+                      await upsertCollectionGrant(projectId, col.id, {
+                        agent_id: agents[0].id,
+                        can_retrieve: true,
+                      })
+                    }
+                    pushToast('Collection ready', {
+                      description: agents[0]
+                        ? `Granted retrieve to ${agents[0].name}`
+                        : 'Create an agent to grant access',
+                      kind: 'success',
+                    })
+                  } catch (e) {
+                    pushToast(e instanceof Error ? e.message : 'Collection failed', {
+                      kind: 'danger',
+                    })
+                  }
+                })()
+              }}
+            >
+              + Collection
+            </Button>
+          </div>
+        ) : null}
         <div className="canvas-sidebar-list" role="listbox" aria-label="Canvases">
           {canvases.map((c) => {
             const active = c.id === canvas?.id
@@ -531,7 +697,7 @@ export function CanvasTab({ projectId, canvases }: CanvasTabProps) {
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={reindex}
+                    onClick={() => void reindex()}
                     isDisabled={isPipelineBusy(canvas.status)}
                   >
                     {actionLabel}
@@ -555,6 +721,28 @@ export function CanvasTab({ projectId, canvases }: CanvasTabProps) {
                   >
                     <DropdownList>
                       <DropdownItem
+                        key="diff"
+                        onClick={() => void showDiff()}
+                      >
+                        Version history / diff
+                      </DropdownItem>
+                      {canvas.sourceUrl ? (
+                        <DropdownItem
+                          key="refresh"
+                          onClick={() => void refreshSource()}
+                        >
+                          Refresh from source
+                        </DropdownItem>
+                      ) : null}
+                      <DropdownItem
+                        key="stale"
+                        onClick={() =>
+                          updateCanvas(projectId, canvas.id, { status: 'stale' })
+                        }
+                      >
+                        Mark stale
+                      </DropdownItem>
+                      <DropdownItem
                         key="delete"
                         isDanger
                         onClick={() => {
@@ -568,6 +756,74 @@ export function CanvasTab({ projectId, canvases }: CanvasTabProps) {
                   </Dropdown>
                 </div>
               </div>
+              {canvas.sourceUrl ? (
+                <p className="lc-meta" style={{ margin: '0 0 8px' }}>
+                  Source:{' '}
+                  <a href={canvas.sourceUrl} target="_blank" rel="noreferrer">
+                    {canvas.sourceUrl}
+                  </a>
+                  {canvas.lastFetchedAt
+                    ? ` · fetched ${new Date(canvas.lastFetchedAt).toLocaleString()}`
+                    : ''}
+                </p>
+              ) : null}
+              {canvas.repoPath ? (
+                <p className="lc-meta" style={{ margin: '0 0 8px' }}>
+                  Repo path: <code>{canvas.repoPath}</code>
+                </p>
+              ) : null}
+              {diffOpen ? (
+                <div className="list-card" style={{ marginBottom: 12 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      marginBottom: 8,
+                    }}
+                  >
+                    <div className="lc-title">Version history</div>
+                    <Button size="sm" variant="link" isInline onClick={() => setDiffOpen(false)}>
+                      Close
+                    </Button>
+                  </div>
+                  {!versions.length ? (
+                    <p className="lc-meta">
+                      Current draft vs last saved baseline
+                      {bodyDirty ? ' (unsaved changes)' : ' (in sync)'}.
+                    </p>
+                  ) : (
+                    versions.slice(0, 5).map((v) => (
+                      <div key={v.id} style={{ marginBottom: 8 }}>
+                        <div className="lc-meta">
+                          {v.label || 'snapshot'} · {new Date(v.created_at).toLocaleString()}
+                        </div>
+                        <pre
+                          style={{
+                            maxHeight: 120,
+                            overflow: 'auto',
+                            fontSize: 12,
+                            whiteSpace: 'pre-wrap',
+                          }}
+                        >
+                          {v.content_md.slice(0, 800)}
+                          {v.content_md.length > 800 ? '…' : ''}
+                        </pre>
+                        <Button
+                          size="sm"
+                          variant="link"
+                          isInline
+                          onClick={() => {
+                            setDraftMd(v.content_md)
+                            setDiffOpen(false)
+                          }}
+                        >
+                          Load into editor
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : null}
               {showPipeline && (
                 <EmbedPipeline
                   status={canvas.status}

@@ -212,6 +212,7 @@ export function emptyConversation(title = 'New chat'): ChatConversation {
     messages: [],
     metrics: defaultMetrics(0),
     chatMode: DEFAULT_CHAT_MODE,
+    useWorktree: false,
   }
 }
 

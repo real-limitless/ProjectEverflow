@@ -6,6 +6,7 @@ import {
   mapOcMessage,
   mapPartToBlocks,
   mapQuestionRequest,
+  mergeServerMessages,
   messageHasPendingQuestion,
 } from './mapParts'
 import {
@@ -248,5 +249,68 @@ m = applyOcPartToMessage(m, {
 })
 assert(m.blocks?.[0]?.tool?.status === 'done', 'tool status upsert')
 assert(m.blocks?.[0]?.tool?.body?.includes('Hello'), 'tool output upsert')
+
+// --- Optimistic local-u-* user must drop when server user arrives ---
+const localUser: ChatMessage = {
+  id: 'local-u-1',
+  role: 'user',
+  text: 'What tools and skills can you use?',
+  blocks: [{ type: 'text', text: 'What tools and skills can you use?' }],
+}
+const serverUser: ChatMessage = {
+  id: 'user-server-1',
+  role: 'user',
+  text: 'What tools and skills can you use?',
+  blocks: [{ type: 'text', text: 'What tools and skills can you use?' }],
+}
+const dedupedUsers = upsertMessage([localUser], serverUser)
+assert(dedupedUsers.length === 1, 'optimistic local user dropped on server upsert')
+assert(dedupedUsers[0].id === 'user-server-1', 'keeps server user id')
+
+// Hydrate path: server user with text only in blocks still drops local-*
+const serverUserBlocksOnly: ChatMessage = {
+  id: 'user-server-2',
+  role: 'user',
+  blocks: [{ type: 'text', text: 'Hello from blocks' }],
+}
+const localUserBlocks: ChatMessage = {
+  id: 'local-u-2',
+  role: 'user',
+  text: 'Hello from blocks',
+  blocks: [{ type: 'text', text: 'Hello from blocks' }],
+}
+const hydrated = mergeServerMessages([serverUserBlocksOnly], [localUserBlocks])
+assert(hydrated.length === 1, 'mergeServerMessages drops local user by block text')
+assert(hydrated[0].id === 'user-server-2', 'hydrate keeps server user')
+
+// --- Thinking + completed info-only must not inject No response content ---
+const withThinking: ChatMessage = {
+  id: 'a5',
+  role: 'assistant',
+  generationStatus: 'incomplete',
+  thinking: 'The user is asking about tools and skills.',
+}
+const completedInfoOnly = mapOcMessage({
+  info: {
+    id: 'a5',
+    role: 'assistant',
+    time: { created: 1, completed: 2 },
+    finish: 'stop',
+  },
+  parts: [],
+})
+assert(
+  completedInfoOnly.blocks?.some((b) => b.text?.includes('No response content')),
+  'standalone empty complete still maps placeholder',
+)
+const mergedThinking = upsertMessage([withThinking], completedInfoOnly)
+assert(
+  (mergedThinking[0].thinking || '').includes('asking about tools'),
+  'upsert keeps streamed thinking',
+)
+assert(
+  !mergedThinking[0].blocks?.some((b) => b.text?.includes('No response content')),
+  'upsert does not swap in No response content over thinking',
+)
 
 console.log('mapParts/mapEvents selftest: ok')

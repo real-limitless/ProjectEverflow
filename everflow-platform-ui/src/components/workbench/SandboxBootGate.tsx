@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, Spinner } from '@patternfly/react-core'
-import CubesIcon from '@patternfly/react-icons/dist/esm/icons/cubes-icon'
+import {
+  Button,
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalHeader,
+  ModalVariant,
+  Spinner,
+} from '@patternfly/react-core'
 import { getProject, updateProjectInCatalog } from '@/data/projects'
 import { getProject as apiGetProject } from '@/lib/api'
 import { ensureSandboxRunning } from '@/lib/ensureSandbox'
-import { isSandboxBooting } from '@/lib/sandboxReady'
+import { isSandboxBooting, shouldRecreateSandbox } from '@/lib/sandboxReady'
 import { pushToast } from '@/lib/studioToast'
 import { ensureReposCloned, isCloneableUrl, mergeApiProjectRepos } from '@/lib/workspaceRepos'
 import { usePlaygroundStore } from '@/store/playgroundStore'
@@ -14,6 +21,7 @@ type Phase = 'booting' | 'failed'
 export function SandboxBootGate({ projectId }: { projectId: string }) {
   const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
   const patchProjectSandbox = usePlaygroundStore((s) => s.patchProjectSandbox)
+  const setSandboxReady = usePlaygroundStore((s) => s.setSandboxReady)
   const closeProjectTab = usePlaygroundStore((s) => s.closeProjectTab)
   const p = getProject(projectId)
   void catalogVersion
@@ -53,6 +61,7 @@ export function SandboxBootGate({ projectId }: { projectId: string }) {
       setPhase('booting')
       setMessage(null)
       toastedOkRef.current = false
+      setSandboxReady(projectId, false)
 
       try {
         const result = await ensureSandboxRunning(projectId, {
@@ -139,12 +148,14 @@ export function SandboxBootGate({ projectId }: { projectId: string }) {
           }
           setPhase('booting')
           setMessage(null)
+          setSandboxReady(projectId, true)
         } else {
           setPhase('failed')
           setMessage(
             result.status.error ||
-              `Sandbox is ${result.status.status || 'not ready'}. Retry to start again.`,
+              `Sandbox is ${result.status.status || 'not ready'}. Create a sandbox to open the playground.`,
           )
+          setSandboxReady(projectId, false)
           if (result.status.status === 'error') {
             pushToast(result.status.error || 'Sandbox failed to start', { kind: 'danger' })
           }
@@ -158,12 +169,13 @@ export function SandboxBootGate({ projectId }: { projectId: string }) {
           sandboxStatus: 'error',
           sandboxError: msg,
         })
+        setSandboxReady(projectId, false)
         pushToast(msg, { kind: 'danger' })
       } finally {
         if (runId === runIdRef.current) setBusy(false)
       }
     },
-    [applyStatus, patchProjectSandbox, projectId],
+    [applyStatus, patchProjectSandbox, projectId, setSandboxReady],
   )
 
   // Auto-ensure when gate mounts or project changes
@@ -179,76 +191,99 @@ export function SandboxBootGate({ projectId }: { projectId: string }) {
 
   if (!p) {
     return (
-      <div className="project-splash sandbox-boot-gate">
-        <div className="project-splash-card">
-          <h1 className="project-splash-title">Project not found</h1>
-          <p className="project-splash-desc">This project is no longer in the catalog.</p>
-          <div className="project-splash-actions">
-            <Button variant="secondary" onClick={() => closeProjectTab(projectId)}>
-              Close
-            </Button>
-          </div>
-        </div>
-      </div>
+      <Modal
+        variant={ModalVariant.small}
+        isOpen
+        onClose={() => closeProjectTab(projectId)}
+        aria-labelledby="sandbox-boot-title"
+        className="sandbox-boot-modal"
+      >
+        <ModalHeader title="Project not found" labelId="sandbox-boot-title" />
+        <ModalBody>
+          <p>This project is no longer in the catalog.</p>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => closeProjectTab(projectId)}>
+            Close
+          </Button>
+        </ModalFooter>
+      </Modal>
     )
   }
 
   const status = p.sandboxStatus || 'pending'
   const booting = phase === 'booting' || busy || isSandboxBooting(status)
   const failed = phase === 'failed' && !busy
+  const needsCreate = failed && shouldRecreateSandbox(status)
+  const title = failed
+    ? 'Sandbox required'
+    : 'Starting sandbox'
+  const description = failed
+    ? message ||
+      'The playground runs inside a project sandbox. Create or start a sandbox to continue.'
+    : status === 'creating' || status === 'pending'
+      ? `Preparing a sandbox for “${p.name}”. Dead or crashed sandboxes are recreated automatically after a stack restart.`
+      : `Preparing a sandbox for “${p.name}”. The workbench opens when the container is running.`
 
   return (
-    <div className="project-splash sandbox-boot-gate" role="status" aria-live="polite">
-      <div className="project-splash-card">
-        <div className="project-splash-icon sandbox-boot-gate-icon" aria-hidden>
-          {booting && !failed ? (
-            <Spinner size="lg" aria-label="Starting sandbox" />
-          ) : (
-            <CubesIcon />
-          )}
-        </div>
-        <h1 className="project-splash-title">
-          {failed ? 'Sandbox not ready' : 'Starting sandbox'}
-        </h1>
-        <p className="project-splash-desc">
-          {failed
-            ? message ||
-              'The playground sandbox could not be started. Everything in the workbench runs inside the sandbox.'
-            : status === 'creating' || status === 'pending'
-              ? `Preparing a sandbox for “${p.name}”. Dead or crashed sandboxes are recreated automatically after a stack restart.`
-              : `Preparing a sandbox for “${p.name}”. The workbench opens when the container is running.`}
-        </p>
-
-        <div className="sandbox-boot-meta">
-          <span className="sandbox-boot-status" data-status={status}>
-            {status}
-          </span>
-          {p.sandboxName ? (
-            <span className="sandbox-boot-name" title={p.sandboxName}>
-              {p.sandboxName}
-            </span>
-          ) : null}
-          {p.sandboxImage ? (
-            <span className="sandbox-boot-image" title={p.sandboxImage}>
-              {p.sandboxImage}
-            </span>
-          ) : null}
-        </div>
-
-        {failed && message ? (
-          <p className="sandbox-boot-error" role="alert">
-            {message}
-          </p>
-        ) : null}
-
-        <div className="project-splash-actions">
+    <>
+      <div className="sandbox-boot-host" aria-hidden />
+      <Modal
+        variant={ModalVariant.small}
+        isOpen
+        onClose={() => {
+          if (!busy) closeProjectTab(projectId)
+        }}
+        aria-labelledby="sandbox-boot-title"
+        className="sandbox-boot-modal"
+      >
+        <ModalHeader
+          title={title}
+          labelId="sandbox-boot-title"
+          description={
+            failed
+              ? 'Everything in the playground needs a running sandbox.'
+              : undefined
+          }
+        />
+        <ModalBody>
+          <div className="sandbox-boot-modal-body" aria-live="polite">
+            {booting && !failed ? (
+              <div className="sandbox-boot-modal-spinner">
+                <Spinner size="lg" aria-label="Starting sandbox" />
+              </div>
+            ) : null}
+            <p className="sandbox-boot-modal-desc">{description}</p>
+            <div className="sandbox-boot-meta">
+              <span className="sandbox-boot-status" data-status={status}>
+                {status}
+              </span>
+              {p.sandboxName ? (
+                <span className="sandbox-boot-name" title={p.sandboxName}>
+                  {p.sandboxName}
+                </span>
+              ) : null}
+              {p.sandboxImage ? (
+                <span className="sandbox-boot-image" title={p.sandboxImage}>
+                  {p.sandboxImage}
+                </span>
+              ) : null}
+            </div>
+            {failed && message ? (
+              <p className="sandbox-boot-error" role="alert">
+                {message}
+              </p>
+            ) : null}
+          </div>
+        </ModalBody>
+        <ModalFooter>
           {failed ? (
             <Button
               variant="primary"
               isLoading={busy}
               onClick={() => void runEnsure(true)}
             >
-              Retry sandbox
+              {needsCreate ? 'Create sandbox' : 'Retry sandbox'}
             </Button>
           ) : null}
           <Button
@@ -258,8 +293,8 @@ export function SandboxBootGate({ projectId }: { projectId: string }) {
           >
             Close project
           </Button>
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+      </Modal>
+    </>
   )
 }

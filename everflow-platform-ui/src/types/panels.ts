@@ -74,6 +74,16 @@ export interface ChatQuestionRequest {
   status?: 'pending' | 'answered' | 'rejected'
 }
 
+export interface KnowledgeCitation {
+  canvasId: string
+  canvasName: string
+  chunkId?: string
+  text: string
+  score?: number
+  sourceUrl?: string
+  path?: string
+}
+
 export interface ChatBlock {
   type:
     | 'text'
@@ -82,6 +92,7 @@ export interface ChatBlock {
     | 'attachment'
     | 'terminal'
     | 'web_search'
+    | 'knowledge_citations'
     | 'tool'
     | 'question'
     | 'permission'
@@ -92,6 +103,10 @@ export interface ChatBlock {
   attachment?: ChatAttachment
   terminal?: { command: string; output: string; exitCode?: number }
   webSearch?: { query: string; results: WebSearchResult[] }
+  knowledgeCitations?: {
+    query?: string
+    hits: KnowledgeCitation[]
+  }
   tool?: {
     title: string
     body: string
@@ -117,6 +132,14 @@ export interface ChatMessageMetrics {
   contextUsedTokens?: number
   /** Wall time for this completion (ms), if known */
   durationMs?: number
+  /** Raw OpenCode token breakdown (for usage ingest). */
+  inputTokens?: number
+  outputTokens?: number
+  reasoningTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  provider?: string
+  model?: string
 }
 
 export interface ChatMessage {
@@ -147,6 +170,16 @@ export interface ConversationMetrics {
   ttftMs: number
 }
 
+/** Isolated git worktree bound to a conversation (opt-in). */
+export interface ConversationWorktree {
+  repoId: string
+  parentPath: string
+  path: string
+  branch: string
+  status: 'active' | 'applied' | 'discarded' | 'error'
+  error?: string
+}
+
 export interface ChatConversation {
   id: string
   title: string
@@ -167,6 +200,13 @@ export interface ChatConversation {
   chatMode: ChatMode
   /** demo = local showcase; opencode = sandbox OpenCode session */
   source?: 'demo' | 'opencode'
+  /**
+   * User opted this chat into an isolated git worktree.
+   * Worktree is created lazily on first Edit/Auto prompt when true.
+   */
+  useWorktree?: boolean
+  /** Active / resolved worktree metadata when isolation is (or was) used */
+  worktree?: ConversationWorktree
 }
 
 export interface PanelInstanceState {

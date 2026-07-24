@@ -6,8 +6,15 @@ import {
   ToggleGroupItem,
 } from '@patternfly/react-core'
 import { useEffect, useState } from 'react'
-import { ApiError, fetchKnowledgeWebRead } from '@/lib/api'
+import { getProject } from '@/data/projects'
+import {
+  ApiError,
+  fetchKnowledgeWebRead,
+  isDemoMode,
+  promoteResearchToCanvas,
+} from '@/lib/api'
 import { markdownToHtml } from '@/lib/chatMarkdown'
+import { pushToast } from '@/lib/studioToast'
 import type { WebSearchHit } from '@/types/studio'
 import { researchReply, summarizeReader } from './demoKnowledge'
 
@@ -46,6 +53,9 @@ export function ReaderMode({
   const [chat, setChat] = useState<ChatLine[]>([])
   const [draft, setDraft] = useState('')
   const [iframeFailed, setIframeFailed] = useState(false)
+  const [promoting, setPromoting] = useState(false)
+  const project = getProject(projectId === 'default' ? null : projectId)
+  const useApi = Boolean(project?.fromApi) && !isDemoMode()
 
   useEffect(() => {
     setTitle(hit.title)
@@ -113,6 +123,41 @@ export function ReaderMode({
     ...hit,
     title,
     readerMarkdown: markdown || hit.readerMarkdown,
+  }
+
+  const promoteResearch = async (mode: 'thread' | 'claims') => {
+    if (!chat.length) {
+      pushToast('Chat first, then promote', { kind: 'warning' })
+      return
+    }
+    if (!useApi) {
+      onAddToKnowledge({
+        ...enrichedHit,
+        title: mode === 'claims' ? `Claims · ${title}` : `Research · ${title}`,
+        readerMarkdown: chat
+          .map((l) => `**${l.role === 'user' ? 'You' : 'Research'}:** ${l.text}`)
+          .join('\n\n'),
+      })
+      return
+    }
+    setPromoting(true)
+    try {
+      await promoteResearchToCanvas(projectId, {
+        title: (mode === 'claims' ? `Claims · ${title}` : `Research · ${title}`).slice(0, 200),
+        mode,
+        source_url: hit.url,
+        article_title: title,
+        thread: chat,
+        article_markdown: markdown || hit.readerMarkdown || '',
+      })
+      pushToast(mode === 'claims' ? 'Claims saved to knowledge' : 'Thread saved to knowledge', {
+        kind: 'success',
+      })
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : 'Promote failed', { kind: 'danger' })
+    } finally {
+      setPromoting(false)
+    }
   }
 
   return (
@@ -284,6 +329,25 @@ export function ReaderMode({
             />
             <Button variant="primary" onClick={sendResearch} isDisabled={!draft.trim()}>
               Send
+            </Button>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            <Button
+              size="sm"
+              variant="secondary"
+              isDisabled={!chat.length || promoting}
+              isLoading={promoting}
+              onClick={() => void promoteResearch('thread')}
+            >
+              Save thread as canvas
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              isDisabled={!chat.length || promoting}
+              onClick={() => void promoteResearch('claims')}
+            >
+              Extract claims → notes
             </Button>
           </div>
         </div>

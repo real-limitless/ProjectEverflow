@@ -76,6 +76,8 @@ export interface Project {
   description?: string
   slug?: string
   templateId?: string
+  /** Preview device frame id (see devicePresets). */
+  previewDevice?: string
   harnesses?: ProjectHarness[]
   layoutMode?: WorkspaceLayoutMode
   environment?: ProjectEnvironment

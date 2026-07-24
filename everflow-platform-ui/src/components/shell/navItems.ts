@@ -4,6 +4,7 @@ import ChartLineIcon from '@patternfly/react-icons/dist/esm/icons/chart-line-ico
 import CommentsIcon from '@patternfly/react-icons/dist/esm/icons/comments-icon'
 import CreditCardIcon from '@patternfly/react-icons/dist/esm/icons/credit-card-icon'
 import CubeIcon from '@patternfly/react-icons/dist/esm/icons/cube-icon'
+import CatalogIcon from '@patternfly/react-icons/dist/esm/icons/catalog-icon'
 
 export interface NavItemDef {
   id: string
@@ -23,6 +24,7 @@ export const NAV_ITEMS: NavItemDef[] = [
     icon: CommentsIcon,
     badge: 'NEW',
   },
+  { id: 'marketplace', label: 'Marketplace', path: '/marketplace', icon: CatalogIcon },
   { id: 'plans', label: 'Plans & Billing', path: '/plans', icon: CreditCardIcon },
   { id: 'harnesses', label: 'Harnesses', path: '/harnesses', icon: CubeIcon },
 ]

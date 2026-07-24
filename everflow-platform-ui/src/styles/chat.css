@@ -324,6 +324,26 @@
   gap: 0.25rem;
 }
 
+.chat-layout .chat-worktree-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.65rem;
+  margin-top: 0.15rem;
+}
+
+.chat-layout .chat-worktree-hint {
+  font-size: 0.65rem;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.chat-layout .chat-worktree-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
 .chat-layout .agent-chip {
   font-size: 0.65rem;
   font-weight: 600;

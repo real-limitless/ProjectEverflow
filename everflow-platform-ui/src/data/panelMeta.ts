@@ -12,7 +12,7 @@ export const PANEL_META: Record<PanelType, PanelMeta> = {
   database: { label: 'Database', icon: '🗄' },
   jobs: { label: 'Jobs', icon: '⏱' },
   agents: { label: 'Agents', icon: '🤖' },
-  tools: { label: 'Tools / MCPs', icon: '🔌' },
+  tools: { label: 'Tools / MCPs / Plugins', icon: '🔌' },
   env: { label: 'Env / Secrets', icon: '🔐' },
   tests: { label: 'Tests', icon: '✓' },
   deploy: { label: 'Deploy', icon: '🚀' },

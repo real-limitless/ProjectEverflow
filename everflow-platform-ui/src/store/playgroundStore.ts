@@ -9,6 +9,7 @@ import {
   harnessesFromApi,
   harnessesFromIds,
 } from '@/data/harnesses'
+import { getTemplate } from '@/data/projectTemplates'
 import {
   PROJECTS,
   addProjectToCatalog,
@@ -73,7 +74,12 @@ import {
   newMessageId,
   cloneMessages,
 } from '@/lib/chatConversation'
-import type { ChatConversation, ChatMessage, ChatMode } from '@/types/panels'
+import type {
+  ChatConversation,
+  ChatMessage,
+  ChatMode,
+  ConversationWorktree,
+} from '@/types/panels'
 import {
   createProject as apiCreateProject,
   isDemoMode,
@@ -115,6 +121,16 @@ interface PlaygroundState {
   terminalPrefill: string | null
   /** Per-project active repository id (Repository panel + repo strip) */
   activeRepoByProject: Record<string, string>
+  /**
+   * Optional git path override for Repository panel (e.g. conversation worktree).
+   * Workspace-relative; cleared when switching to main checkout.
+   */
+  repoViewPathByProject: Record<string, string | null>
+  /**
+   * Per-project: this session confirmed sandbox is running via ensure/status poll.
+   * Not persisted — reload always re-verifies before mounting the workbench.
+   */
+  sandboxReadyByProject: Record<string, boolean>
 
   // derived helpers exposed as methods
   nextGroupId: () => string
@@ -170,6 +186,8 @@ interface PlaygroundState {
       sandboxCreatedAt?: string | null
     },
   ) => void
+  /** Mark sandbox as session-verified (or clear) for workbench gating. */
+  setSandboxReady: (projectId: string, ready: boolean) => void
   resetLayout: () => void
 
   activateTab: (groupId: string, panelId: PanelKey) => void
@@ -184,6 +202,8 @@ interface PlaygroundState {
   ) => void
   resizeSplit: (pathToSplit: number[], sizes: number[]) => void
   setActiveRepo: (repoId: string, projectId?: string | null) => void
+  /** Focus Repository panel on a workspace-relative git path (worktree or null = main). */
+  setRepoViewPath: (projectId: string | null | undefined, path: string | null) => void
 
   ensureProjectChats: (projectId: string | null | undefined) => ChatConversation[]
   getConversations: (projectId?: string | null) => ChatConversation[]
@@ -202,6 +222,19 @@ interface PlaygroundState {
   setConversationAgents: (panelKey: PanelKey, agentIds: string[]) => void
   /** Set primary OpenCode agent for this conversation (plan, build, …) */
   setConversationAgent: (panelKey: PanelKey, agentName: string) => void
+  /** Opt conversation into / out of worktree isolation (intent flag). */
+  setConversationUseWorktree: (
+    projectId: string,
+    convId: string,
+    useWorktree: boolean,
+  ) => void
+  /** Patch worktree metadata on a conversation. */
+  patchConversationWorktree: (
+    projectId: string,
+    convId: string,
+    worktree: ConversationWorktree | undefined,
+    extras?: Partial<Pick<ChatConversation, 'useWorktree'>>,
+  ) => void
   updateConversationMessages: (
     projectId: string,
     convId: string,
@@ -471,6 +504,8 @@ function createInitial() {
       },
       catalogVersion: 0,
       activeRepoByProject: {},
+      repoViewPathByProject: {},
+      sandboxReadyByProject: {},
     }
   }
 
@@ -497,6 +532,8 @@ function createInitial() {
     catalogVersion: 0,
     terminalPrefill: null as string | null,
     activeRepoByProject: {},
+    repoViewPathByProject: {},
+    sandboxReadyByProject: {},
   }
 }
 
@@ -519,6 +556,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   paletteDragging: false,
   terminalPrefill: null,
   activeRepoByProject: initial.activeRepoByProject || {},
+  repoViewPathByProject: initial.repoViewPathByProject || {},
+  sandboxReadyByProject: initial.sandboxReadyByProject || {},
 
   setTerminalPrefill: (cmd) => set({ terminalPrefill: cmd }),
   clearTerminalPrefill: () => set({ terminalPrefill: null }),
@@ -755,22 +794,25 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       projectLayouts[s.currentProjectId] = cloneLayout(s.layout)
     }
     const openProjectIds = s.openProjectIds.filter((x) => x !== id)
+    const sandboxReadyByProject = { ...s.sandboxReadyByProject }
+    delete sandboxReadyByProject[id]
     if (openProjectIds.length === 0) {
       set({
         openProjectIds: [],
         currentProjectId: null,
         projectLayouts,
         layout: emptyGroup('g-empty'),
+        sandboxReadyByProject,
       })
       get().persist()
       return
     }
     if (s.currentProjectId === id) {
       const next = openProjectIds[0]
-      set({ openProjectIds, projectLayouts })
+      set({ openProjectIds, projectLayouts, sandboxReadyByProject })
       get().switchProject(next)
     } else {
-      set({ openProjectIds, projectLayouts })
+      set({ openProjectIds, projectLayouts, sandboxReadyByProject })
       get().persist()
     }
   },
@@ -789,7 +831,18 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       sandboxImage: apiProject.sandbox_image,
       sandboxError: apiProject.sandbox_error,
       sandboxCreatedAt: apiProject.sandbox_created_at,
-      templateId: existing?.templateId || seed?.templateId || 'blank',
+      templateId:
+        apiProject.template_id ||
+        existing?.templateId ||
+        seed?.templateId ||
+        'blank',
+      previewDevice:
+        apiProject.preview_device ||
+        existing?.previewDevice ||
+        seed?.previewDevice ||
+        getTemplate(apiProject.template_id || existing?.templateId || seed?.templateId)
+          .defaultPreviewDevice ||
+        'full',
       layoutMode: existing?.layoutMode || seed?.layoutMode || 'standard',
       environment: existing?.environment || seed?.environment || 'local',
       visibility: existing?.visibility || seed?.visibility || 'private',
@@ -863,23 +916,37 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         ],
     }
     addProjectToCatalog(project)
-    set({ catalogVersion: get().catalogVersion + 1 })
+    const sandboxReadyByProject = { ...get().sandboxReadyByProject }
+    if ((project.sandboxStatus || 'pending') !== 'running') {
+      sandboxReadyByProject[project.id] = false
+    }
+    set({ catalogVersion: get().catalogVersion + 1, sandboxReadyByProject })
     get().persist()
   },
 
   patchProjectSandbox: (projectId, patch) => {
     const p = getProject(projectId)
     if (!p) return
+    const nextStatus = patch.sandboxStatus ?? p.sandboxStatus
     updateProjectInCatalog(projectId, {
-      sandboxStatus: patch.sandboxStatus ?? p.sandboxStatus,
+      sandboxStatus: nextStatus,
       sandboxName: patch.sandboxName !== undefined ? patch.sandboxName : p.sandboxName,
       sandboxError: patch.sandboxError !== undefined ? patch.sandboxError : p.sandboxError,
       sandboxImage: patch.sandboxImage !== undefined ? patch.sandboxImage : p.sandboxImage,
       sandboxCreatedAt:
         patch.sandboxCreatedAt !== undefined ? patch.sandboxCreatedAt : p.sandboxCreatedAt,
     })
-    set({ catalogVersion: get().catalogVersion + 1 })
+    const sandboxReadyByProject = { ...get().sandboxReadyByProject }
+    if (nextStatus !== 'running') {
+      sandboxReadyByProject[projectId] = false
+    }
+    set({ catalogVersion: get().catalogVersion + 1, sandboxReadyByProject })
     get().persist()
+  },
+
+  setSandboxReady: (projectId, ready) => {
+    const sandboxReadyByProject = { ...get().sandboxReadyByProject, [projectId]: ready }
+    set({ sandboxReadyByProject })
   },
 
   createProject: async (input) => {
@@ -920,10 +987,13 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
           draft.harnessIds.length > 0
             ? draft.harnessIds
             : [...DEFAULT_AGENT_HARNESS_IDS]
+        const template = getTemplate(draft.templateId)
         const apiProject = await apiCreateProject(auth.org.id, {
           name: draft.name.trim(),
           slug,
           description: draft.description?.trim() || undefined,
+          template_id: draft.templateId || undefined,
+          preview_device: template.defaultPreviewDevice || undefined,
           repos: projectReposToApiPayload(normalizedRepos),
           harnesses: harnessIds,
         })
@@ -1125,9 +1195,21 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     updateProjectInCatalog(id, { repos })
     set({
       activeRepoByProject: { ...get().activeRepoByProject, [id]: repoId },
+      repoViewPathByProject: { ...get().repoViewPathByProject, [id]: null },
       catalogVersion: get().catalogVersion + 1,
     })
     get().persist()
+  },
+
+  setRepoViewPath: (projectId, path) => {
+    const id = projectId || get().currentProjectId
+    if (!id) return
+    set({
+      repoViewPathByProject: {
+        ...get().repoViewPathByProject,
+        [id]: path,
+      },
+    })
   },
 
   ensureProjectChats: (projectId) => {
@@ -1161,6 +1243,31 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     let conv = { ...list[idx], messages: cloneMessages(messages) }
     conv = updateConvMetrics(conv, lastAssistant)
     list[idx] = conv
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
+  },
+
+  setConversationUseWorktree: (projectId, convId, useWorktree) => {
+    const list = cloneConversations(get().ensureProjectChats(projectId))
+    const idx = list.findIndex((c) => c.id === convId)
+    if (idx < 0) return
+    const conv = list[idx]
+    if (conv.worktree?.status === 'active' && !useWorktree) {
+      // Caller should Approve/Discard first; keep flag on while active
+      return
+    }
+    list[idx] = { ...conv, useWorktree }
+    set({ projectChats: { ...get().projectChats, [projectId]: list } })
+  },
+
+  patchConversationWorktree: (projectId, convId, worktree, extras) => {
+    const list = cloneConversations(get().ensureProjectChats(projectId))
+    const idx = list.findIndex((c) => c.id === convId)
+    if (idx < 0) return
+    list[idx] = {
+      ...list[idx],
+      ...extras,
+      worktree,
+    }
     set({ projectChats: { ...get().projectChats, [projectId]: list } })
   },
 
@@ -1260,6 +1367,18 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   },
 
   deleteConversation: (projectId, convId, panelKey) => {
+    const prev = findConversation(get().ensureProjectChats(projectId), convId)
+    const wt = prev?.worktree
+    if (wt?.status === 'active' && projectId) {
+      void import('@/lib/workspaceGit').then(({ discardWorktree }) =>
+        discardWorktree(projectId, {
+          parentPath: wt.parentPath,
+          worktreePath: wt.path,
+          branch: wt.branch,
+          sessionId: convId,
+        }).catch(() => undefined),
+      )
+    }
     let list = cloneConversations(get().ensureProjectChats(projectId)).filter(
       (c) => c.id !== convId,
     )

@@ -1,5 +1,5 @@
 import { getSandboxStatus, type SandboxStatus } from '@/lib/api'
-import { isSandboxPollTerminal } from '@/lib/sandboxReady'
+import { isSandboxPollTerminal, withEffectiveSandboxStatus } from '@/lib/sandboxReady'
 
 /** Default poll interval while waiting for create/start. */
 export const SANDBOX_POLL_INTERVAL_MS = 2000
@@ -23,7 +23,7 @@ export async function waitForSandbox(
   const start = Date.now()
 
   // First hit immediately
-  let last = await getSandboxStatus(projectId)
+  let last = withEffectiveSandboxStatus(await getSandboxStatus(projectId))
   opts?.onUpdate?.(last)
   if (isSandboxPollTerminal(last.status)) {
     return last
@@ -31,7 +31,7 @@ export async function waitForSandbox(
 
   while (Date.now() - start < timeoutMs) {
     await new Promise((r) => setTimeout(r, intervalMs))
-    last = await getSandboxStatus(projectId)
+    last = withEffectiveSandboxStatus(await getSandboxStatus(projectId))
     opts?.onUpdate?.(last)
     if (isSandboxPollTerminal(last.status)) {
       return last

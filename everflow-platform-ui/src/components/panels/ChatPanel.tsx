@@ -16,6 +16,8 @@ import { getProject } from '@/data/projects'
 import type { ChatConversation, ChatMessage, ChatMode, PanelKey } from '@/types/panels'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import { isDemoMode } from '@/lib/api'
+import { reportUsageFromMessages } from '@/lib/reportUsage'
+import { isSandboxDeadStatus } from '@/lib/sandboxReady'
 import {
   abortSession,
   canUseOpenCode,
@@ -58,6 +60,14 @@ import {
   sessionToConversation,
 } from '@/lib/opencode/mapParts'
 import { agentFromPack, getOpenCodeHarness } from '@/lib/harness/opencodePack'
+import { pushToast } from '@/lib/studioToast'
+import {
+  approveWorktree,
+  catalogReposToWorkspace,
+  discardWorktree,
+  ensureConversationWorktree,
+  worktreeSystemPrompt,
+} from '@/lib/workspaceGit'
 import { ChatComposer } from './ChatComposer'
 import { ChatEmptyState } from './ChatEmptyState'
 import { ChatHeader } from './ChatHeader'
@@ -78,6 +88,25 @@ type LiveStatus =
   | 'needs_provider'
   | 'error'
   | 'demo'
+
+/** API 409 / detail when platform sandbox is not running. */
+function sandboxDownFromError(err: unknown): { status: string; message: string } | null {
+  const message = err instanceof Error ? err.message : String(err || '')
+  const m = /Sandbox is not running\s*\(status=([^)]+)\)/i.exec(message)
+  if (m) {
+    return { status: m[1].trim() || 'error', message }
+  }
+  if (/sandbox is not running|sandbox not found|missing on agent/i.test(message)) {
+    return { status: 'error', message }
+  }
+  return null
+}
+
+/** Only hard re-gate the workbench when the sandbox is confirmed gone — not on stale error. */
+function isHardSandboxDown(down: { status: string; message: string }): boolean {
+  if (/missing on agent|sandbox not found|destroyed/i.test(down.message)) return true
+  return down.status === 'destroyed'
+}
 
 export function ChatPanel({ panelKey }: ChatPanelProps) {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
@@ -100,7 +129,12 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const setChatMode = usePlaygroundStore((s) => s.setChatMode)
   const setConversationAgent = usePlaygroundStore((s) => s.setConversationAgent)
   const updateConversationMessages = usePlaygroundStore((s) => s.updateConversationMessages)
+  const setConversationUseWorktree = usePlaygroundStore((s) => s.setConversationUseWorktree)
+  const patchConversationWorktree = usePlaygroundStore((s) => s.patchConversationWorktree)
+  const getActiveRepoId = usePlaygroundStore((s) => s.getActiveRepoId)
+  const setRepoViewPath = usePlaygroundStore((s) => s.setRepoViewPath)
   const [draft, setDraft] = useState('')
+  const [worktreeBusy, setWorktreeBusy] = useState(false)
   const [liveStatus, setLiveStatus] = useState<LiveStatus>('idle')
   const [liveError, setLiveError] = useState<string | null>(null)
   const [providerOpen, setProviderOpen] = useState(false)
@@ -342,6 +376,9 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
             .updateConversationMessages(projectId, sessionId, msgs, lastAsst)
         }
 
+        // Persist completed turn token metrics for the Usage dashboard.
+        reportUsageFromMessages(projectId, sessionId, msgs)
+
         // Never steal focus: background hydrates (streaming poll / SSE for another
         // session) update store only. `force` means allow empty overwrite, not activate.
         if (!isActiveView) {
@@ -390,8 +427,31 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           base.primaryAgent = prev.primaryAgent
           base.agents = prev.agents
           base.metrics = prev.metrics
+          base.useWorktree = prev.useWorktree
+          base.worktree = prev.worktree
         }
         mapped.push(base)
+      }
+      // Recover worktree metadata from sandbox index after reboot
+      try {
+        const { readWorktreeIndex } = await import('@/lib/workspaceGit')
+        const index = await readWorktreeIndex(projectId)
+        for (const entry of index.entries) {
+          if (entry.status !== 'active') continue
+          const conv = mapped.find((c) => c.id === entry.sessionId)
+          if (!conv) continue
+          conv.useWorktree = true
+          conv.worktree = {
+            repoId: entry.repoId,
+            parentPath: entry.parentPath,
+            path: entry.path,
+            branch: entry.branch,
+            status: 'active',
+            error: entry.error,
+          }
+        }
+      } catch {
+        /* index optional */
       }
       if (mapped.length === 0) {
         const created = await createSession(projectId, 'New chat')
@@ -871,6 +931,17 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         }
       } catch (e) {
         if (!stillActive()) return
+        const down = sandboxDownFromError(e)
+        if (down && currentProjectId && isHardSandboxDown(down)) {
+          const store = usePlaygroundStore.getState()
+          store.patchProjectSandbox(currentProjectId, {
+            sandboxStatus: isSandboxDeadStatus(down.status) ? down.status : 'error',
+            sandboxError: down.message,
+          })
+          store.setSandboxReady(currentProjectId, false)
+          return
+        }
+        // Soft fail: keep workbench ready on stale status=error; chat can Retry.
         setLiveError((e as Error).message)
         setLiveStatus('error')
       }
@@ -1047,6 +1118,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         parts: Array<{ type: string; text?: string }>
         model?: { providerID: string; modelID: string }
         agent?: string
+        system?: string
         tools?: Record<string, boolean>
       } = {
         parts: [{ type: 'text', text }],
@@ -1054,6 +1126,49 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       if (modelRef) body.model = modelRef
       if (agentName) body.agent = agentName
       if (Object.keys(toolsMap).length) body.tools = toolsMap
+
+      // Opt-in worktree: create lazily on first Edit/Auto prompt
+      const modeNow = modeRef.current
+      const convSnap =
+        usePlaygroundStore
+          .getState()
+          .projectChats[projectId]?.find((c) => c.id === convId) || undefined
+      const wantsWorktree =
+        Boolean(convSnap?.useWorktree || convSnap?.worktree?.status === 'active') &&
+        (modeNow === 'edit' || modeNow === 'auto')
+      if (wantsWorktree) {
+        let wt = convSnap?.worktree
+        if (!wt || wt.status !== 'active') {
+          const project = getProject(projectId)
+          const repoId = getActiveRepoId(projectId)
+          const wsRepos = catalogReposToWorkspace(project?.repos)
+          const parent =
+            wsRepos.find((r) => r.id === repoId) ||
+            wsRepos.find((r) => r.path === repoId) ||
+            wsRepos[0]
+          if (!parent?.path) {
+            throw new Error('Connect a repository before using a worktree')
+          }
+          const ensured = await ensureConversationWorktree(projectId, {
+            repoId: parent.id,
+            parentPath: parent.path,
+            sessionId: convId,
+            baseBranch: parent.branch,
+          })
+          if (!ensured.ok) {
+            throw new Error(ensured.error || 'Failed to create worktree')
+          }
+          wt = {
+            repoId: ensured.repoId,
+            parentPath: ensured.parentPath,
+            path: ensured.path,
+            branch: ensured.branch,
+            status: 'active',
+          }
+          patchConversationWorktree(projectId, convId, wt, { useWorktree: true })
+        }
+        body.system = worktreeSystemPrompt(wt.path, wt.parentPath)
+      }
 
       try {
         await promptAsync(projectId, convId, body)
@@ -1222,6 +1337,9 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
             .find((m) => m.role === 'assistant')
           ensureInstanceState(panelKey, { messages: next })
           updateConversationMessages(projectId, convId, next, finalAsst)
+          reportUsageFromMessages(projectId, convId, next)
+        } else {
+          reportUsageFromMessages(projectId, convId, cur)
         }
       }
     }
@@ -1579,8 +1697,100 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           title={st.title || activeConv?.title || 'Chat'}
           mode={mode}
           metrics={activeConv?.metrics}
-          primaryAgent={primaryAgent}
           onModeChange={(m) => setChatMode(panelKey, m)}
+          useWorktree={Boolean(activeConv?.useWorktree)}
+          worktree={activeConv?.worktree}
+          worktreeAvailable={Boolean(
+            useLive &&
+              currentProjectId &&
+              (getProject(currentProjectId)?.repos || []).some(
+                (r) =>
+                  Boolean(r.url?.trim()) ||
+                  (r.localPath && r.localPath !== '.') ||
+                  r.cloneStatus === 'ready',
+              ),
+          )}
+          worktreeBusy={worktreeBusy}
+          onUseWorktreeChange={(enabled) => {
+            if (!currentProjectId || !st.convId) return
+            if (!enabled && activeConv?.worktree?.status === 'active') {
+              pushToast('Approve or Discard the worktree before turning isolation off', {
+                kind: 'warning',
+              })
+              return
+            }
+            setConversationUseWorktree(currentProjectId, st.convId, enabled)
+          }}
+          onReviewWorktree={() => {
+            if (!currentProjectId || !activeConv?.worktree) return
+            setRepoViewPath(currentProjectId, activeConv.worktree.path)
+            openPanelType('repository')
+          }}
+          onApproveWorktree={() => {
+            if (!currentProjectId || !st.convId || !activeConv?.worktree) return
+            const wt = activeConv.worktree
+            setWorktreeBusy(true)
+            void approveWorktree(currentProjectId, {
+              parentPath: wt.parentPath,
+              worktreePath: wt.path,
+              branch: wt.branch,
+              sessionId: st.convId,
+            })
+              .then((res) => {
+                if (!res.ok) {
+                  pushToast(res.error, { kind: 'danger' })
+                  patchConversationWorktree(currentProjectId, st.convId!, {
+                    ...wt,
+                    status: 'error',
+                    error: res.error,
+                  })
+                  return
+                }
+                patchConversationWorktree(
+                  currentProjectId,
+                  st.convId!,
+                  { ...wt, status: 'applied', error: undefined },
+                  { useWorktree: false },
+                )
+                setRepoViewPath(currentProjectId, null)
+                pushToast(
+                  res.parentBranch
+                    ? `Merged into ${res.parentBranch}`
+                    : 'Worktree approved and merged',
+                  { kind: 'success' },
+                )
+              })
+              .finally(() => setWorktreeBusy(false))
+          }}
+          onDiscardWorktree={() => {
+            if (!currentProjectId || !st.convId || !activeConv?.worktree) return
+            const wt = activeConv.worktree
+            if (!window.confirm(`Discard isolated branch ${wt.branch}? Changes will be lost.`)) {
+              return
+            }
+            setWorktreeBusy(true)
+            void discardWorktree(currentProjectId, {
+              parentPath: wt.parentPath,
+              worktreePath: wt.path,
+              branch: wt.branch,
+              sessionId: st.convId,
+            })
+              .then((res) => {
+                if (!res.ok) {
+                  pushToast(res.error, { kind: 'danger' })
+                  return
+                }
+                patchConversationWorktree(
+                  currentProjectId,
+                  st.convId!,
+                  { ...wt, status: 'discarded', error: undefined },
+                  { useWorktree: false },
+                )
+                setRepoViewPath(currentProjectId, null)
+                pushToast('Worktree discarded', { kind: 'warning' })
+              })
+              .finally(() => setWorktreeBusy(false))
+          }}
         />
 
         {useLive && liveStatus === 'error' ? (
@@ -1618,6 +1828,18 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
                     )
                   } catch (e) {
                     if (gen !== bootGenRef.current) return
+                    const down = sandboxDownFromError(e)
+                    if (down && isHardSandboxDown(down)) {
+                      const store = usePlaygroundStore.getState()
+                      store.patchProjectSandbox(projectId, {
+                        sandboxStatus: isSandboxDeadStatus(down.status)
+                          ? down.status
+                          : 'error',
+                        sandboxError: down.message,
+                      })
+                      store.setSandboxReady(projectId, false)
+                      return
+                    }
                     setLiveError((e as Error).message)
                     setLiveStatus('error')
                   }

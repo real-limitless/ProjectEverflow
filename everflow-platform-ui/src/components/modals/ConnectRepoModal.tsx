@@ -10,6 +10,7 @@ import {
   ModalVariant,
   TextInput,
 } from '@patternfly/react-core'
+import { GitCredentialsManager } from '@/components/git/GitCredentialsManager'
 import { getProject, updateProjectInCatalog } from '@/data/projects'
 import { pathHintFromLabel } from '@/lib/workspaceGit'
 import {
@@ -21,6 +22,16 @@ import { pushToast } from '@/lib/studioToast'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import type { ProjectRepo } from '@/types/project'
 
+function needsGitCredential(message: string): boolean {
+  const low = message.toLowerCase()
+  return (
+    low.includes('github token') ||
+    low.includes('authentication') ||
+    low.includes('could not read username') ||
+    low.includes('403')
+  )
+}
+
 export function ConnectRepoModal() {
   const isOpen = usePlaygroundStore((s) => s.connectRepoModal)
   const setOpen = usePlaygroundStore((s) => s.setConnectRepoModal)
@@ -29,6 +40,7 @@ export function ConnectRepoModal() {
   const [branch, setBranch] = useState('main')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [showCreds, setShowCreds] = useState(false)
 
   const close = () => {
     setOpen(false)
@@ -36,6 +48,7 @@ export function ConnectRepoModal() {
     setBranch('main')
     setError('')
     setBusy(false)
+    setShowCreds(false)
   }
 
   const connect = async () => {
@@ -124,8 +137,10 @@ export function ConnectRepoModal() {
         })
         if (result.failed > 0) {
           const first = result.repos.find((r) => r.cloneStatus === 'error')
-          pushToast(first?.cloneError?.split('\n')[0] || 'Clone failed', { kind: 'danger' })
-          setError(first?.cloneError || 'Clone failed')
+          const errMsg = first?.cloneError || 'Clone failed'
+          pushToast(errMsg.split('\n')[0] || 'Clone failed', { kind: 'danger' })
+          setError(errMsg)
+          if (needsGitCredential(errMsg)) setShowCreds(true)
           setBusy(false)
           return
         }
@@ -181,9 +196,18 @@ export function ConnectRepoModal() {
             </p>
           ) : (
             <p style={{ fontSize: 12, opacity: 0.8, margin: 0 }}>
-              Public HTTPS remotes are cloned into the project sandbox workspace.
+              HTTPS remotes are cloned into the project sandbox. Private repos need a GitHub PAT
+              under Organization & Git settings.
             </p>
           )}
+          {showCreds ? (
+            <div style={{ marginTop: 12 }}>
+              <GitCredentialsManager
+                scope="user"
+                lead="Add a GitHub personal access token with repo scope, then Connect again."
+              />
+            </div>
+          ) : null}
         </Form>
       </ModalBody>
       <ModalFooter>

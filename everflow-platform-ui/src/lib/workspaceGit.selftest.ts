@@ -1,13 +1,24 @@
 import {
   catalogReposToWorkspace,
+  isEverflowWorktreePath,
   parseDiffStats,
   parseGitLog,
   parseGitStatusPorcelain,
+  parseWorktreeIndexJson,
+  parseWorktreePorcelain,
   pathHintFromLabel,
+  planApproveMergeCommands,
+  planDiscardWorktreeCommands,
   prefixChanges,
   sanitizeBranchName,
   sanitizeRepoPath,
+  sanitizeWorktreeRepoId,
+  sanitizeWorktreeSessionId,
   statusCodeFromPorcelain,
+  worktreeBranchForSession,
+  worktreePathForSession,
+  worktreeSystemPrompt,
+  workspaceRelFromAbsPath,
   workspaceRelativePath,
 } from './workspaceGit'
 
@@ -101,5 +112,65 @@ assert(sanitizeBranchName('../etc') === null, 'reject .. branch')
 assert(sanitizeBranchName('-bad') === null, 'reject leading dash')
 assert(sanitizeBranchName('a;rm') === null, 'reject metachar')
 assert(sanitizeBranchName('origin/main') === 'origin/main', 'remote ref')
+
+// Worktree helpers
+assert(isEverflowWorktreePath('.everflow/worktrees/web/ses_abc'), 'wt path')
+assert(!isEverflowWorktreePath('web'), 'not wt path')
+assert(sanitizeWorktreeSessionId('ses_abc-123') === 'ses_abc-123', 'session id')
+assert(sanitizeWorktreeSessionId('../x') === null, 'reject bad session')
+assert(sanitizeWorktreeRepoId('org/web') === 'org-web', 'repo id flatten')
+assert(worktreePathForSession('web', 'ses_hello') === '.everflow/worktrees/web/ses_hello', 'wt path build')
+assert(worktreeBranchForSession('ses_abcdef0123456789') === 'ef/abcdef0123456789', 'branch short')
+assert(workspaceRelFromAbsPath('/workspace/.everflow/worktrees/web/s1') === '.everflow/worktrees/web/s1', 'abs→rel')
+assert(workspaceRelFromAbsPath('/workspace') === '.', 'workspace root')
+
+const porcelainWt = [
+  'worktree /workspace/web',
+  'HEAD abc',
+  'branch refs/heads/main',
+  '',
+  'worktree /workspace/.everflow/worktrees/web/ses_1',
+  'HEAD def',
+  'branch refs/heads/ef/1',
+  '',
+].join('\n')
+const wtEntries = parseWorktreePorcelain(porcelainWt)
+assert(wtEntries.length === 2, '2 worktrees')
+assert(wtEntries[0].path === 'web' && wtEntries[0].branch === 'main', 'main entry')
+assert(
+  wtEntries[1].path === '.everflow/worktrees/web/ses_1' && wtEntries[1].branch === 'ef/1',
+  'isolated entry',
+)
+
+const discardPlan = planDiscardWorktreeCommands('.everflow/worktrees/web/ses_1', 'ef/1')
+assert(discardPlan.length === 2, 'discard 2 cmds')
+assert(discardPlan[0][0] === 'worktree' && discardPlan[0].includes('--force'), 'remove force')
+assert(discardPlan[1][0] === 'branch' && discardPlan[1][1] === '-D', 'branch -D')
+
+const approvePlan = planApproveMergeCommands('ef/1')
+assert(approvePlan[0][0] === 'merge' && approvePlan[0].includes('ef/1'), 'merge branch')
+assert(approvePlan.some((c) => c[0] === 'branch' && c[1] === '-D'), 'delete after merge')
+
+const idx = parseWorktreeIndexJson(
+  JSON.stringify({
+    entries: [
+      {
+        sessionId: 'ses_1',
+        repoId: 'web',
+        parentPath: 'web',
+        path: '.everflow/worktrees/web/ses_1',
+        branch: 'ef/1',
+        status: 'active',
+      },
+      { sessionId: 'bad' },
+    ],
+  }),
+)
+assert(idx.entries.length === 1, 'index filters bad rows')
+assert(idx.entries[0].status === 'active', 'index status')
+
+const sys = worktreeSystemPrompt('.everflow/worktrees/web/ses_1', 'web')
+assert(sys.includes('/workspace/.everflow/worktrees/web/ses_1'), 'system wt path')
+assert(sys.includes('/workspace/web'), 'system parent path')
 
 console.log('workspaceGit.selftest: ok')

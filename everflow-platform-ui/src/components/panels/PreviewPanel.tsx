@@ -21,9 +21,6 @@ import {
   SelectList,
   SelectOption,
   Spinner,
-  Tabs,
-  Tab,
-  TabTitleText,
   TextInput,
 } from '@patternfly/react-core'
 import AngleLeftIcon from '@patternfly/react-icons/dist/esm/icons/angle-left-icon'
@@ -40,10 +37,15 @@ import {
 } from '@/lib/api'
 import { getPreviewServices } from '@/data/previewServices'
 import { getProject } from '@/data/projects'
+import { getTemplate } from '@/data/projectTemplates'
+import {
+  devicePresetsByCategory,
+  getDevicePreset,
+  isFramedPreset,
+  type DevicePreset,
+  type DevicePresetId,
+} from '@/data/devicePresets'
 import { usePlaygroundStore } from '@/store/playgroundStore'
-
-type DeviceMode = 'full' | 'desktop' | 'tablet' | 'mobile'
-type FramedDevice = Exclude<DeviceMode, 'full'>
 
 type PreviewNavState = { stack: string[]; index: number }
 
@@ -61,49 +63,61 @@ const PREVIEW_EXCLUDED_PORTS = new Set([
   18765, // Everflow MCP API tunnel
 ])
 
-/** Responsive preset widths (px). Full mode uses 100% of the panel. */
-const PRESET_WIDTH: Record<FramedDevice, number> = {
-  desktop: 1280,
-  tablet: 768,
-  mobile: 390,
-}
-
 const VIEWPORT_MIN = 280
 const VIEWPORT_PAD = 24 // frame horizontal padding budget for max width
+const VIEWPORT_HEIGHT_PAD = 48
 
 function clampViewportWidth(width: number, frameWidth: number): number {
   const max = Math.max(VIEWPORT_MIN, frameWidth - VIEWPORT_PAD)
   return Math.min(max, Math.max(VIEWPORT_MIN, Math.round(width)))
 }
 
-function usePreviewViewport(initial: DeviceMode = 'full') {
-  const [device, setDeviceState] = useState<DeviceMode>(initial)
-  const [viewportWidth, setViewportWidth] = useState<number>(PRESET_WIDTH.desktop)
+function clampViewportHeight(height: number, frameHeight: number): number {
+  const max = Math.max(VIEWPORT_MIN, frameHeight - VIEWPORT_HEIGHT_PAD)
+  return Math.min(max, Math.max(VIEWPORT_MIN, Math.round(height)))
+}
+
+function usePreviewViewport(initial: DevicePresetId = 'full') {
+  const initialPreset = getDevicePreset(initial)
+  const [presetId, setPresetIdState] = useState<DevicePresetId>(initialPreset.id)
+  const [viewportWidth, setViewportWidth] = useState<number>(
+    initialPreset.width ?? 1280,
+  )
+  const [viewportHeight, setViewportHeight] = useState<number>(
+    initialPreset.height ?? 800,
+  )
   const [resizing, setResizing] = useState(false)
   const frameRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
-  const setDevice = useCallback((next: DeviceMode) => {
-    setDeviceState(next)
-    if (next === 'full') return
+  const preset = getDevicePreset(presetId)
+
+  const setDevice = useCallback((next: DevicePresetId | string) => {
+    const p = getDevicePreset(next)
+    setPresetIdState(p.id)
+    if (!isFramedPreset(p) || p.width == null) return
     const frameW = frameRef.current?.clientWidth ?? 1600
-    setViewportWidth(clampViewportWidth(PRESET_WIDTH[next], frameW))
+    const frameH = frameRef.current?.clientHeight ?? 1200
+    setViewportWidth(clampViewportWidth(p.width, frameW))
+    if (p.height != null) {
+      setViewportHeight(clampViewportHeight(p.height, frameH))
+    }
   }, [])
 
   const onResizePointerDown = useCallback(
     (e: PointerEvent<HTMLButtonElement>) => {
-      if (device === 'full') return
+      if (!preset.resizable && preset.id !== 'custom') return
+      if (!isFramedPreset(preset)) return
       e.preventDefault()
       e.currentTarget.setPointerCapture(e.pointerId)
       dragRef.current = { startX: e.clientX, startWidth: viewportWidth }
       setResizing(true)
     },
-    [device, viewportWidth],
+    [preset, viewportWidth],
   )
 
   const onResizePointerMove = useCallback((e: PointerEvent<HTMLButtonElement>) => {
     if (!dragRef.current) return
-    // Drag handle left → increase width; right → decrease
     const delta = dragRef.current.startX - e.clientX
     const frameW = frameRef.current?.clientWidth ?? 1600
     setViewportWidth(clampViewportWidth(dragRef.current.startWidth + delta, frameW))
@@ -123,7 +137,8 @@ function usePreviewViewport(initial: DeviceMode = 'full') {
 
   const onResizeKeyDown = useCallback(
     (e: KeyboardEvent<HTMLButtonElement>) => {
-      if (device === 'full') return
+      if (!preset.resizable && preset.id !== 'custom') return
+      if (!isFramedPreset(preset)) return
       const step = e.shiftKey ? 50 : 10
       const frameW = frameRef.current?.clientWidth ?? 1600
       if (e.key === 'ArrowLeft') {
@@ -134,25 +149,27 @@ function usePreviewViewport(initial: DeviceMode = 'full') {
         setViewportWidth((w) => clampViewportWidth(w - step, frameW))
       }
     },
-    [device],
+    [preset],
   )
 
-  // Re-clamp when the panel resizes (window / dock)
   useEffect(() => {
     const el = frameRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(() => {
-      if (device === 'full') return
+      if (!isFramedPreset(preset)) return
       setViewportWidth((w) => clampViewportWidth(w, el.clientWidth))
+      setViewportHeight((h) => clampViewportHeight(h, el.clientHeight))
     })
     ro.observe(el)
     return () => ro.disconnect()
-  }, [device])
+  }, [preset])
 
   return {
-    device,
+    preset,
+    presetId,
     setDevice,
     viewportWidth,
+    viewportHeight,
     resizing,
     frameRef,
     onResizePointerDown,
@@ -164,8 +181,9 @@ function usePreviewViewport(initial: DeviceMode = 'full') {
 }
 
 function PreviewDeviceShell({
-  device,
+  preset,
   viewportWidth,
+  viewportHeight,
   resizing,
   frameRef,
   onResizePointerDown,
@@ -175,8 +193,9 @@ function PreviewDeviceShell({
   frameKey,
   children,
 }: {
-  device: DeviceMode
+  preset: DevicePreset
   viewportWidth: number
+  viewportHeight: number
   resizing: boolean
   frameRef: RefObject<HTMLDivElement | null>
   onResizePointerDown: (e: PointerEvent<HTMLButtonElement>) => void
@@ -186,18 +205,28 @@ function PreviewDeviceShell({
   frameKey?: string
   children: ReactNode
 }) {
-  const isFull = device === 'full'
+  const isFull = !isFramedPreset(preset)
+  const canResize = Boolean(preset.resizable || preset.id === 'custom')
+  const chromeClass = `preview-chrome-${preset.chrome}`
   return (
     <div
       ref={frameRef}
-      className={`panel-scroll preview-frame${isFull ? ' preview-frame-full' : ''}${resizing ? ' is-resizing' : ''}`}
+      className={`panel-scroll preview-frame${isFull ? ' preview-frame-full' : ' preview-frame-device'}${resizing ? ' is-resizing' : ''}`}
       key={frameKey}
     >
       <div
-        className={`preview-device ${device}`}
-        style={isFull ? undefined : { width: viewportWidth }}
+        className={`preview-device ${chromeClass}${isFull ? ' full' : ''}`}
+        style={
+          isFull
+            ? undefined
+            : {
+                width: viewportWidth,
+                height: viewportHeight,
+                maxHeight: '100%',
+              }
+        }
       >
-        {!isFull && (
+        {!isFull && canResize && (
           <button
             type="button"
             className="preview-resize-handle"
@@ -214,41 +243,91 @@ function PreviewDeviceShell({
             onKeyDown={onResizeKeyDown}
           />
         )}
+        {!isFull && preset.chrome !== 'none' && preset.chrome !== 'desktop' && (
+          <div className="preview-device-notch" aria-hidden />
+        )}
         <div className="preview-device-main">{children}</div>
+        {!isFull && (preset.chrome === 'phone' || preset.chrome === 'fold') && (
+          <div className="preview-device-home" aria-hidden />
+        )}
       </div>
     </div>
   )
 }
 
-function DeviceModeTabs({
-  device,
+function DevicePresetSelect({
+  presetId,
   onDeviceChange,
   viewportWidth,
+  viewportHeight,
 }: {
-  device: DeviceMode
-  onDeviceChange: (d: DeviceMode) => void
+  presetId: DevicePresetId
+  onDeviceChange: (d: DevicePresetId) => void
   viewportWidth: number
+  viewportHeight: number
 }) {
+  const [open, setOpen] = useState(false)
+  const preset = getDevicePreset(presetId)
+  const groups = devicePresetsByCategory()
+  const sizeLabel =
+    isFramedPreset(preset) && preset.width != null
+      ? `${viewportWidth}×${viewportHeight}`
+      : null
+
   return (
     <>
-      <Tabs
-        activeKey={device}
-        onSelect={(_e, k) => onDeviceChange(k as DeviceMode)}
-        variant="secondary"
-        className="panel-pf-tabs preview-device-tabs"
+      <Select
+        isOpen={open}
+        selected={presetId}
+        onSelect={(_e, value) => {
+          onDeviceChange(String(value) as DevicePresetId)
+          setOpen(false)
+        }}
+        onOpenChange={setOpen}
+        toggle={(toggleRef) => (
+          <MenuToggle
+            ref={toggleRef}
+            onClick={() => setOpen(!open)}
+            isExpanded={open}
+            className="preview-device-toggle"
+          >
+            {preset.label}
+          </MenuToggle>
+        )}
       >
-        <Tab eventKey="full" title={<TabTitleText>Full</TabTitleText>} />
-        <Tab eventKey="desktop" title={<TabTitleText>Desktop</TabTitleText>} />
-        <Tab eventKey="tablet" title={<TabTitleText>Tablet</TabTitleText>} />
-        <Tab eventKey="mobile" title={<TabTitleText>Mobile</TabTitleText>} />
-      </Tabs>
-      {device !== 'full' && (
-        <span className="preview-size-label" title="Viewport width">
-          {viewportWidth}px
+        <SelectList>
+          {groups.flatMap((g) =>
+            g.presets.map((p) => (
+              <SelectOption
+                key={p.id}
+                value={p.id}
+                description={
+                  p.width != null && p.height != null
+                    ? `${p.width}×${p.height} · ${g.label}`
+                    : g.label
+                }
+              >
+                {p.label}
+              </SelectOption>
+            )),
+          )}
+        </SelectList>
+      </Select>
+      {sizeLabel && (
+        <span className="preview-size-label" title="Viewport size">
+          {sizeLabel}
         </span>
       )}
     </>
   )
+}
+
+function defaultDeviceForProject(projectId: string | null): DevicePresetId {
+  const p = getProject(projectId)
+  if (p?.previewDevice) return getDevicePreset(p.previewDevice).id
+  const fromTemplate = getTemplate(p?.templateId).defaultPreviewDevice
+  if (fromTemplate) return getDevicePreset(fromTemplate).id
+  return 'full'
 }
 
 /** Extract path (+ search/hash) from a full URL for display. */
@@ -320,17 +399,24 @@ export function PreviewPanel() {
 }
 
 function LivePreviewPanel({ projectId }: { projectId: string | null }) {
+  const initialDevice = defaultDeviceForProject(projectId)
   const {
-    device,
+    preset,
+    presetId,
     setDevice,
     viewportWidth,
+    viewportHeight,
     resizing,
     frameRef,
     onResizePointerDown,
     onResizePointerMove,
     onResizePointerUp,
     onResizeKeyDown,
-  } = usePreviewViewport('full')
+  } = usePreviewViewport(initialDevice)
+
+  useEffect(() => {
+    setDevice(defaultDeviceForProject(projectId))
+  }, [projectId, setDevice])
   const [ports, setPorts] = useState<SandboxListeningPort[]>([])
   const [loadingPorts, setLoadingPorts] = useState(false)
   const [portsError, setPortsError] = useState<string | null>(null)
@@ -573,10 +659,11 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
               ))}
             </SelectList>
           </Select>
-          <DeviceModeTabs
-            device={device}
+          <DevicePresetSelect
+            presetId={presetId}
             onDeviceChange={setDevice}
             viewportWidth={viewportWidth}
+            viewportHeight={viewportHeight}
           />
           <InputGroup className="preview-address-group">
             <InputGroupItem>
@@ -624,8 +711,9 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
         </div>
       </div>
       <PreviewDeviceShell
-        device={device}
+        preset={preset}
         viewportWidth={viewportWidth}
+        viewportHeight={viewportHeight}
         resizing={resizing}
         frameRef={frameRef}
         onResizePointerDown={onResizePointerDown}
@@ -698,17 +786,24 @@ function LivePreviewPanel({ projectId }: { projectId: string | null }) {
 function DemoPreviewPanel({ projectId }: { projectId: string | null }) {
   const p = getProject(projectId)
   const services = useMemo(() => getPreviewServices(projectId), [projectId])
+  const initialDevice = defaultDeviceForProject(projectId)
   const {
-    device,
+    preset,
+    presetId,
     setDevice,
     viewportWidth,
+    viewportHeight,
     resizing,
     frameRef,
     onResizePointerDown,
     onResizePointerMove,
     onResizePointerUp,
     onResizeKeyDown,
-  } = usePreviewViewport('full')
+  } = usePreviewViewport(initialDevice)
+
+  useEffect(() => {
+    setDevice(defaultDeviceForProject(projectId))
+  }, [projectId, setDevice])
   const [serviceId, setServiceId] = useState(services[0]?.id || 'web')
   const [url, setUrl] = useState(services[0]?.url || 'http://localhost:5173')
   const [pathInput, setPathInput] = useState(() =>
@@ -801,10 +896,11 @@ function DemoPreviewPanel({ projectId }: { projectId: string | null }) {
               ))}
             </SelectList>
           </Select>
-          <DeviceModeTabs
-            device={device}
+          <DevicePresetSelect
+            presetId={presetId}
             onDeviceChange={setDevice}
             viewportWidth={viewportWidth}
+            viewportHeight={viewportHeight}
           />
           <InputGroup className="preview-address-group">
             <InputGroupItem>
@@ -853,8 +949,9 @@ function DemoPreviewPanel({ projectId }: { projectId: string | null }) {
         </div>
       </div>
       <PreviewDeviceShell
-        device={device}
+        preset={preset}
         viewportWidth={viewportWidth}
+        viewportHeight={viewportHeight}
         resizing={resizing}
         frameRef={frameRef}
         onResizePointerDown={onResizePointerDown}

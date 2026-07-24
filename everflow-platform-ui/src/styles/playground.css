@@ -1057,6 +1057,9 @@
     .repo-select {
       min-width: 10rem; max-width: 16rem; width: auto;
     }
+    .repo-worktree-select {
+      min-width: 11rem; max-width: 18rem; width: auto;
+    }
     .repo-toolbar-label {
       font-weight: 600; font-size: 0.85rem; white-space: nowrap;
       overflow: hidden; text-overflow: ellipsis; max-width: 14rem;

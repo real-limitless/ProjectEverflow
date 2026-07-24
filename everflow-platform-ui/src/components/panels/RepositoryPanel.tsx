@@ -21,16 +21,24 @@ import { CreateResourceModal } from '@/components/studio/CreateResourceModal'
 import { EmptySplash } from '@/components/studio/EmptySplash'
 import { getProject, updateProjectInCatalog } from '@/data/projects'
 import { basename } from '@/lib/fileTree'
+import { gitPull, gitPush } from '@/lib/api'
 import { pushToast } from '@/lib/studioToast'
 import {
+  approveWorktree,
   catalogReposToWorkspace,
   checkoutBranch,
+  discardWorktree,
   discoverWorkspaceRepos,
+  isEverflowWorktreePath,
+  getCurrentBranch,
   listBranches,
+  listWorktrees,
   loadCommitFiles,
   loadGitChanges,
   loadGitHistory,
+  readWorktreeIndex,
   type BranchListItem,
+  type ConversationWorktreeMeta,
   type WorkspaceRepo,
 } from '@/lib/workspaceGit'
 import { usePlaygroundStore } from '@/store/playgroundStore'
@@ -77,6 +85,10 @@ export function RepositoryPanel() {
   const activeRepoByProject = usePlaygroundStore((s) => s.activeRepoByProject)
   const setActiveRepo = usePlaygroundStore((s) => s.setActiveRepo)
   const getActiveRepoId = usePlaygroundStore((s) => s.getActiveRepoId)
+  const repoViewPathByProject = usePlaygroundStore((s) => s.repoViewPathByProject)
+  const setRepoViewPath = usePlaygroundStore((s) => s.setRepoViewPath)
+  const projectChats = usePlaygroundStore((s) => s.projectChats)
+  const patchConversationWorktree = usePlaygroundStore((s) => s.patchConversationWorktree)
 
   void catalogVersion
   void activeRepoByProject
@@ -139,6 +151,14 @@ export function RepositoryPanel() {
   const [prBase, setPrBase] = useState('main')
   const [prHead, setPrHead] = useState('feature/branch')
   const [editBody, setEditBody] = useState('')
+  const [linkedWorktrees, setLinkedWorktrees] = useState<
+    Array<ConversationWorktreeMeta & { chatTitle?: string; dirtyHint?: number }>
+  >([])
+  const [worktreeBusy, setWorktreeBusy] = useState(false)
+  const [remoteBusy, setRemoteBusy] = useState(false)
+
+  const viewPathOverride =
+    (currentProjectId && repoViewPathByProject[currentProjectId]) || null
 
   // Selector list: live discovery when sandbox running, else catalog.
   // Live mode never surfaces catalog ghosts without git (e.g. "test (no git)").
@@ -170,6 +190,42 @@ export function RepositoryPanel() {
     )
   }, [repoOptions, activeRepoId, fromApi])
 
+  const effectiveGitPath = useMemo(() => {
+    if (viewPathOverride && isEverflowWorktreePath(viewPathOverride)) {
+      return viewPathOverride
+    }
+    return selectedRepo.path
+  }, [viewPathOverride, selectedRepo.path])
+
+  const viewingWorktree = isEverflowWorktreePath(effectiveGitPath)
+
+  const activeLinkedWorktree = useMemo(() => {
+    const fromList = linkedWorktrees.find(
+      (w) => w.path === effectiveGitPath && w.status === 'active',
+    )
+    if (fromList) return fromList
+    if (!viewingWorktree || !currentProjectId) return undefined
+    const chat = (projectChats[currentProjectId] || []).find(
+      (c) => c.worktree?.path === effectiveGitPath && c.worktree.status === 'active',
+    )
+    if (!chat?.worktree) return undefined
+    return {
+      sessionId: chat.id,
+      repoId: chat.worktree.repoId,
+      parentPath: chat.worktree.parentPath,
+      path: chat.worktree.path,
+      branch: chat.worktree.branch,
+      status: 'active' as const,
+      chatTitle: chat.title,
+    }
+  }, [
+    linkedWorktrees,
+    effectiveGitPath,
+    viewingWorktree,
+    currentProjectId,
+    projectChats,
+  ])
+
   // Keep store selection valid when options change
   useEffect(() => {
     if (!currentProjectId || repoOptions.length === 0) return
@@ -178,7 +234,7 @@ export function RepositoryPanel() {
     }
   }, [currentProjectId, repoOptions, activeRepoId, setActiveRepo])
 
-  // Reset selection when repo changes
+  // Reset selection when repo or view path changes
   useEffect(() => {
     setSelectedPath('')
     setSelectedIssue(null)
@@ -191,7 +247,7 @@ export function RepositoryPanel() {
     setDemoBranch(null)
     setBranches([])
     setBranchOpen(false)
-  }, [selectedRepo.id, selectedRepo.path])
+  }, [selectedRepo.id, selectedRepo.path, effectiveGitPath])
 
   const refreshDiscovery = useCallback(async () => {
     let catalog = getProject(currentProjectId)?.repos || []
@@ -233,6 +289,76 @@ export function RepositoryPanel() {
     void refreshDiscovery()
   }, [refreshDiscovery])
 
+  const refreshLinkedWorktrees = useCallback(async () => {
+    if (!liveMode || !currentProjectId || !selectedRepo.hasGit) {
+      setLinkedWorktrees([])
+      return
+    }
+    try {
+      const [listed, index] = await Promise.all([
+        listWorktrees(currentProjectId, selectedRepo.path).catch(() => []),
+        readWorktreeIndex(currentProjectId).catch(() => ({ entries: [] as ConversationWorktreeMeta[] })),
+      ])
+      const chats = projectChats[currentProjectId] || []
+      const byPath = new Map<string, ConversationWorktreeMeta & { chatTitle?: string }>()
+
+      for (const e of index.entries) {
+        if (e.status !== 'active') continue
+        if (e.parentPath !== selectedRepo.path && e.repoId !== selectedRepo.id) continue
+        const chat = chats.find((c) => c.id === e.sessionId)
+        byPath.set(e.path, { ...e, chatTitle: chat?.title })
+      }
+      for (const wt of listed) {
+        if (!isEverflowWorktreePath(wt.path)) continue
+        if (wt.path === selectedRepo.path) continue
+        const existing = byPath.get(wt.path)
+        if (existing) {
+          if (wt.branch) existing.branch = wt.branch
+          continue
+        }
+        const chat = chats.find((c) => c.worktree?.path === wt.path)
+        byPath.set(wt.path, {
+          sessionId: chat?.id || wt.path,
+          repoId: selectedRepo.id,
+          parentPath: selectedRepo.path,
+          path: wt.path,
+          branch: wt.branch || chat?.worktree?.branch || 'detached',
+          status: 'active',
+          chatTitle: chat?.title,
+        })
+      }
+
+      const rows = Array.from(byPath.values())
+      // Best-effort dirty counts
+      const withDirty = await Promise.all(
+        rows.map(async (row) => {
+          try {
+            const changes = await loadGitChanges(currentProjectId, row.path, {
+              withDiffs: false,
+            })
+            return { ...row, dirtyHint: changes.length }
+          } catch {
+            return { ...row, dirtyHint: undefined }
+          }
+        }),
+      )
+      setLinkedWorktrees(withDirty)
+    } catch {
+      setLinkedWorktrees([])
+    }
+  }, [
+    liveMode,
+    currentProjectId,
+    selectedRepo.hasGit,
+    selectedRepo.path,
+    selectedRepo.id,
+    projectChats,
+  ])
+
+  useEffect(() => {
+    void refreshLinkedWorktrees()
+  }, [refreshLinkedWorktrees])
+
   const refreshGit = useCallback(async () => {
     if (!liveMode || !currentProjectId) {
       setLiveChanges(null)
@@ -241,7 +367,7 @@ export function RepositoryPanel() {
       setGitError(null)
       return
     }
-    if (!selectedRepo.hasGit) {
+    if (!selectedRepo.hasGit && !viewingWorktree) {
       setLiveChanges([])
       setLiveCommits([])
       setLiveBranch(null)
@@ -252,15 +378,18 @@ export function RepositoryPanel() {
     setGitError(null)
     try {
       const [changes, commits] = await Promise.all([
-        loadGitChanges(currentProjectId, selectedRepo.path),
-        loadGitHistory(currentProjectId, selectedRepo.path),
+        loadGitChanges(currentProjectId, effectiveGitPath),
+        loadGitHistory(currentProjectId, effectiveGitPath),
       ])
       setLiveChanges(changes)
       setLiveCommits(commits)
-      setLiveBranch(selectedRepo.branch || null)
+      const branchRes = await getCurrentBranch(currentProjectId, effectiveGitPath)
+      setLiveBranch(branchRes || selectedRepo.branch || null)
 
-      // Cache working-tree changes for Code panel gutters (avoid catalogVersion churn loops)
-      updateProjectInCatalog(currentProjectId, { gitChanges: changes })
+      // Cache working-tree changes for Code panel gutters only for main checkout
+      if (!viewingWorktree) {
+        updateProjectInCatalog(currentProjectId, { gitChanges: changes })
+      }
 
       if (commits[0]) {
         setSelectedCommitId((prev) => prev || commits[0].id)
@@ -275,16 +404,23 @@ export function RepositoryPanel() {
     } finally {
       setGitLoading(false)
     }
-  }, [liveMode, currentProjectId, selectedRepo.hasGit, selectedRepo.path, selectedRepo.branch])
+  }, [
+    liveMode,
+    currentProjectId,
+    selectedRepo.hasGit,
+    selectedRepo.branch,
+    effectiveGitPath,
+    viewingWorktree,
+  ])
 
   useEffect(() => {
     void refreshGit()
   }, [refreshGit])
 
   const loadBranchList = useCallback(async () => {
-    if (liveMode && currentProjectId && selectedRepo.hasGit) {
+    if (liveMode && currentProjectId && (selectedRepo.hasGit || viewingWorktree)) {
       try {
-        const list = await listBranches(currentProjectId, selectedRepo.path)
+        const list = await listBranches(currentProjectId, effectiveGitPath)
         setBranches(list)
       } catch {
         setBranches([])
@@ -326,6 +462,8 @@ export function RepositoryPanel() {
     catalogRepos,
     studio.commits,
     primaryRepoId,
+    effectiveGitPath,
+    viewingWorktree,
   ])
 
   useEffect(() => {
@@ -408,9 +546,9 @@ export function RepositoryPanel() {
   // Lazy-load files for a live commit
   useEffect(() => {
     if (!liveMode || !currentProjectId || !selectedCommit || selectedCommit.files.length > 0) return
-    if (!selectedRepo.hasGit) return
+    if (!selectedRepo.hasGit && !viewingWorktree) return
     let cancelled = false
-    void loadCommitFiles(currentProjectId, selectedRepo.path, selectedCommit.hash).then((files) => {
+    void loadCommitFiles(currentProjectId, effectiveGitPath, selectedCommit.hash).then((files) => {
       if (cancelled || !files.length) return
       setLiveCommits((prev) =>
         (prev || []).map((c) => (c.id === selectedCommit.id ? { ...c, files } : c)),
@@ -426,7 +564,8 @@ export function RepositoryPanel() {
     selectedCommit?.hash,
     selectedCommit?.files.length,
     selectedRepo.hasGit,
-    selectedRepo.path,
+    effectiveGitPath,
+    viewingWorktree,
   ])
 
   const graphLanes = useMemo(() => {
@@ -456,11 +595,11 @@ export function RepositoryPanel() {
     setBranchOpen(false)
     if (!branch || branch === branchLabel) return
 
-    if (liveMode && currentProjectId && selectedRepo.hasGit) {
+    if (liveMode && currentProjectId && (selectedRepo.hasGit || viewingWorktree)) {
       setBranchSwitching(true)
       setGitError(null)
       try {
-        const result = await checkoutBranch(currentProjectId, selectedRepo.path, branch)
+        const result = await checkoutBranch(currentProjectId, effectiveGitPath, branch)
         if (!result.ok) {
           setGitError(result.error)
           pushToast(result.error.slice(0, 120), { kind: 'danger' })
@@ -529,10 +668,95 @@ export function RepositoryPanel() {
         : null
 
   const sourceHint = liveMode
-    ? selectedRepo.hasGit
-      ? `Workspace · ${selectedRepo.path === '.' ? '/workspace' : `/workspace/${selectedRepo.path}`}`
-      : cloneHint || 'No git repository at this path — enter a URL at create time or Connect, then Refresh'
+    ? viewingWorktree
+      ? `Worktree · /workspace/${effectiveGitPath}${
+          activeLinkedWorktree?.branch ? ` · ${activeLinkedWorktree.branch}` : ''
+        }`
+      : selectedRepo.hasGit
+        ? `Workspace · ${selectedRepo.path === '.' ? '/workspace' : `/workspace/${selectedRepo.path}`}`
+        : cloneHint ||
+          'No git repository at this path — enter a URL at create time or Connect, then Refresh'
     : 'Demo data (sandbox not live)'
+
+  const onApproveLinkedWorktree = async () => {
+    if (!currentProjectId || !activeLinkedWorktree) return
+    setWorktreeBusy(true)
+    try {
+      const res = await approveWorktree(currentProjectId, {
+        parentPath: activeLinkedWorktree.parentPath,
+        worktreePath: activeLinkedWorktree.path,
+        branch: activeLinkedWorktree.branch,
+        sessionId: activeLinkedWorktree.sessionId,
+      })
+      if (!res.ok) {
+        pushToast(res.error, { kind: 'danger' })
+        return
+      }
+      patchConversationWorktree(
+        currentProjectId,
+        activeLinkedWorktree.sessionId,
+        {
+          repoId: activeLinkedWorktree.repoId,
+          parentPath: activeLinkedWorktree.parentPath,
+          path: activeLinkedWorktree.path,
+          branch: activeLinkedWorktree.branch,
+          status: 'applied',
+        },
+        { useWorktree: false },
+      )
+      setRepoViewPath(currentProjectId, null)
+      pushToast(
+        res.parentBranch ? `Merged into ${res.parentBranch}` : 'Worktree approved',
+        { kind: 'success' },
+      )
+      await refreshLinkedWorktrees()
+      await refreshGit()
+    } finally {
+      setWorktreeBusy(false)
+    }
+  }
+
+  const onDiscardLinkedWorktree = async () => {
+    if (!currentProjectId || !activeLinkedWorktree) return
+    if (
+      !window.confirm(
+        `Discard isolated branch ${activeLinkedWorktree.branch}? Changes will be lost.`,
+      )
+    ) {
+      return
+    }
+    setWorktreeBusy(true)
+    try {
+      const res = await discardWorktree(currentProjectId, {
+        parentPath: activeLinkedWorktree.parentPath,
+        worktreePath: activeLinkedWorktree.path,
+        branch: activeLinkedWorktree.branch,
+        sessionId: activeLinkedWorktree.sessionId,
+      })
+      if (!res.ok) {
+        pushToast(res.error, { kind: 'danger' })
+        return
+      }
+      patchConversationWorktree(
+        currentProjectId,
+        activeLinkedWorktree.sessionId,
+        {
+          repoId: activeLinkedWorktree.repoId,
+          parentPath: activeLinkedWorktree.parentPath,
+          path: activeLinkedWorktree.path,
+          branch: activeLinkedWorktree.branch,
+          status: 'discarded',
+        },
+        { useWorktree: false },
+      )
+      setRepoViewPath(currentProjectId, null)
+      pushToast('Worktree discarded', { kind: 'warning' })
+      await refreshLinkedWorktrees()
+      await refreshGit()
+    } finally {
+      setWorktreeBusy(false)
+    }
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -564,6 +788,46 @@ export function RepositoryPanel() {
               {selectedRepo.label}
             </span>
           )}
+          {liveMode &&
+          hasAttachedRepo &&
+          (linkedWorktrees.length > 0 || viewingWorktree) ? (
+            <FormSelect
+              id="worktree-select"
+              className="repo-worktree-select"
+              value={viewingWorktree ? effectiveGitPath : '__main__'}
+              onChange={(_e, v) => {
+                if (!currentProjectId) return
+                if (v === '__main__') setRepoViewPath(currentProjectId, null)
+                else setRepoViewPath(currentProjectId, v)
+              }}
+              aria-label="Select checkout or worktree"
+            >
+              <FormSelectOption
+                value="__main__"
+                label={`Main · ${selectedRepo.label}`}
+              />
+              {linkedWorktrees.map((w) => (
+                <FormSelectOption
+                  key={w.path}
+                  value={w.path}
+                  label={`${w.branch}${w.chatTitle ? ` · ${w.chatTitle}` : ''}${
+                    w.dirtyHint != null ? ` (${w.dirtyHint})` : ''
+                  }`}
+                />
+              ))}
+              {viewingWorktree &&
+              !linkedWorktrees.some((w) => w.path === effectiveGitPath) ? (
+                <FormSelectOption
+                  value={effectiveGitPath}
+                  label={
+                    activeLinkedWorktree?.branch
+                      ? `${activeLinkedWorktree.branch} · isolated`
+                      : effectiveGitPath
+                  }
+                />
+              ) : null}
+            </FormSelect>
+          ) : null}
           <Select
             id="repo-branch-select"
             isOpen={branchOpen}
@@ -617,6 +881,92 @@ export function RepositoryPanel() {
               ))}
             </SelectList>
           </Select>
+          {viewingWorktree && activeLinkedWorktree ? (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                isDisabled={worktreeBusy}
+                onClick={() => void onApproveLinkedWorktree()}
+              >
+                Approve into main
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                isDisabled={worktreeBusy}
+                onClick={() => void onDiscardLinkedWorktree()}
+              >
+                Discard
+              </Button>
+            </>
+          ) : null}
+          {liveMode && hasAttachedRepo && selectedRepo.hasGit && currentProjectId ? (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                isDisabled={remoteBusy || gitLoading}
+                isLoading={remoteBusy}
+                onClick={() => {
+                  void (async () => {
+                    setRemoteBusy(true)
+                    try {
+                      const res = await gitPull(currentProjectId, {
+                        path: effectiveGitPath || selectedRepo.path || '.',
+                        branch: branchLabel || undefined,
+                      })
+                      if (!res.ok) {
+                        pushToast(res.stderr || res.stdout || 'Pull failed', { kind: 'danger' })
+                      } else {
+                        pushToast(
+                          res.used_credential ? 'Pulled (using saved token)' : 'Pulled',
+                          { kind: 'success' },
+                        )
+                        await refreshGit()
+                      }
+                    } catch (e) {
+                      pushToast(e instanceof Error ? e.message : 'Pull failed', { kind: 'danger' })
+                    } finally {
+                      setRemoteBusy(false)
+                    }
+                  })()
+                }}
+              >
+                Pull
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                isDisabled={remoteBusy || gitLoading}
+                onClick={() => {
+                  void (async () => {
+                    setRemoteBusy(true)
+                    try {
+                      const res = await gitPush(currentProjectId, {
+                        path: effectiveGitPath || selectedRepo.path || '.',
+                        branch: branchLabel || undefined,
+                      })
+                      if (!res.ok) {
+                        pushToast(res.stderr || res.stdout || 'Push failed', { kind: 'danger' })
+                      } else {
+                        pushToast(
+                          res.used_credential ? 'Pushed (using saved token)' : 'Pushed',
+                          { kind: 'success' },
+                        )
+                      }
+                    } catch (e) {
+                      pushToast(e instanceof Error ? e.message : 'Push failed', { kind: 'danger' })
+                    } finally {
+                      setRemoteBusy(false)
+                    }
+                  })()
+                }}
+              >
+                Push
+              </Button>
+            </>
+          ) : null}
           <Button
             variant="plain"
             size="sm"
@@ -631,6 +981,7 @@ export function RepositoryPanel() {
             isDisabled={gitLoading || discovering || branchSwitching}
             onClick={() => {
               void refreshDiscovery()
+                .then(() => refreshLinkedWorktrees())
                 .then(() => refreshGit())
                 .then(() => loadBranchList())
             }}
@@ -657,13 +1008,20 @@ export function RepositoryPanel() {
       )}
       <div className="repo-body" style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
         {sub === 'changes' && (
-          liveMode && !selectedRepo.hasGit ? (
+          liveMode && !selectedRepo.hasGit && !viewingWorktree ? (
             <EmptySplash
               title="Not a git repository"
               body={`No .git found for ${selectedRepo.label}. Clone or init a repo under the workspace path, then Refresh.`}
             />
           ) : changes.length === 0 ? (
-            <EmptySplash title="Clean working tree" body="No working-tree changes in this repository." />
+            <EmptySplash
+              title="Clean working tree"
+              body={
+                viewingWorktree
+                  ? 'No working-tree changes in this isolated worktree.'
+                  : 'No working-tree changes in this repository.'
+              }
+            />
           ) : (
             <div className="repo-changes-layout">
               <div className="repo-changes-list">

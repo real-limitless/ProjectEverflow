@@ -252,7 +252,7 @@ export async function ensureReposCloned(
           low.includes('could not read username')
         ) {
           err +=
-            '\n\nPrivate repositories need a GitHub token (not configured yet). Use a public HTTPS URL for now.'
+            '\n\nPrivate repositories need a GitHub token. Add a PAT under Organization & Git settings, then retry.'
         }
         out.push({
           ...r,

@@ -11,11 +11,14 @@ export function PlaygroundPage() {
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
   const openProjectIds = usePlaygroundStore((s) => s.openProjectIds)
   const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
+  const sandboxVerified = usePlaygroundStore((s) =>
+    s.currentProjectId ? Boolean(s.sandboxReadyByProject[s.currentProjectId]) : false,
+  )
   void catalogVersion
 
   const hasOpenProject = Boolean(currentProjectId && openProjectIds.length > 0)
   const project = currentProjectId ? getProject(currentProjectId) : undefined
-  const workbenchReady = isSandboxWorkbenchReady(project)
+  const workbenchReady = isSandboxWorkbenchReady(project, sandboxVerified)
 
   if (!hasOpenProject || !currentProjectId) {
     return (
@@ -25,14 +28,12 @@ export function PlaygroundPage() {
     )
   }
 
-  // Sandbox-first: tab bar stays so users can switch/close; content is gated.
+  // Sandbox-first: tab bar stays so users can switch/close; modal gate until verified running.
   if (!workbenchReady) {
     return (
       <div className="pg-main-workbench pg-main-workbench--booting" id="main-content-playground">
         <ProjectTabBar />
-        <div className="pg-main-workbench--empty sandbox-boot-host">
-          <SandboxBootGate projectId={currentProjectId} />
-        </div>
+        <SandboxBootGate projectId={currentProjectId} />
       </div>
     )
   }

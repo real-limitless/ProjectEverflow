@@ -2,6 +2,7 @@ import { useState } from 'react'
 import FileIcon from '@patternfly/react-icons/dist/esm/icons/file-icon'
 import ExternalLinkAltIcon from '@patternfly/react-icons/dist/esm/icons/external-link-alt-icon'
 import { markdownToHtml } from '@/lib/chatMarkdown'
+import { usePlaygroundStore } from '@/store/playgroundStore'
 import type {
   ChatBlock,
   ChatMessage,
@@ -26,6 +27,7 @@ function toolIcon(name?: string): string {
   if (n === 'write' || n === 'edit' || n === 'apply_patch') return '✏️'
   if (n === 'grep' || n === 'glob') return '🔎'
   if (n === 'webfetch' || n === 'websearch' || n === 'web_search') return '🌐'
+  if (n.includes('knowledge_search')) return '📚'
   if (n === 'todowrite' || n === 'todoread') return '☑'
   if (n === 'skill') return '🧩'
   if (n === 'question') return '❓'
@@ -222,6 +224,44 @@ function QuestionBlockView({
   )
 }
 
+function KnowledgeCitationsBlock({ block }: { block: ChatBlock }) {
+  const openPanelType = usePlaygroundStore((s) => s.openPanelType)
+  const hits = block.knowledgeCitations?.hits || []
+  return (
+    <div className="tool-card knowledge-cite-card">
+      <div className="tool-card-head">
+        <span>📚 Knowledge sources</span>
+        <span className="ok">{hits.length} cited</span>
+      </div>
+      {block.knowledgeCitations?.query ? (
+        <div className="web-query">{block.knowledgeCitations.query}</div>
+      ) : null}
+      <ul className="web-results">
+        {hits.map((h) => (
+          <li key={`${h.canvasId}-${h.chunkId || h.text.slice(0, 24)}`}>
+            <button
+              type="button"
+              className="msg-question-chip"
+              style={{ marginBottom: 4 }}
+              onClick={() => openPanelType('knowledge')}
+              title="Open Knowledge panel"
+            >
+              {h.canvasName}
+              {typeof h.score === 'number' ? ` · ${h.score.toFixed(2)}` : ''}
+            </button>
+            {h.sourceUrl || h.path ? (
+              <div className="lc-meta" style={{ fontSize: '0.85em' }}>
+                {h.path || h.sourceUrl}
+              </div>
+            ) : null}
+            <p>{h.text.slice(0, 320)}{h.text.length > 320 ? '…' : ''}</p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function BlockView({
   block,
   onQuestionOption,
@@ -315,6 +355,8 @@ function BlockView({
           </ul>
         </div>
       )
+    case 'knowledge_citations':
+      return <KnowledgeCitationsBlock block={block} />
     case 'tool':
       return (
         <div className={`tool-card tool-card--${block.tool?.status || 'done'}`}>
@@ -424,7 +466,8 @@ export function ChatMessageContent({
           b.type === 'terminal' ||
           b.type === 'web_search' ||
           b.type === 'question' ||
-          b.type === 'permission',
+          b.type === 'permission' ||
+          b.type === 'knowledge_citations',
       )
     )
 

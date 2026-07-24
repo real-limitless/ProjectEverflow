@@ -17,6 +17,7 @@ import SaveIcon from '@patternfly/react-icons/dist/esm/icons/save-icon'
 import { PROJECTS, getProject } from '@/data/projects'
 import { getSandboxStatus, isDemoMode } from '@/lib/api'
 import type { NamedLayoutSnapshot } from '@/lib/namedLayouts'
+import { withEffectiveSandboxStatus } from '@/lib/sandboxReady'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 interface ContextMenuState {
@@ -54,12 +55,15 @@ export function ProjectTabBar() {
   // Keep sandbox status fresh for the active project (no UI chip — status is the tab orb only)
   const currentProject = getProject(currentProjectId)
   const sandboxStatus = currentProject?.sandboxStatus
+  const sandboxVerified = usePlaygroundStore((s) =>
+    s.currentProjectId ? Boolean(s.sandboxReadyByProject[s.currentProjectId]) : false,
+  )
   useEffect(() => {
     if (!currentProjectId || !currentProject?.fromApi || isDemoMode()) return
     let cancelled = false
     const tick = async () => {
       try {
-        const st = await getSandboxStatus(currentProjectId)
+        const st = withEffectiveSandboxStatus(await getSandboxStatus(currentProjectId))
         if (cancelled) return
         patchProjectSandbox(currentProjectId, {
           sandboxStatus: st.status,
@@ -73,11 +77,12 @@ export function ProjectTabBar() {
       }
     }
     void tick()
+    // Faster while unverified or not running so a dead sandbox re-gates quickly
     const interval =
-      sandboxStatus === 'running'
-        ? 15000
-        : sandboxStatus === 'pending' || sandboxStatus === 'creating'
-          ? 2000
+      sandboxStatus === 'pending' || sandboxStatus === 'creating'
+        ? 2000
+        : sandboxStatus === 'running' && sandboxVerified
+          ? 15000
           : 5000
     const id = window.setInterval(() => void tick(), interval)
     return () => {
@@ -88,6 +93,7 @@ export function ProjectTabBar() {
     currentProjectId,
     currentProject?.fromApi,
     sandboxStatus,
+    sandboxVerified,
     patchProjectSandbox,
   ])
 
