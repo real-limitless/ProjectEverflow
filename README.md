@@ -25,10 +25,30 @@ Three services:
 - Docker or Podman with privileged containers + device passthrough
 - Without KVM, set `SANDBOX_MOCK=true` (default in compose) for in-memory mock sandboxes
 
+### Quick install
+
+```bash
+./scripts/everflow-install.sh
+```
+
+Generates `.env` secrets, starts Compose, waits for `GET /api/v1/system/health`, then open the UI for **first-run setup** (platform admin + first organization).
+
+Manual alternative:
+
 ```bash
 cp .env.example .env
-# edit SANDBOX_AGENT_TOKEN and SECRET_KEY
+# edit SANDBOX_AGENT_TOKEN, SECRET_KEY, and CREDENTIALS_ENCRYPTION_KEY
+docker compose up --build
 ```
+
+### Production checklist (operators)
+
+- Set `ENVIRONMENT=production` (API refuses default `SECRET_KEY` / `SANDBOX_AGENT_TOKEN`)
+- Set unique `SECRET_KEY`, `SANDBOX_AGENT_TOKEN`, and `CREDENTIALS_ENCRYPTION_KEY`
+- Prefer PostgreSQL via `DATABASE_URL=postgresql+asyncpg://…`
+- Confirm `/dev/kvm` and `SANDBOX_MOCK=false` for real sandboxes
+- Optional: `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` (+ `OAUTH_REDIRECT_BASE_URL`) for Sign in with GitHub
+- After boot: complete first-run wizard → invite teammates → add GitHub PAT under Organization & Git
 
 ### Production-style stack
 
@@ -40,7 +60,8 @@ docker compose up --build
 
 - UI: http://localhost:3000  
 - API docs: http://localhost:8000/docs  
-- Health: `GET /api/v1/health` · Ready (DB + agent): `GET /api/v1/ready`
+- Health: `GET /api/v1/health` · Ready (DB + agent + setup flag): `GET /api/v1/ready`  
+- First-run: `GET /api/v1/setup/status` · `POST /api/v1/setup/bootstrap`
 
 ### Development stack (hot reload)
 
@@ -85,12 +106,20 @@ Project sandboxes boot an **OCI guest image** (separate from the sandbox-agent h
 
 ```bash
 ./deploy/build-sandbox-guest.sh
-# optional: PUSH=true SANDBOX_GUEST_IMAGE=ghcr.io/you/everflow-sandbox-guest:latest ./deploy/build-sandbox-guest.sh
+# optional: PUSH=true ./deploy/build-sandbox-guest.sh
+# default tag: ghcr.io/limitless-rh/everflow-sandbox-guest:dev
 ```
 
-Set `SANDBOX_DEFAULT_IMAGE=everflow-sandbox-guest:dev` (default in `.env.example`). Microsandbox must be able to pull the tag (local store or registry). First boot may pull/cache the image once; later creates stay fast.
+Set `SANDBOX_DEFAULT_IMAGE=ghcr.io/limitless-rh/everflow-sandbox-guest:dev` (default in `.env.example`). Microsandbox must be able to pull the tag (local store or registry). First boot may pull/cache the image once; later creates stay fast.
 
 See `deploy/sandbox-guest.Dockerfile` and `everflow-sandbox-agent/README.md`.
+
+### App toolkits
+
+Project create templates seed cloneable starters from [`toolkits/`](toolkits/README.md) (web, PHP, Expo/React Native, desktop, Python, full-stack). Mobile templates are labeled **(React Native)** and share the Expo toolkit; Preview uses phone/tablet device frames around Expo web (not real simulators).
+
+- Local seed: `TOOLKIT_LOCAL_ROOT=/toolkits` (mounted/copied into the API image)
+- Optional remote: `TOOLKIT_REPO_BASE=https://github.com/org/everflow-toolkit-{id}.git`
 
 ## Local development (without Compose)
 
