@@ -269,7 +269,7 @@ export function DeployPanel() {
     setRunStatus('running')
     setStages([
       { id: 'validate', name: 'Validate', status: 'running' },
-      { id: 'ssh', name: 'SSH deploy', status: 'idle' },
+      { id: 'ssh', name: 'SSH deploy', status: 'pending' },
     ])
     setLogLines([
       `Deploying to ${selectedHost.name} (${action})…`,
