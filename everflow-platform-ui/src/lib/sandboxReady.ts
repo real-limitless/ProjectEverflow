@@ -56,8 +56,12 @@ export function isSandboxPollTerminal(status?: string | null): boolean {
 export function effectiveSandboxStatus(st: SandboxStatus): string {
   const top = st.status || ''
   const agentRaw = st.agent && typeof st.agent.status === 'string' ? st.agent.status : null
-  const agent = agentRaw?.trim() || null
+  const agent = agentRaw?.trim().toLowerCase() || null
   if (agent && agent !== top) {
+    // Transitional drain — keep platform running so TabBar/BootGate do not thrash.
+    if (top === 'running' && agent === 'draining') {
+      return top
+    }
     if (top === 'running' && agent !== 'running') {
       return agent
     }

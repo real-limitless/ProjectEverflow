@@ -635,6 +635,105 @@ async def test_msb_get_keeps_running_on_transient_sdk_error(monkeypatch) -> None
     assert rec.status == "running"
 
 
+def test_is_transient_guest_error() -> None:
+    from app.msb import is_transient_guest_error
+
+    assert is_transient_guest_error(RuntimeError("reader closed before response for id=1"))
+    assert is_transient_guest_error(RuntimeError("exec session ended without exit event"))
+    assert not is_transient_guest_error(RuntimeError("Sandbox not found"))
+
+
+@pytest.mark.asyncio
+async def test_msb_exec_retries_transient_once(monkeypatch) -> None:
+    """One reconnect retry on reader-closed; second attempt succeeds."""
+    from datetime import datetime, timezone
+
+    from app.msb import MicrosandboxBackend, SandboxRecord
+
+    settings = Settings(sandbox_mock=False, workspace_root="/tmp/everflow-agent-test-ws")
+    backend = MicrosandboxBackend(settings)
+    name = "ef-exec-retry"
+    backend._meta[name] = SandboxRecord(
+        name=name,
+        status="running",
+        image="python",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    calls = {"n": 0}
+
+    class FakeSb:
+        async def exec(self, cmd, args, **kwargs):  # noqa: ANN001
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("agent client error: reader closed before response for id=1")
+
+            class Out:
+                stdout_text = "ok"
+                stderr_text = ""
+                exit_code = 0
+
+            return Out()
+
+    async def fake_connect(_name: str):
+        return FakeSb()
+
+    monkeypatch.setattr(backend, "_connect", fake_connect)
+
+    code, stdout, stderr = await backend.exec(name, "echo", ["hi"], timeout_seconds=5)
+    assert code == 0
+    assert stdout == "ok"
+    assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_msb_exec_serializes_per_sandbox(monkeypatch) -> None:
+    """Concurrent execs for one sandbox must not overlap."""
+    from datetime import datetime, timezone
+
+    from app.msb import MicrosandboxBackend, SandboxRecord
+
+    settings = Settings(sandbox_mock=False, workspace_root="/tmp/everflow-agent-test-ws")
+    backend = MicrosandboxBackend(settings)
+    name = "ef-exec-serial"
+    backend._meta[name] = SandboxRecord(
+        name=name,
+        status="running",
+        image="python",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    active = 0
+    max_active = 0
+
+    class FakeSb:
+        async def exec(self, cmd, args, **kwargs):  # noqa: ANN001
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.05)
+            active -= 1
+
+            class Out:
+                stdout_text = ""
+                stderr_text = ""
+                exit_code = 0
+
+            return Out()
+
+    async def fake_connect(_name: str):
+        return FakeSb()
+
+    monkeypatch.setattr(backend, "_connect", fake_connect)
+
+    await asyncio.gather(
+        backend.exec(name, "true", [], timeout_seconds=5),
+        backend.exec(name, "true", [], timeout_seconds=5),
+        backend.exec(name, "true", [], timeout_seconds=5),
+    )
+    assert max_active == 1
+
+
 @pytest.mark.asyncio
 async def test_msb_get_marks_error_on_not_found(monkeypatch) -> None:
     import sys

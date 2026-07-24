@@ -446,6 +446,15 @@ body,
   background: var(--pf-t--global--background--color--action--plain--hover);
 }
 
+.project-tab-context-item.is-danger {
+  color: var(--pf-t--global--text--color--status--danger--default);
+}
+
+.project-tab-context-item.is-danger:hover {
+  background: var(--pf-t--global--background--color--status--danger--default);
+  color: var(--pf-t--global--text--color--status--on-danger--default, #fff);
+}
+
 .project-tab-context-sep {
   height: 1px;
   margin: 0.25rem 0.35rem;

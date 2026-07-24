@@ -29,6 +29,11 @@ type EnsureOpts = {
 }
 
 const inflight = new Map<string, Promise<EnsureSandboxResult>>()
+/** Consecutive dead observations before auto-recreate (avoids single blip storms). */
+const deadObservations = new Map<string, number>()
+const recreateCooldownUntil = new Map<string, number>()
+const DEAD_OBSERVATIONS_NEEDED = 2
+const RECREATE_COOLDOWN_MS = 20_000
 
 function applyUpdate(
   st: SandboxStatus,
@@ -38,6 +43,32 @@ function applyUpdate(
 }
 
 const withEffectiveStatus = withEffectiveSandboxStatus
+
+function noteAlive(projectId: string): void {
+  deadObservations.set(projectId, 0)
+}
+
+function noteDead(projectId: string): boolean {
+  const n = (deadObservations.get(projectId) || 0) + 1
+  deadObservations.set(projectId, n)
+  return n >= DEAD_OBSERVATIONS_NEEDED
+}
+
+function canAutoRecreate(projectId: string): boolean {
+  return Date.now() >= (recreateCooldownUntil.get(projectId) || 0)
+}
+
+function markRecreated(projectId: string): void {
+  recreateCooldownUntil.set(projectId, Date.now() + RECREATE_COOLDOWN_MS)
+  deadObservations.set(projectId, 0)
+}
+
+function shouldAutoRecreate(projectId: string, status: string, force?: boolean): boolean {
+  if (force) return true
+  if (!shouldRecreateSandbox(status)) return false
+  if (!canAutoRecreate(projectId)) return false
+  return noteDead(projectId)
+}
 
 /**
  * Ensure a project's sandbox reaches a terminal state (prefer running).
@@ -76,6 +107,7 @@ async function doEnsure(
     // If status fetch fails entirely, try recreate as last resort when forced
     if (opts?.forceRecreate) {
       try {
+        markRecreated(projectId)
         st = await recreateSandbox(projectId)
         applyUpdate(st, onUpdate)
         st = withEffectiveStatus(
@@ -111,68 +143,17 @@ async function doEnsure(
 
   applyUpdate(st, onUpdate)
 
-  // #region agent log
-  if (
-    st.status !== 'running' ||
-    /drain|not running|missing|crashed/i.test(st.error || '')
-  ) {
-    fetch('http://127.0.0.1:7314/ingest/d6f4ef88-4822-4e57-b621-261934682132', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Debug-Session-Id': 'c0f5c1',
-      },
-      body: JSON.stringify({
-        sessionId: 'c0f5c1',
-        runId: 'pre-fix',
-        hypothesisId: 'D',
-        location: 'ensureSandbox.ts:doEnsure',
-        message: 'ensure saw non-running or drain error',
-        data: {
-          projectId,
-          status: st.status,
-          error: (st.error || '').slice(0, 300),
-          sandbox_name: st.sandbox_name,
-          forceRecreate: !!opts?.forceRecreate,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {})
-  }
-  // #endregion
-
   if (st.status === 'running' && !opts?.forceRecreate) {
+    noteAlive(projectId)
     return { status: st, action: 'none', ok: true }
   }
 
   let action: EnsureSandboxResult['action'] = 'poll'
 
   try {
-    if (opts?.forceRecreate || shouldRecreateSandbox(st.status)) {
+    if (shouldAutoRecreate(projectId, st.status, opts?.forceRecreate)) {
       action = 'recreate'
-      // #region agent log
-      fetch('http://127.0.0.1:7314/ingest/d6f4ef88-4822-4e57-b621-261934682132', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Debug-Session-Id': 'c0f5c1',
-        },
-        body: JSON.stringify({
-          sessionId: 'c0f5c1',
-          runId: 'pre-fix',
-          hypothesisId: 'D',
-          location: 'ensureSandbox.ts:doEnsure',
-          message: 'ensure triggering recreate',
-          data: {
-            projectId,
-            status: st.status,
-            error: (st.error || '').slice(0, 300),
-            forceRecreate: !!opts?.forceRecreate,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {})
-      // #endregion
+      markRecreated(projectId)
       st = await runRecreate(projectId, onUpdate)
     } else if (st.status === 'stopped') {
       action = 'start'
@@ -180,12 +161,16 @@ async function doEnsure(
         st = await startSandbox(projectId)
         applyUpdate(st, onUpdate)
       } catch (startErr) {
-        // Missing / dead on agent → recreate
+        // Missing / dead on agent → recreate (with consecutive/cooldown guards)
         const msg = startErr instanceof Error ? startErr.message : String(startErr)
-        if (/not found|missing|not running|crashed|409|404/i.test(msg)) {
+        if (
+          /not found|missing|not running|crashed|409|404/i.test(msg) &&
+          shouldAutoRecreate(projectId, 'error', opts?.forceRecreate)
+        ) {
           action = 'recreate'
+          markRecreated(projectId)
           st = await runRecreate(projectId, onUpdate)
-        } else {
+        } else if (!/not found|missing|not running|crashed|409|404/i.test(msg)) {
           throw startErr
         }
       }
@@ -193,6 +178,7 @@ async function doEnsure(
     // pending / creating → just poll
 
     if (st.status === 'running') {
+      noteAlive(projectId)
       return { status: st, action, ok: true }
     }
 
@@ -200,9 +186,14 @@ async function doEnsure(
       await waitForSandbox(projectId, { onUpdate, intervalMs, timeoutMs }),
     )
 
-    // Still dead after poll (e.g. stuck creating, or crashed mid-wait) → one auto-recreate
-    if (st.status !== 'running' && action !== 'recreate' && shouldRecreateSandbox(st.status)) {
+    // Still dead after poll — auto-recreate only after consecutive dead + cooldown
+    if (
+      st.status !== 'running' &&
+      action !== 'recreate' &&
+      shouldAutoRecreate(projectId, st.status, false)
+    ) {
       action = 'recreate'
+      markRecreated(projectId)
       st = await runRecreate(projectId, onUpdate)
       if (st.status !== 'running') {
         st = withEffectiveStatus(
@@ -211,6 +202,8 @@ async function doEnsure(
       }
     }
 
+    if (st.status === 'running') noteAlive(projectId)
+
     return {
       status: st,
       action,
@@ -218,10 +211,15 @@ async function doEnsure(
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Sandbox ensure failed'
-    // Not running / missing on agent during ensure → force recreate once
-    if (action !== 'recreate' && /not found|missing|not running|crashed|409|404/i.test(msg)) {
+    // Not running / missing on agent during ensure → force recreate once (guarded)
+    if (
+      action !== 'recreate' &&
+      /not found|missing|not running|crashed|409|404/i.test(msg) &&
+      shouldAutoRecreate(projectId, 'error', opts?.forceRecreate)
+    ) {
       try {
         action = 'recreate'
+        markRecreated(projectId)
         st = await runRecreate(projectId, onUpdate)
         if (st.status !== 'running') {
           st = withEffectiveStatus(

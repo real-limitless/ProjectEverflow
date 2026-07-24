@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -21,52 +19,6 @@ from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentEr
 
 logger = logging.getLogger(__name__)
 
-# #region agent log
-def _agent_dbg(
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: dict[str, Any] | None = None,
-) -> None:
-    payload = {
-        "sessionId": "c0f5c1",
-        "runId": "pre-fix",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data or {},
-        "timestamp": int(time.time() * 1000),
-    }
-    line = json.dumps(payload, default=str) + "\n"
-    for path in (
-        Path("/home/chchiu/Documents/GitHub/ProjectEverflow3/.cursor/debug-c0f5c1.log"),
-        # services/sandbox.py → app/_debug_c0f5c1.ndjson (bind-mounted)
-        Path(__file__).resolve().parents[1] / "_debug_c0f5c1.ndjson",
-    ):
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(line)
-        except Exception:
-            pass
-    try:
-        import urllib.request
-
-        req = urllib.request.Request(
-            "http://host.containers.internal:7314/ingest/d6f4ef88-4822-4e57-b621-261934682132",
-            data=line.encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "X-Debug-Session-Id": "c0f5c1",
-            },
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=0.4)  # noqa: S310
-    except Exception:
-        pass
-
-
-# #endregion
 
 SANDBOX_STATUSES = (
     "pending",
@@ -90,8 +42,28 @@ DEAD_AGENT_STATUSES = frozenset(
     }
 )
 
+# Graceful shutdown in progress — do not mark dead; wait for stopped/crashed/running.
+TRANSITIONAL_AGENT_STATUSES = frozenset({"draining"})
+
 MISSING_ON_AGENT = "Sandbox not found on agent; recreate to restore"
 DEAD_ON_AGENT = "Sandbox is not running on agent; recreate to restore"
+
+# Short TTL so OpenCode/tab-bar storms reuse the last successful running refresh.
+_REFRESH_TTL_S = 2.5
+# project_id -> (monotonic_ts, db_status, agent_info)
+_refresh_cache: dict[UUID, tuple[float, str, dict[str, Any] | None]] = {}
+
+
+def sandbox_not_running_detail(project: Project) -> str:
+    """409 detail for chat/API gates — include stored reason, not just status=error."""
+    status = (project.sandbox_status or "unknown").strip() or "unknown"
+    base = f"Sandbox is not running (status={status})"
+    err = (project.sandbox_error or "").strip()
+    if not err or err.lower() == base.lower():
+        return base
+    if base.lower() in err.lower():
+        return err[:2000]
+    return f"{base}: {err}"[:2000]
 
 
 def normalize_harness_ids(raw: list[Any] | None) -> list[str]:
@@ -137,12 +109,23 @@ def normalize_agent_status(live: str | None, *, fallback: str | None = None) -> 
     raw = (live or "").strip().lower()
     if not raw:
         return (fallback or "unknown").strip().lower() or "unknown"
+    if raw in TRANSITIONAL_AGENT_STATUSES:
+        # Keep prior platform status (caller should not demote on draining).
+        return (fallback or "running").strip().lower() or "running"
     if raw in DEAD_AGENT_STATUSES:
         return "error"
     if raw in SANDBOX_STATUSES:
         return raw
     # Any other non-canonical value is treated as unhealthy so UI can recreate.
     return "error"
+
+
+def clear_sandbox_refresh_cache(project_id: UUID | None = None) -> None:
+    """Drop refresh TTL cache (tests / after recreate)."""
+    if project_id is None:
+        _refresh_cache.clear()
+    else:
+        _refresh_cache.pop(project_id, None)
 
 
 async def provision_project_sandbox(
@@ -172,21 +155,10 @@ async def provision_project_sandbox(
     project.sandbox_status = "creating"
     project.sandbox_error = None
     project.sandbox_image = settings.sandbox_default_image
+    clear_sandbox_refresh_cache(project_id)
     await session.commit()
 
     if force and name:
-        # #region agent log
-        _agent_dbg(
-            "D",
-            "sandbox.py:provision_project_sandbox",
-            "force recreate stop+remove",
-            {
-                "project_id": str(project_id),
-                "sandbox_name": name,
-                "prev_status": project.sandbox_status,
-            },
-        )
-        # #endregion
         try:
             await client.stop_sandbox(name)
         except SandboxAgentError:
@@ -368,20 +340,6 @@ async def mark_sandbox_dead(
     message: str | None = None,
 ) -> Project:
     """Mark a sandbox unusable so clients recreate instead of polling forever."""
-    # #region agent log
-    _agent_dbg(
-        "A",
-        "sandbox.py:mark_sandbox_dead",
-        "marking sandbox dead",
-        {
-            "project_id": str(project.id),
-            "sandbox_name": project.sandbox_name,
-            "prev_status": project.sandbox_status,
-            "live_status": live_status,
-            "message": (message or f"{DEAD_ON_AGENT} (status={live_status})")[:300],
-        },
-    )
-    # #endregion
     project.sandbox_status = "error"
     project.sandbox_error = (message or f"{DEAD_ON_AGENT} (status={live_status})")[:2000]
     try:
@@ -405,44 +363,56 @@ async def refresh_sandbox_status(
     *,
     settings: Settings | None = None,
     client: SandboxAgentClient | None = None,
-) -> Project:
+    force: bool = False,
+) -> tuple[Project, dict[str, Any] | None]:
     """Sync project.sandbox_status from the agent.
+
+    Returns ``(project, agent_info)`` so callers need not fetch status twice.
 
     - ``destroyed`` is left alone (intentional).
     - ``pending`` / ``creating``: adopt ``running`` if the agent already has the VM
       (unblocks UI when provision commit lags); do not demote on 404/crash mid-create.
+    - ``draining`` is transitional: keep prior DB status (do not mark dead).
     - Otherwise map dead agent states (``crashed``, etc.) to ``error`` so the UI
       auto-recreates instead of polling forever.
+    - When DB status is ``running`` and a recent refresh succeeded, skip the agent
+      round-trip unless ``force=True``.
     """
     settings = settings or get_settings()
     if not settings.sandbox_enabled or not project.sandbox_name:
-        return project
+        return project, None
     if project.sandbox_status == "destroyed":
-        return project
+        return project, None
+
+    if (
+        not force
+        and project.sandbox_status == "running"
+        and project.id in _refresh_cache
+    ):
+        ts, cached_status, cached_info = _refresh_cache[project.id]
+        if cached_status == "running" and (time.monotonic() - ts) < _REFRESH_TTL_S:
+            return project, cached_info
 
     client = client or SandboxAgentClient(settings)
     creating = project.sandbox_status in ("pending", "creating")
-    prev_status = project.sandbox_status
+    info: dict[str, Any] | None = None
     try:
         info = await client.get_sandbox(project.sandbox_name)
         live_raw = str(info.get("status") or "").strip()
-        live = normalize_agent_status(live_raw, fallback=project.sandbox_status)
-        # #region agent log
-        if (live_raw or "").strip().lower() != "running" or prev_status != "running":
-            _agent_dbg(
-                "A",
-                "sandbox.py:refresh_sandbox_status",
-                "refresh non-running or demoting",
-                {
-                    "project_id": str(project.id),
-                    "sandbox_name": project.sandbox_name,
-                    "prev_status": prev_status,
-                    "live_raw": live_raw,
-                    "live_normalized": live,
-                    "creating": creating,
-                },
+        live_raw_l = live_raw.lower()
+
+        if live_raw_l in TRANSITIONAL_AGENT_STATUSES:
+            # Mid-drain: do not poison DB; UI/OpenCode keep using prior status.
+            logger.info(
+                "sandbox transitional status project=%s name=%s live=%s keeping=%s",
+                project.id,
+                project.sandbox_name,
+                live_raw,
+                project.sandbox_status,
             )
-        # #endregion
+            return project, info
+
+        live = normalize_agent_status(live_raw, fallback=project.sandbox_status)
 
         if creating:
             # Only promote to running while create is in flight; never demote mid-create.
@@ -451,54 +421,50 @@ async def refresh_sandbox_status(
                 project.sandbox_error = None
                 await session.commit()
                 await session.refresh(project)
-            return project
+                _refresh_cache[project.id] = (time.monotonic(), "running", info)
+            return project, info
 
         if live == "running":
             project.sandbox_status = "running"
             project.sandbox_error = None
         elif live == "stopped":
             project.sandbox_status = "stopped"
-        elif live == "error" or (live_raw or "").strip().lower() in DEAD_AGENT_STATUSES:
-            return await mark_sandbox_dead(
+            project.sandbox_error = None
+            _refresh_cache.pop(project.id, None)
+        elif live == "error" or live_raw_l in DEAD_AGENT_STATUSES:
+            _refresh_cache.pop(project.id, None)
+            project = await mark_sandbox_dead(
                 session,
                 project,
                 live_status=live_raw or live,
             )
+            return project, info
         elif live in SANDBOX_STATUSES:
             project.sandbox_status = live
         else:
-            return await mark_sandbox_dead(
+            _refresh_cache.pop(project.id, None)
+            project = await mark_sandbox_dead(
                 session,
                 project,
                 live_status=live_raw or live,
             )
+            return project, info
 
         await session.commit()
         await session.refresh(project)
+        if project.sandbox_status == "running":
+            _refresh_cache[project.id] = (time.monotonic(), "running", info)
     except SandboxAgentError as exc:
-        # #region agent log
-        _agent_dbg(
-            "D",
-            "sandbox.py:refresh_sandbox_status",
-            "agent error during refresh",
-            {
-                "project_id": str(project.id),
-                "sandbox_name": project.sandbox_name,
-                "prev_status": prev_status,
-                "status_code": exc.status_code,
-                "error": str(exc)[:300],
-                "creating": creating,
-            },
-        )
-        # #endregion
         if exc.status_code == 404:
             if creating:
                 # Create still in progress — name may not be registered yet.
-                return project
+                return project, None
             # DB out of sync with agent (restart, wipe, manual delete)
-            await mark_sandbox_missing(session, project)
+            _refresh_cache.pop(project.id, None)
+            project = await mark_sandbox_missing(session, project)
+            return project, None
         # Agent unreachable: keep DB status (avoid false recreate loops)
-    return project
+    return project, info
 
 
 async def _load_project(

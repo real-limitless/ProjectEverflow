@@ -263,44 +263,56 @@ export function CodePanel({ panelKey }: CodePanelProps) {
   const [saving, setSaving] = useState(false)
   const [editMode, setEditMode] = useState(fromApi)
   const editGutterRef = useRef<HTMLDivElement>(null)
+  const refreshInflightRef = useRef<Promise<void> | null>(null)
+  const loadingFsRef = useRef(false)
 
   const refreshTree = useCallback(async () => {
     if (!fromApi || !currentProjectId || !sandboxRunning) return
-    setLoadingFs(true)
-    setFsError(null)
-    try {
-      const { files: treeFiles, truncated } = await collectRemoteTree(currentProjectId, '.')
-      setFsTruncated(truncated)
-      const existingCode = getProject(currentProjectId)?.code || {}
-      const code: Record<string, string> = { ...existingCode }
-      // Prefetch a small set of shallow files; open still loads on demand
-      const shallow = treeFiles.filter((f) => !f.path.includes('/')).slice(0, 8)
-      for (const f of shallow) {
-        if (code[f.path] || code[f.name]) continue
-        try {
-          code[f.path] = await readSandboxFs(currentProjectId, f.path)
-        } catch {
-          /* skip unreadable / binary */
+    // One walk at a time — concurrent recursive FS lists stall OpenCode/chat.
+    if (refreshInflightRef.current) return refreshInflightRef.current
+    const run = (async () => {
+      loadingFsRef.current = true
+      setLoadingFs(true)
+      setFsError(null)
+      try {
+        const { files: treeFiles, truncated } = await collectRemoteTree(currentProjectId, '.')
+        setFsTruncated(truncated)
+        const existingCode = getProject(currentProjectId)?.code || {}
+        const code: Record<string, string> = { ...existingCode }
+        // Prefetch a small set of shallow files; open still loads on demand
+        const shallow = treeFiles.filter((f) => !f.path.includes('/')).slice(0, 8)
+        for (const f of shallow) {
+          if (code[f.path] || code[f.name]) continue
+          try {
+            code[f.path] = await readSandboxFs(currentProjectId, f.path)
+          } catch {
+            /* skip unreadable / binary */
+          }
         }
+        // Prefer live sandbox listing over catalog seed once remote list succeeds
+        updateProjectInCatalog(currentProjectId, { files: treeFiles, code })
+        usePlaygroundStore.setState({
+          catalogVersion: usePlaygroundStore.getState().catalogVersion + 1,
+        })
+        setFsLoaded(true)
+        if (truncated) {
+          pushToast(
+            'Workspace tree truncated (file/depth limit). node_modules and .git are already skipped.',
+            { kind: 'info' },
+          )
+        }
+      } catch (e) {
+        setFsError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'FS error')
+        setFsLoaded(false)
+      } finally {
+        loadingFsRef.current = false
+        setLoadingFs(false)
       }
-      // Prefer live sandbox listing over catalog seed once remote list succeeds
-      updateProjectInCatalog(currentProjectId, { files: treeFiles, code })
-      usePlaygroundStore.setState({
-        catalogVersion: usePlaygroundStore.getState().catalogVersion + 1,
-      })
-      setFsLoaded(true)
-      if (truncated) {
-        pushToast(
-          'Workspace tree truncated (file/depth limit). node_modules and .git are already skipped.',
-          { kind: 'info' },
-        )
-      }
-    } catch (e) {
-      setFsError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'FS error')
-      setFsLoaded(false)
-    } finally {
-      setLoadingFs(false)
-    }
+    })().finally(() => {
+      refreshInflightRef.current = null
+    })
+    refreshInflightRef.current = run
+    return run
     // Intentionally omit catalog `code` / `files` — updating them must not re-trigger refresh
   }, [currentProjectId, fromApi, sandboxRunning])
 
@@ -311,6 +323,44 @@ export function CodePanel({ panelKey }: CodePanelProps) {
       return
     }
     void refreshTree()
+  }, [fromApi, sandboxRunning, currentProjectId, refreshTree])
+
+  // After create/provision, workspace may still be empty when we first mount.
+  // Probe root only (not a full tree walk) so we don't starve chat/OpenCode.
+  useEffect(() => {
+    if (!fromApi || !sandboxRunning || !currentProjectId) return
+    let cancelled = false
+    let attempts = 0
+    const maxAttempts = 8
+    const id = window.setInterval(() => {
+      if (cancelled) return
+      attempts += 1
+      const filesLen = getProject(currentProjectId)?.files?.length ?? 0
+      if (filesLen > 0 || attempts >= maxAttempts) {
+        window.clearInterval(id)
+        return
+      }
+      if (loadingFsRef.current || refreshInflightRef.current) return
+      void (async () => {
+        try {
+          const entries = await listSandboxFs(currentProjectId, '.')
+          const n = entries.filter((e) => {
+            const name = (e.name || '').trim()
+            return name && name !== '.' && name !== '..'
+          }).length
+          if (n > 0 && !cancelled) {
+            window.clearInterval(id)
+            await refreshTree()
+          }
+        } catch {
+          /* keep probing */
+        }
+      })()
+    }, 5000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
   }, [fromApi, sandboxRunning, currentProjectId, refreshTree])
 
   const changesByPath = useMemo(() => {

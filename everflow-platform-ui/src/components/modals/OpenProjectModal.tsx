@@ -20,7 +20,7 @@ import CubesIcon from '@patternfly/react-icons/dist/esm/icons/cubes-icon'
 import FolderOpenIcon from '@patternfly/react-icons/dist/esm/icons/folder-open-icon'
 import PlusCircleIcon from '@patternfly/react-icons/dist/esm/icons/plus-circle-icon'
 import SearchIcon from '@patternfly/react-icons/dist/esm/icons/search-icon'
-import { getProject, listVisibleProjectIds } from '@/data/projects'
+import { getProject, isSeedProjectId, listVisibleProjectIds } from '@/data/projects'
 import { getTemplate } from '@/data/projectTemplates'
 import { isDemoMode, listProjects } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
@@ -48,6 +48,7 @@ export function OpenProjectModal() {
   const setOpen = usePlaygroundStore((s) => s.setOpenProjectModal)
   const setCreate = usePlaygroundStore((s) => s.setCreateProjectModal)
   const openProject = usePlaygroundStore((s) => s.openProject)
+  const deleteProject = usePlaygroundStore((s) => s.deleteProject)
   const ingestApiProject = usePlaygroundStore((s) => s.ingestApiProject)
   const openProjectIds = usePlaygroundStore((s) => s.openProjectIds)
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
@@ -61,6 +62,8 @@ export function OpenProjectModal() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loadingApi, setLoadingApi] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     if (!isOpen) return
@@ -68,6 +71,8 @@ export function OpenProjectModal() {
     setFilter('all')
     setSelectedId(null)
     setApiError(null)
+    setConfirmDelete(false)
+    setDeleting(false)
 
     if (isDemoMode() || !user || !org) return
 
@@ -145,7 +150,10 @@ export function OpenProjectModal() {
       setSelectedId(null)
       return
     }
-    if (selectedId !== selected.id) setSelectedId(selected.id)
+    if (selectedId !== selected.id) {
+      setSelectedId(selected.id)
+      setConfirmDelete(false)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered])
 
@@ -318,7 +326,7 @@ export function OpenProjectModal() {
         )}
       </ModalBody>
       <ModalFooter>
-        <Button variant="primary" onClick={openSelected} isDisabled={!selected}>
+        <Button variant="primary" onClick={openSelected} isDisabled={!selected || deleting}>
           {selected?.isOpen && !selected.isActive
             ? 'Switch to project'
             : selected?.isActive
@@ -329,11 +337,48 @@ export function OpenProjectModal() {
                 ? 'Open & start sandbox'
                 : 'Open project'}
         </Button>
-        <Button variant="secondary" icon={<PlusCircleIcon />} onClick={goCreate}>
+        <Button variant="secondary" icon={<PlusCircleIcon />} onClick={goCreate} isDisabled={deleting}>
           Create project
         </Button>
-        <Button variant="link" onClick={() => setOpen(false)}>
-          Cancel
+        {selected && !isSeedProjectId(selected.id) ? (
+          confirmDelete ? (
+            <Button
+              variant="danger"
+              isLoading={deleting}
+              isDisabled={deleting}
+              onClick={() => {
+                setDeleting(true)
+                void deleteProject(selected.id).then((ok) => {
+                  setDeleting(false)
+                  setConfirmDelete(false)
+                  if (ok) setSelectedId(null)
+                })
+              }}
+            >
+              Confirm delete
+            </Button>
+          ) : (
+            <Button
+              variant="danger"
+              isDisabled={deleting}
+              onClick={() => setConfirmDelete(true)}
+            >
+              Delete
+            </Button>
+          )
+        ) : null}
+        <Button
+          variant="link"
+          onClick={() => {
+            if (confirmDelete) {
+              setConfirmDelete(false)
+              return
+            }
+            setOpen(false)
+          }}
+          isDisabled={deleting}
+        >
+          {confirmDelete ? 'Keep project' : 'Cancel'}
         </Button>
       </ModalFooter>
     </Modal>

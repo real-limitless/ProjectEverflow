@@ -18,7 +18,11 @@ from app.db.session import get_async_session
 from app.models.project import Project
 from app.models.user import User
 from app.services.provider_inject import inject_project_provider_secrets
-from app.services.sandbox import mark_sandbox_missing, refresh_sandbox_status
+from app.services.sandbox import (
+    mark_sandbox_missing,
+    refresh_sandbox_status,
+    sandbox_not_running_detail,
+)
 from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
 
 logger = logging.getLogger(__name__)
@@ -53,11 +57,20 @@ async def _require_running_sandbox(
             status_code=status.HTTP_409_CONFLICT,
             detail="Project has no sandbox yet",
         )
-    project = await refresh_sandbox_status(session, project, settings=settings)
+    # TTL skip inside refresh when recently confirmed running (tool/hydrate storms).
+    project, _info = await refresh_sandbox_status(session, project, settings=settings)
     if project.sandbox_status != "running":
+        detail = sandbox_not_running_detail(project)
+        logger.warning(
+            "opencode blocked: sandbox not running project=%s name=%s status=%s error=%s",
+            project.id,
+            project.sandbox_name,
+            project.sandbox_status,
+            (project.sandbox_error or "")[:300],
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Sandbox is not running (status={project.sandbox_status})",
+            detail=detail,
         )
     return project, project.sandbox_name
 

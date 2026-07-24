@@ -18,6 +18,7 @@ import {
   isSeedProjectId,
   listUserCreatedProjects,
   mergeUserProjects,
+  removeProjectFromCatalog,
   slugifyProjectName,
   updateProjectInCatalog,
 } from '@/data/projects'
@@ -82,6 +83,7 @@ import type {
 } from '@/types/panels'
 import {
   createProject as apiCreateProject,
+  deleteProject as apiDeleteProject,
   isDemoMode,
   type ApiProject,
 } from '@/lib/api'
@@ -166,6 +168,8 @@ interface PlaygroundState {
   switchProject: (id: string) => void
   openProject: (id: string) => void
   closeProjectTab: (id: string) => void
+  /** Permanently delete a project (API + local catalog). Returns false if blocked/failed. */
+  deleteProject: (id: string) => Promise<boolean>
   setTerminalPrefill: (cmd: string | null) => void
   clearTerminalPrefill: () => void
   createProject: (
@@ -815,6 +819,63 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       set({ openProjectIds, projectLayouts, sandboxReadyByProject })
       get().persist()
     }
+  },
+
+  deleteProject: async (id) => {
+    const project = getProject(id)
+    if (!project) return false
+    if (isSeedProjectId(id)) {
+      pushToast('Demo projects cannot be deleted', { kind: 'warning' })
+      return false
+    }
+
+    if (project.fromApi && !isDemoMode()) {
+      try {
+        await apiDeleteProject(id)
+      } catch (e) {
+        pushToast('Could not delete project', {
+          description: e instanceof Error ? e.message : 'Request failed',
+          kind: 'danger',
+        })
+        return false
+      }
+    }
+
+    removeProjectFromCatalog(id)
+
+    const s = get()
+    const projectLayouts = { ...s.projectLayouts }
+    delete projectLayouts[id]
+    const projectChats = { ...s.projectChats }
+    delete projectChats[id]
+    const activeRepoByProject = { ...s.activeRepoByProject }
+    delete activeRepoByProject[id]
+    const repoViewPathByProject = { ...s.repoViewPathByProject }
+    delete repoViewPathByProject[id]
+    const sandboxReadyByProject = { ...s.sandboxReadyByProject }
+    delete sandboxReadyByProject[id]
+
+    const closeSettings = s.projectSettingsProjectId === id
+    set({
+      projectLayouts,
+      projectChats,
+      activeRepoByProject,
+      repoViewPathByProject,
+      sandboxReadyByProject,
+      catalogVersion: s.catalogVersion + 1,
+      ...(closeSettings
+        ? { projectSettingsOpen: false, projectSettingsProjectId: null }
+        : {}),
+    })
+
+    if (get().openProjectIds.includes(id)) {
+      get().closeProjectTab(id)
+    } else {
+      get().persist()
+    }
+
+    pushToast('Project deleted', { description: project.name, kind: 'success' })
+    return true
   },
 
   ingestApiProject: (apiProject, seed) => {

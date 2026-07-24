@@ -2,9 +2,28 @@
  * Thin client for everflow-platform-api.
  * Token is stored in localStorage under everflow_access_token.
  * Browser never calls sandbox-agent — only Everflow API.
+ *
+ * VITE_API_URL:
+ *   - unset → http://localhost:8000 (local Vite/dev)
+ *   - "" or "/" → same-origin (prebuilt image; nginx proxies /api/)
+ *   - absolute URL → that host
  */
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+function resolveApiBase(): string {
+  const raw = import.meta.env.VITE_API_URL as string | undefined
+  if (raw === '' || raw === '/') return ''
+  if (typeof raw === 'string' && raw.trim()) return raw.replace(/\/$/, '')
+  return 'http://localhost:8000'
+}
+
+const API_BASE = resolveApiBase()
+
+function wsApiBase(): string {
+  if (API_BASE) return API_BASE.replace(/^http/, 'ws').replace(/\/$/, '')
+  if (typeof window === 'undefined') return 'ws://localhost:8000'
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}`
+}
 
 const TOKEN_KEY = 'everflow_access_token'
 const ORG_KEY = 'everflow_org_id'
@@ -476,8 +495,31 @@ export async function deleteProject(projectId: string): Promise<void> {
   await apiFetch(`/api/v1/projects/${projectId}`, { method: 'DELETE' })
 }
 
+const sandboxStatusInflight = new Map<string, Promise<SandboxStatus>>()
+const sandboxStatusCache = new Map<string, { at: number; value: SandboxStatus }>()
+const SANDBOX_STATUS_TTL_MS = 2000
+
+/** Coalesced status fetch — parallel callers share one request; short TTL under tool load. */
 export async function getSandboxStatus(projectId: string): Promise<SandboxStatus> {
-  return apiFetch(`/api/v1/projects/${projectId}/sandbox`)
+  const cached = sandboxStatusCache.get(projectId)
+  if (cached && Date.now() - cached.at < SANDBOX_STATUS_TTL_MS) {
+    return cached.value
+  }
+  const existing = sandboxStatusInflight.get(projectId)
+  if (existing) return existing
+
+  const pending = apiFetch<SandboxStatus>(`/api/v1/projects/${projectId}/sandbox`)
+    .then((st) => {
+      sandboxStatusCache.set(projectId, { at: Date.now(), value: st })
+      return st
+    })
+    .finally(() => {
+      if (sandboxStatusInflight.get(projectId) === pending) {
+        sandboxStatusInflight.delete(projectId)
+      }
+    })
+  sandboxStatusInflight.set(projectId, pending)
+  return pending
 }
 
 /** Force remove (if any) + provision again. Same as recreate. */
@@ -725,7 +767,7 @@ export function sandboxShellWsUrl(
   opts?: { cmd?: string; cwd?: string },
 ): string {
   const token = getAccessToken() || ''
-  const base = API_BASE.replace(/^http/, 'ws').replace(/\/$/, '')
+  const base = wsApiBase()
   const q = new URLSearchParams({ token })
   if (opts?.cmd) q.set('cmd', opts.cmd)
   if (opts?.cwd) q.set('cwd', opts.cwd)

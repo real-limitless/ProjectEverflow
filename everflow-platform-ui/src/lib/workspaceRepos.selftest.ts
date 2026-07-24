@@ -30,7 +30,7 @@ const single = normalizeReposForCreate([
   },
 ])
 assert(single[0].localPath === 'app', 'single remote uses named dir')
-assert(single[0].localPath !== '.', 'never workspace root')
+assert(String(single[0].localPath) !== '.', 'never workspace root')
 assert(single[0].cloneStatus === 'pending', 'pending clone')
 
 const multi = normalizeReposForCreate([
@@ -51,7 +51,7 @@ const multi = normalizeReposForCreate([
 ])
 assert(multi[0].localPath === 'frontend', 'multi first is frontend')
 assert(multi[1].localPath === 'backend', 'multi second is backend')
-assert(multi[0].localPath !== '.', 'multi not root')
+assert(String(multi[0].localPath) !== '.', 'multi not root')
 assert(multi.filter((r) => r.active).length === 1, 'one active')
 
 const payload = projectReposToApiPayload(single)

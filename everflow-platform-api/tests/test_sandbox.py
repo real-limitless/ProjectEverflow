@@ -261,7 +261,7 @@ async def test_missing_on_agent_refresh_and_recreate(
         # Simulate agent restart / wipe
         fake.sandboxes.clear()
 
-        refreshed = await sandbox_service.refresh_sandbox_status(
+        refreshed, _ = await sandbox_service.refresh_sandbox_status(
             session,
             await sandbox_service._load_project(session, project_id),
             settings=settings,
@@ -317,6 +317,61 @@ def test_normalize_agent_status() -> None:
     assert sandbox_service.normalize_agent_status("failed") == "error"
     assert sandbox_service.normalize_agent_status("weird-state") == "error"
     assert sandbox_service.normalize_agent_status(None, fallback="running") == "running"
+    # draining is transitional — keep fallback, do not map to error
+    assert sandbox_service.normalize_agent_status("draining", fallback="running") == "running"
+
+
+@pytest.mark.asyncio
+async def test_refresh_keeps_running_on_draining(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    """Transitional draining must not mark the project error."""
+    fake = FakeAgentClient()
+    org_id = await _create_org(client, auth_headers, slug="sbx-drain")
+    create = await client.post(
+        f"/api/v1/orgs/{org_id}/projects",
+        headers=auth_headers,
+        json={"name": "Drainy", "slug": "drainy"},
+    )
+    project_id = UUID(create.json()["id"])
+
+    settings = Settings(
+        environment="test",
+        secret_key="test-secret-key-for-jwt-signing-not-for-prod",
+        database_url="sqlite+aiosqlite:///:memory:",
+        sandbox_enabled=True,
+        sandbox_agent_url="http://fake",
+        sandbox_agent_token="t",
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        proj = await sandbox_service._load_project(session, project_id, with_org=True)
+        proj.sandbox_name = sandbox_service.make_sandbox_name(proj.organization.slug, proj.slug)
+        await session.commit()
+        await sandbox_service.provision_project_sandbox(
+            session,
+            project_id,
+            settings=settings,
+            client=fake,  # type: ignore[arg-type]
+        )
+        name = (await sandbox_service._load_project(session, project_id)).sandbox_name
+        assert name is not None
+        fake.sandboxes[name]["status"] = "draining"
+        sandbox_service.clear_sandbox_refresh_cache()
+
+        refreshed, info = await sandbox_service.refresh_sandbox_status(
+            session,
+            await sandbox_service._load_project(session, project_id),
+            settings=settings,
+            client=fake,  # type: ignore[arg-type]
+            force=True,
+        )
+        assert refreshed.sandbox_status == "running"
+        assert refreshed.sandbox_error is None
+        assert info is not None
+        assert str(info.get("status")).lower() == "draining"
 
 
 @pytest.mark.asyncio
@@ -358,7 +413,7 @@ async def test_refresh_maps_crashed_to_error(
         # Simulate agent restart leaving a dead microVM record
         fake.sandboxes[name]["status"] = "crashed"
 
-        refreshed = await sandbox_service.refresh_sandbox_status(
+        refreshed, _ = await sandbox_service.refresh_sandbox_status(
             session,
             await sandbox_service._load_project(session, project_id),
             settings=settings,
@@ -410,7 +465,7 @@ async def test_refresh_heals_stale_error_when_agent_running(
             "harnesses": [],
         }
 
-        healed = await sandbox_service.refresh_sandbox_status(
+        healed, _ = await sandbox_service.refresh_sandbox_status(
             session,
             await sandbox_service._load_project(session, project_id),
             settings=settings,
@@ -452,7 +507,7 @@ async def test_refresh_creating_adopts_running_keeps_404(
         await session.commit()
 
         # 404 while creating → stay creating (not mark missing)
-        missing = await sandbox_service.refresh_sandbox_status(
+        missing, _ = await sandbox_service.refresh_sandbox_status(
             session,
             await sandbox_service._load_project(session, project_id),
             settings=settings,
@@ -468,10 +523,83 @@ async def test_refresh_creating_adopts_running_keeps_404(
             "labels": {},
             "harnesses": [],
         }
-        promoted = await sandbox_service.refresh_sandbox_status(
+        promoted, _ = await sandbox_service.refresh_sandbox_status(
             session,
             await sandbox_service._load_project(session, project_id),
             settings=settings,
             client=fake,  # type: ignore[arg-type]
         )
         assert promoted.sandbox_status == "running"
+
+
+@pytest.mark.asyncio
+async def test_fs_path_not_found_is_404_not_sandbox_missing(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing guest files must not mark the sandbox dead (chat worktree index)."""
+    org_id = await _create_org(client, auth_headers, slug="fs-path-org")
+    create = await client.post(
+        f"/api/v1/orgs/{org_id}/projects",
+        headers=auth_headers,
+        json={"name": "FS Path", "slug": "fs-path"},
+    )
+    assert create.status_code == 201, create.text
+    project_id = create.json()["id"]
+
+    fake = FakeAgentClient()
+    settings = Settings(
+        environment="test",
+        secret_key="test-secret-key-for-jwt-signing-not-for-prod",
+        database_url="sqlite+aiosqlite:///:memory:",
+        sandbox_enabled=True,
+        sandbox_agent_url="http://fake",
+        sandbox_agent_token="t",
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        proj = await sandbox_service._load_project(session, UUID(project_id), with_org=True)
+        if not proj.sandbox_name:
+            proj.sandbox_name = sandbox_service.make_sandbox_name(
+                proj.organization.slug,
+                proj.slug,
+            )
+            await session.commit()
+        await sandbox_service.provision_project_sandbox(
+            session,
+            UUID(project_id),
+            settings=settings,
+            client=fake,  # type: ignore[arg-type]
+        )
+
+    async def path_missing(_name: str, path: str) -> str:
+        raise SandboxAgentError(f"Path not found: {path}", status_code=404)
+
+    fake.read_fs = path_missing  # type: ignore[method-assign]
+    monkeypatch.setattr("app.api.v1.sandbox.SandboxAgentClient", lambda settings=None: fake)
+    monkeypatch.setattr("app.services.sandbox.SandboxAgentClient", lambda settings=None: fake)
+
+    missing_file = await client.get(
+        f"/api/v1/projects/{project_id}/sandbox/fs/content",
+        headers=auth_headers,
+        params={"path": ".everflow/worktrees/index.json"},
+    )
+    assert missing_file.status_code == 404, missing_file.text
+
+    status = await client.get(f"/api/v1/projects/{project_id}/sandbox", headers=auth_headers)
+    assert status.status_code == 200
+    assert status.json()["status"] == "running"
+
+    async def sandbox_gone(_name: str, _path: str) -> str:
+        raise SandboxAgentError("Sandbox not found", status_code=404)
+
+    fake.read_fs = sandbox_gone  # type: ignore[method-assign]
+    gone = await client.get(
+        f"/api/v1/projects/{project_id}/sandbox/fs/content",
+        headers=auth_headers,
+        params={"path": "README.md"},
+    )
+    assert gone.status_code == 409, gone.text
+    assert "not found on agent" in gone.json()["detail"].lower()

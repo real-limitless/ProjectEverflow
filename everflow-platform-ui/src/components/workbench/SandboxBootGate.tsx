@@ -9,11 +9,13 @@ import {
   Spinner,
 } from '@patternfly/react-core'
 import { getProject, updateProjectInCatalog } from '@/data/projects'
+import { getTemplate } from '@/data/projectTemplates'
 import { getProject as apiGetProject } from '@/lib/api'
 import { ensureSandboxRunning } from '@/lib/ensureSandbox'
 import { isSandboxBooting, shouldRecreateSandbox } from '@/lib/sandboxReady'
 import { pushToast } from '@/lib/studioToast'
 import { ensureReposCloned, isCloneableUrl, mergeApiProjectRepos } from '@/lib/workspaceRepos'
+import { waitForWorkspaceReady } from '@/lib/workspaceReady'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 type Phase = 'booting' | 'failed'
@@ -111,13 +113,11 @@ export function SandboxBootGate({ projectId }: { projectId: string }) {
             if (needsClone && catalog?.repos?.length) {
               const cloneResult = await ensureReposCloned(projectId, catalog.repos)
               if (runId !== runIdRef.current) return
-              const anyReady = cloneResult.repos.some((r) => r.cloneStatus === 'ready')
               updateProjectInCatalog(projectId, {
                 repos: cloneResult.repos,
                 // Drop seed file catalog so Code panel walks live sandbox FS
-                ...(anyReady || cloneResult.cloned > 0
-                  ? { files: [], code: {} }
-                  : {}),
+                files: [],
+                code: {},
               })
               usePlaygroundStore.setState({
                 catalogVersion: usePlaygroundStore.getState().catalogVersion + 1,
@@ -136,6 +136,35 @@ export function SandboxBootGate({ projectId }: { projectId: string }) {
                 )
               }
             }
+
+            // Provision marks running before server-side toolkit seed / clone finishes.
+            // Hold the boot gate until workspace content is visible so Code/Repo mount warm.
+            const template = getTemplate(catalog?.templateId)
+            const expectContent =
+              (catalog?.repos || []).some((r) => isCloneableUrl(r.url)) ||
+              Boolean(template.toolkitId)
+            setMessage(
+              expectContent
+                ? 'Preparing workspace files…'
+                : 'Opening workbench…',
+            )
+            const workspace = await waitForWorkspaceReady(projectId, {
+              expectContent,
+              localRepos: getProject(projectId)?.repos,
+              isCancelled: () => runId !== runIdRef.current,
+              onUpdate: (msg) => {
+                if (runId === runIdRef.current) setMessage(msg)
+              },
+            })
+            if (runId !== runIdRef.current) return
+            updateProjectInCatalog(projectId, {
+              repos: workspace.repos,
+              files: [],
+              code: {},
+            })
+            usePlaygroundStore.setState({
+              catalogVersion: usePlaygroundStore.getState().catalogVersion + 1,
+            })
           } catch (e) {
             if (runId !== runIdRef.current) return
             const msg = e instanceof Error ? e.message : 'Repository clone failed'
@@ -221,9 +250,10 @@ export function SandboxBootGate({ projectId }: { projectId: string }) {
   const description = failed
     ? message ||
       'The playground runs inside a project sandbox. Create or start a sandbox to continue.'
-    : status === 'creating' || status === 'pending'
-      ? `Preparing a sandbox for “${p.name}”. Dead or crashed sandboxes are recreated automatically after a stack restart.`
-      : `Preparing a sandbox for “${p.name}”. The workbench opens when the container is running.`
+    : message ||
+      (status === 'creating' || status === 'pending'
+        ? `Preparing a sandbox for “${p.name}”. Dead or crashed sandboxes are recreated automatically after a stack restart.`
+        : `Preparing a sandbox for “${p.name}”. The workbench opens when the workspace is ready.`)
 
   return (
     <>

@@ -90,14 +90,18 @@ type LiveStatus =
   | 'demo'
 
 /** API 409 / detail when platform sandbox is not running. */
-function sandboxDownFromError(err: unknown): { status: string; message: string } | null {
+function sandboxDownFromError(
+  err: unknown,
+): { status: string; message: string; reason: string | null } | null {
   const message = err instanceof Error ? err.message : String(err || '')
-  const m = /Sandbox is not running\s*\(status=([^)]+)\)/i.exec(message)
+  const m = /Sandbox is not running\s*\(status=([^)]+)\)(?:\s*:\s*(.+))?/i.exec(message)
   if (m) {
-    return { status: m[1].trim() || 'error', message }
+    const status = m[1].trim() || 'error'
+    const reason = (m[2] || '').trim() || null
+    return { status, message, reason }
   }
   if (/sandbox is not running|sandbox not found|missing on agent/i.test(message)) {
-    return { status: 'error', message }
+    return { status: 'error', message, reason: message }
   }
   return null
 }
@@ -1170,19 +1174,41 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         body.system = worktreeSystemPrompt(wt.path, wt.parentPath)
       }
 
+      // prompt_async should return quickly, but guest FS storms can stall the proxy.
+      // Bound the wait so the UI never sits on "Generating…" forever.
+      const PROMPT_ACCEPT_MS = 45_000
+      let promptTimer: number | undefined
       try {
-        await promptAsync(projectId, convId, body)
-      } catch (asyncErr) {
-        try {
-          await promptSync(projectId, convId, body)
-        } catch (syncErr) {
-          const cur =
-            usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
-          const kept = cur.filter((m) => !m.id.startsWith('pending-'))
-          ensureInstanceState(panelKey, { messages: kept })
-          updateConversationMessages(projectId, convId, kept)
-          throw syncErr || asyncErr
-        }
+        await Promise.race([
+          (async () => {
+            try {
+              await promptAsync(projectId, convId, body)
+            } catch (asyncErr) {
+              try {
+                await promptSync(projectId, convId, body)
+              } catch (syncErr) {
+                const cur =
+                  usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
+                  []
+                const kept = cur.filter((m) => !m.id.startsWith('pending-'))
+                ensureInstanceState(panelKey, { messages: kept })
+                updateConversationMessages(projectId, convId, kept)
+                throw syncErr || asyncErr
+              }
+            }
+          })(),
+          new Promise<never>((_, reject) => {
+            promptTimer = window.setTimeout(() => {
+              reject(
+                new Error(
+                  'Chat request timed out waiting for OpenCode. The sandbox may be busy — try again in a moment.',
+                ),
+              )
+            }, PROMPT_ACCEPT_MS)
+          }),
+        ])
+      } finally {
+        if (promptTimer !== undefined) window.clearTimeout(promptTimer)
       }
 
       // SSE is primary (guest stream_exec → /event). Poll is a slow backup only.
@@ -1796,7 +1822,28 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         {useLive && liveStatus === 'error' ? (
           <div className="chat-empty" style={{ minHeight: 100 }}>
             <h2 className="chat-empty-title">OpenCode unavailable</h2>
-            <p className="chat-empty-desc">{liveError || 'Unknown error'}</p>
+            {(() => {
+              const down = liveError ? sandboxDownFromError(new Error(liveError)) : null
+              const statusLine = down
+                ? `Sandbox is not running (status=${down.status})`
+                : null
+              const reason = down?.reason || (!down ? liveError : null)
+              return (
+                <>
+                  <p className="chat-empty-desc">
+                    {statusLine || liveError || 'Unknown error'}
+                  </p>
+                  {reason && reason !== statusLine ? (
+                    <p
+                      className="chat-empty-desc"
+                      style={{ opacity: 0.85, fontSize: '0.9em', marginTop: 4 }}
+                    >
+                      Reason: {reason}
+                    </p>
+                  ) : null}
+                </>
+              )
+            })()}
             <button
               type="button"
               className="chat-empty-chip"

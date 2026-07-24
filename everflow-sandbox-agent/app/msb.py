@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import errno
-import json
 import logging
 import os
 import subprocess
-import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -18,52 +16,6 @@ from typing import Any
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
-
-# #region agent log
-def _agent_dbg(
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: dict[str, Any] | None = None,
-) -> None:
-    payload = {
-        "sessionId": "c0f5c1",
-        "runId": "pre-fix",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data or {},
-        "timestamp": int(time.time() * 1000),
-    }
-    line = json.dumps(payload, default=str) + "\n"
-    for path in (
-        Path("/home/chchiu/Documents/GitHub/ProjectEverflow3/.cursor/debug-c0f5c1.log"),
-        Path(__file__).resolve().parent / "_debug_c0f5c1.ndjson",
-    ):
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(line)
-        except Exception:
-            pass
-    try:
-        import urllib.request
-
-        req = urllib.request.Request(
-            "http://host.containers.internal:7314/ingest/d6f4ef88-4822-4e57-b621-261934682132",
-            data=line.encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "X-Debug-Session-Id": "c0f5c1",
-            },
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=0.4)  # noqa: S310
-    except Exception:
-        pass
-
-
-# #endregion
 
 # Prefer named volumes in nested Docker+KVM; bind and guest-only are fallbacks.
 VOLUME_STRATEGY_ORDER: tuple[str, ...] = ("named-volume", "bind", "no-volumes")
@@ -92,6 +44,21 @@ def remember_volume_strategy(label: str) -> None:
 
 
 WORKSPACE_GUEST = "/workspace"
+
+
+def is_transient_guest_error(exc: BaseException) -> bool:
+    """True for flaky microsandbox guest-channel errors worth one reconnect retry."""
+    msg = str(exc).lower()
+    needles = (
+        "reader closed",
+        "exec session ended without exit event",
+        "connection reset",
+        "broken pipe",
+        "temporarily unavailable",
+        "timed out",
+        "timeout",
+    )
+    return any(n in msg for n in needles)
 
 
 def is_missing_path_error(exc: BaseException) -> bool:
@@ -566,6 +533,15 @@ class MicrosandboxBackend(SandboxBackend):
         # name -> in-flight harness install (cancelled on remove/replace)
         self._bootstrap_tasks: dict[str, asyncio.Task[None]] = {}
         self._bootstrap_gen: dict[str, int] = {}
+        # Serialize short guest-channel ops (exec/fs) per sandbox under OpenCode load.
+        self._guest_locks: dict[str, asyncio.Lock] = {}
+
+    def _guest_lock(self, name: str) -> asyncio.Lock:
+        lock = self._guest_locks.get(name)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._guest_locks[name] = lock
+        return lock
 
     async def health(self) -> dict[str, Any]:
         try:
@@ -631,14 +607,6 @@ class MicrosandboxBackend(SandboxBackend):
 
     async def _force_cleanup(self, name: str) -> None:
         """Best-effort stop+remove so create/replace is clean."""
-        # #region agent log
-        _agent_dbg(
-            "D",
-            "msb.py:_force_cleanup",
-            "force cleanup before create/replace",
-            {"name": name},
-        )
-        # #endregion
         try:
             await self.remove(name)
         except Exception as exc:
@@ -676,12 +644,14 @@ class MicrosandboxBackend(SandboxBackend):
                 except Exception as exc:
                     errors.append(f"named-volume-prep: {exc}")
             elif label == "bind":
+                # Use /root as workdir: some images lack /workspace until the volume
+                # mounts; requiring workdir=/workspace fails create and forces cleanup.
                 attempts.append(
                     (
                         "bind",
                         {
                             "volumes": {"/workspace": Volume.bind(str(ws))},
-                            "workdir": "/workspace",
+                            "workdir": "/root",
                         },
                     )
                 )
@@ -726,20 +696,6 @@ class MicrosandboxBackend(SandboxBackend):
         for label, extra in attempts:
             try:
                 logger.info("Sandbox.create attempt=%s name=%s image=%s", label, name, image)
-                # #region agent log
-                _agent_dbg(
-                    "C",
-                    "msb.py:create",
-                    "create attempt",
-                    {
-                        "name": name,
-                        "label": label,
-                        "extra_keys": sorted(extra.keys()),
-                        "workdir": extra.get("workdir"),
-                        "replace": replace,
-                    },
-                )
-                # #endregion
                 sb = await Sandbox.create(
                     name,
                     image=image,
@@ -763,19 +719,6 @@ class MicrosandboxBackend(SandboxBackend):
                 msg = f"{label}: {exc}"
                 errors.append(msg)
                 logger.warning("Sandbox.create failed attempt=%s name=%s: %s", label, name, exc)
-                # #region agent log
-                _agent_dbg(
-                    "C",
-                    "msb.py:create",
-                    "create attempt failed",
-                    {
-                        "name": name,
-                        "label": label,
-                        "error": str(exc)[:400],
-                        "workdir": extra.get("workdir"),
-                    },
-                )
-                # #endregion
                 await self._force_cleanup(name)
                 sb = None
 
@@ -799,19 +742,6 @@ class MicrosandboxBackend(SandboxBackend):
             created_at=datetime.now(timezone.utc),
         )
         self._meta[name] = rec
-        # #region agent log
-        _agent_dbg(
-            "C",
-            "msb.py:create",
-            "create succeeded",
-            {
-                "name": name,
-                "strategy": won_label,
-                "workspace_path": used_workspace,
-                "harnesses": list(harnesses),
-            },
-        )
-        # #endregion
         # krun does not run the OCI ENTRYPOINT — start noVNC via guest exec.
         from app.desktop import schedule_ensure_guest_desktop
 
@@ -857,19 +787,6 @@ class MicrosandboxBackend(SandboxBackend):
         if callable(status):
             status = status()
         status_s = str(status)
-        # #region agent log
-        if status_s.strip().lower() != "running":
-            _agent_dbg(
-                "A",
-                "msb.py:get",
-                "non-running status from microsandbox",
-                {
-                    "name": name,
-                    "status": status_s,
-                    "prev_meta_status": getattr(meta, "status", None),
-                },
-            )
-        # #endregion
         rec = SandboxRecord(
             name=name,
             status=status_s,
@@ -924,9 +841,6 @@ class MicrosandboxBackend(SandboxBackend):
     async def stop(self, name: str) -> SandboxRecord:
         from microsandbox import Sandbox
 
-        # #region agent log
-        _agent_dbg("B", "msb.py:stop", "stop called", {"name": name})
-        # #endregion
         try:
             handle = await Sandbox.get(name)
         except Exception as exc:
@@ -955,23 +869,12 @@ class MicrosandboxBackend(SandboxBackend):
         from microsandbox import Sandbox
 
         self._cancel_bootstrap(name)
-        # #region agent log
-        _agent_dbg("D", "msb.py:remove", "remove called", {"name": name})
-        # #endregion
 
         try:
             handle = await Sandbox.get(name)
             status = getattr(handle, "status", "")
             if callable(status):
                 status = status()
-            # #region agent log
-            _agent_dbg(
-                "A",
-                "msb.py:remove",
-                "remove pre-status",
-                {"name": name, "status": str(status)},
-            )
-            # #endregion
             if str(status) == "running":
                 try:
                     await self.stop(name)
@@ -1049,41 +952,57 @@ class MicrosandboxBackend(SandboxBackend):
         env: dict[str, str] | None = None,
         timeout_seconds: float | None = 120,
     ) -> tuple[int, str, str]:
-        try:
-            sb = await self._connect(name)
-        except KeyError:
-            raise
         kwargs: dict[str, Any] = {}
         if cwd:
             kwargs["cwd"] = cwd
         if env:
             kwargs["env"] = env
 
-        async def _do() -> tuple[int, str, str]:
-            out = await sb.exec(cmd, args, **kwargs)
-            stdout = getattr(out, "stdout_text", None)
-            if stdout is None:
-                stdout = getattr(out, "stdout", lambda: "")()
-                if callable(stdout):
-                    stdout = stdout()
-            stderr = getattr(out, "stderr_text", None)
-            if stderr is None:
-                stderr = getattr(out, "stderr", lambda: "")()
-                if callable(stderr):
-                    stderr = stderr()
-            code = getattr(out, "exit_code", None)
-            if code is None:
-                code = getattr(out, "returncode", 0)
-            return int(code or 0), str(stdout or ""), str(stderr or "")
+        async def _run_once() -> tuple[int, str, str]:
+            sb = await self._connect(name)
 
-        try:
+            async def _do() -> tuple[int, str, str]:
+                out = await sb.exec(cmd, args, **kwargs)
+                stdout = getattr(out, "stdout_text", None)
+                if stdout is None:
+                    stdout = getattr(out, "stdout", lambda: "")()
+                    if callable(stdout):
+                        stdout = stdout()
+                stderr = getattr(out, "stderr_text", None)
+                if stderr is None:
+                    stderr = getattr(out, "stderr", lambda: "")()
+                    if callable(stderr):
+                        stderr = stderr()
+                code = getattr(out, "exit_code", None)
+                if code is None:
+                    code = getattr(out, "returncode", 0)
+                return int(code or 0), str(stdout or ""), str(stderr or "")
+
             if timeout_seconds:
                 return await asyncio.wait_for(_do(), timeout=timeout_seconds)
             return await _do()
-        except Exception as exc:
-            if _is_sandbox_not_found(exc):
-                raise KeyError(name) from exc
-            raise
+
+        async with self._guest_lock(name):
+            try:
+                return await _run_once()
+            except Exception as exc:
+                if _is_sandbox_not_found(exc):
+                    raise KeyError(name) from exc
+                if not is_transient_guest_error(exc):
+                    raise
+                logger.warning(
+                    "transient exec failure name=%s cmd=%s; retrying once: %s",
+                    name,
+                    cmd,
+                    exc,
+                )
+                await asyncio.sleep(0.15)
+                try:
+                    return await _run_once()
+                except Exception as retry_exc:
+                    if _is_sandbox_not_found(retry_exc):
+                        raise KeyError(name) from retry_exc
+                    raise
 
     async def stream_exec(
         self,
@@ -1095,50 +1014,71 @@ class MicrosandboxBackend(SandboxBackend):
         env: dict[str, str] | None = None,
     ):
         """Stream stdout from guest via microsandbox exec_stream (for OpenCode SSE)."""
-        try:
-            sb = await self._connect(name)
-        except KeyError:
-            raise
         kwargs: dict[str, Any] = {"tty": False}
         if cwd:
             kwargs["cwd"] = cwd
         if env:
             kwargs["env"] = env
-        try:
-            from microsandbox import Stdin
 
-            handle = await sb.exec_stream(
-                cmd,
-                args,
-                stdin=Stdin.null() if hasattr(Stdin, "null") else Stdin.pipe(),
-                **kwargs,
-            )
-        except Exception:
-            # Fallback without stdin kw
+        async def _open_handle() -> Any:
+            sb = await self._connect(name)
             try:
-                handle = await sb.exec_stream(cmd, args, **{k: v for k, v in kwargs.items() if k != "tty"})
+                from microsandbox import Stdin
+
+                return await sb.exec_stream(
+                    cmd,
+                    args,
+                    stdin=Stdin.null() if hasattr(Stdin, "null") else Stdin.pipe(),
+                    **kwargs,
+                )
+            except Exception:
+                return await sb.exec_stream(
+                    cmd, args, **{k: v for k, v in kwargs.items() if k != "tty"}
+                )
+
+        async with self._guest_lock(name):
+            try:
+                handle = await _open_handle()
+            except KeyError:
+                raise
             except Exception as exc:
-                logger.exception("exec_stream failed name=%s cmd=%s: %s", name, cmd, exc)
-                raise RuntimeError(f"stream_exec failed: {exc}") from exc
+                if is_transient_guest_error(exc):
+                    logger.warning(
+                        "transient stream_exec open name=%s cmd=%s; retrying once: %s",
+                        name,
+                        cmd,
+                        exc,
+                    )
+                    await asyncio.sleep(0.15)
+                    try:
+                        handle = await _open_handle()
+                    except Exception as retry_exc:
+                        logger.exception(
+                            "exec_stream failed name=%s cmd=%s: %s", name, cmd, retry_exc
+                        )
+                        raise RuntimeError(f"stream_exec failed: {retry_exc}") from retry_exc
+                else:
+                    logger.exception("exec_stream failed name=%s cmd=%s: %s", name, cmd, exc)
+                    raise RuntimeError(f"stream_exec failed: {exc}") from exc
 
-        try:
-            async for event in handle:
-                et = getattr(event, "event_type", None) or getattr(event, "kind", None)
-                et_s = str(et).lower() if et else type(event).__name__.lower()
-                if "stdout" in et_s or "stderr" in et_s:
-                    data = getattr(event, "data", None) or b""
-                    if data:
-                        yield bytes(data)
-                elif "exit" in et_s or "fail" in et_s:
-                    break
-        finally:
             try:
-                if hasattr(handle, "kill"):
-                    res = handle.kill()
-                    if asyncio.iscoroutine(res):
-                        await res
-            except Exception:  # noqa: BLE001
-                pass
+                async for event in handle:
+                    et = getattr(event, "event_type", None) or getattr(event, "kind", None)
+                    et_s = str(et).lower() if et else type(event).__name__.lower()
+                    if "stdout" in et_s or "stderr" in et_s:
+                        data = getattr(event, "data", None) or b""
+                        if data:
+                            yield bytes(data)
+                    elif "exit" in et_s or "fail" in et_s:
+                        break
+            finally:
+                try:
+                    if hasattr(handle, "kill"):
+                        res = handle.kill()
+                        if asyncio.iscoroutine(res):
+                            await res
+                except Exception:  # noqa: BLE001
+                    pass
 
     async def list_fs(self, name: str, path: str) -> list[dict[str, Any]]:
         """List one directory under the guest workspace (relative paths, no . / ..)."""
@@ -1196,31 +1136,36 @@ class MicrosandboxBackend(SandboxBackend):
         return entries
 
     async def read_fs(self, name: str, path: str) -> bytes:
-        sb = await self._connect(name)
         guest_path = normalize_guest_path(path, allow_tmp=True)
-        if hasattr(sb, "fs"):
-            try:
-                data = await sb.fs.read(guest_path)
-                return bytes(data)
-            except Exception as exc:
-                # #region agent log
-                _agent_dbg(
-                    "E",
-                    "msb.py:read_fs",
-                    "fs.read failed",
-                    {
-                        "name": name,
-                        "path": path,
-                        "guest_path": guest_path,
-                        "error": str(exc)[:400],
-                        "error_type": type(exc).__name__,
-                    },
-                )
-                # #endregion
-                # SDK raises FilesystemError (not FileNotFoundError) for ENOENT.
-                if is_missing_path_error(exc):
-                    raise FileNotFoundError(path) from exc
-                raise
+
+        async with self._guest_lock(name):
+            sb = await self._connect(name)
+            if hasattr(sb, "fs"):
+                try:
+                    data = await sb.fs.read(guest_path)
+                    return bytes(data)
+                except Exception as exc:
+                    if is_missing_path_error(exc):
+                        raise FileNotFoundError(path) from exc
+                    if is_transient_guest_error(exc):
+                        logger.warning(
+                            "transient fs.read name=%s path=%s; retrying once: %s",
+                            name,
+                            path,
+                            exc,
+                        )
+                        await asyncio.sleep(0.15)
+                        sb = await self._connect(name)
+                        try:
+                            data = await sb.fs.read(guest_path)
+                            return bytes(data)
+                        except Exception as retry_exc:
+                            if is_missing_path_error(retry_exc):
+                                raise FileNotFoundError(path) from retry_exc
+                            raise
+                    raise
+
+        # No fs API — use exec (acquires guest lock itself).
         code, stdout, stderr = await self.exec(name, "cat", [guest_path])
         if code != 0:
             raise FileNotFoundError(stderr or path)

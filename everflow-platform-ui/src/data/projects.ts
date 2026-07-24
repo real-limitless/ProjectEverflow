@@ -262,6 +262,13 @@ export function addProjectToCatalog(project: Project): void {
   PROJECTS[project.id] = project
 }
 
+/** Remove a project from the in-memory catalog (after API delete or local discard). */
+export function removeProjectFromCatalog(id: string): boolean {
+  if (!PROJECTS[id]) return false
+  delete PROJECTS[id]
+  return true
+}
+
 /** Patch an existing catalog project (in-memory; persist via store for user projects). */
 export function updateProjectInCatalog(
   id: string,

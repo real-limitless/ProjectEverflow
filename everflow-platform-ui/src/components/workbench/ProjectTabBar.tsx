@@ -14,7 +14,7 @@ import {
 import CogIcon from '@patternfly/react-icons/dist/esm/icons/cog-icon'
 import PlusIcon from '@patternfly/react-icons/dist/esm/icons/plus-icon'
 import SaveIcon from '@patternfly/react-icons/dist/esm/icons/save-icon'
-import { PROJECTS, getProject } from '@/data/projects'
+import { PROJECTS, getProject, isSeedProjectId } from '@/data/projects'
 import { getSandboxStatus, isDemoMode } from '@/lib/api'
 import type { NamedLayoutSnapshot } from '@/lib/namedLayouts'
 import { withEffectiveSandboxStatus } from '@/lib/sandboxReady'
@@ -32,6 +32,7 @@ export function ProjectTabBar() {
   const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
   const switchProject = usePlaygroundStore((s) => s.switchProject)
   const closeProjectTab = usePlaygroundStore((s) => s.closeProjectTab)
+  const deleteProject = usePlaygroundStore((s) => s.deleteProject)
   const setOpenProjectModal = usePlaygroundStore((s) => s.setOpenProjectModal)
   const openProjectSettings = usePlaygroundStore((s) => s.openProjectSettings)
   const patchProjectSandbox = usePlaygroundStore((s) => s.patchProjectSandbox)
@@ -48,6 +49,8 @@ export function ProjectTabBar() {
   const [loadOpen, setLoadOpen] = useState(false)
   const [layoutName, setLayoutName] = useState('')
   const [saved, setSaved] = useState<NamedLayoutSnapshot[]>([])
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   // Touch catalogVersion so renames refresh tab labels
   void catalogVersion
@@ -77,13 +80,16 @@ export function ProjectTabBar() {
       }
     }
     void tick()
-    // Faster while unverified or not running so a dead sandbox re-gates quickly
+    // Slow when verified running so OpenCode tool bursts are not piled with status GETs.
+    // Keep pending/creating snappy; use a moderate interval otherwise.
     const interval =
       sandboxStatus === 'pending' || sandboxStatus === 'creating'
         ? 2000
         : sandboxStatus === 'running' && sandboxVerified
-          ? 15000
-          : 5000
+          ? 45000
+          : sandboxStatus === 'running'
+            ? 20000
+            : 8000
     const id = window.setInterval(() => void tick(), interval)
     return () => {
       cancelled = true
@@ -252,9 +258,67 @@ export function ProjectTabBar() {
             >
               Close tab
             </button>
+            {!isSeedProjectId(menu.projectId) ? (
+              <>
+                <div className="project-tab-context-sep" role="separator" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="project-tab-context-item is-danger"
+                  onClick={() => {
+                    setDeleteTargetId(menu.projectId)
+                    setMenu(null)
+                  }}
+                >
+                  Delete project…
+                </button>
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>
+
+      <Modal
+        variant={ModalVariant.small}
+        isOpen={Boolean(deleteTargetId)}
+        onClose={() => {
+          if (!deleting) setDeleteTargetId(null)
+        }}
+        aria-labelledby="delete-project-title"
+      >
+        <ModalHeader title="Delete project" labelId="delete-project-title" />
+        <ModalBody>
+          <p>
+            Permanently delete{' '}
+            <strong>{getProject(deleteTargetId)?.name || 'this project'}</strong>? The
+            sandbox and related data will be removed. This cannot be undone.
+          </p>
+        </ModalBody>
+        <ModalFooter>
+          <Button
+            variant="danger"
+            isLoading={deleting}
+            isDisabled={deleting || !deleteTargetId}
+            onClick={() => {
+              if (!deleteTargetId) return
+              setDeleting(true)
+              void deleteProject(deleteTargetId).finally(() => {
+                setDeleting(false)
+                setDeleteTargetId(null)
+              })
+            }}
+          >
+            Delete project
+          </Button>
+          <Button
+            variant="link"
+            onClick={() => setDeleteTargetId(null)}
+            isDisabled={deleting}
+          >
+            Cancel
+          </Button>
+        </ModalFooter>
+      </Modal>
 
       <Modal
         variant={ModalVariant.small}

@@ -580,9 +580,14 @@ async def _require_running_sandbox(
     if rec is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found")
     if rec.status != "running":
+        detail = f"Sandbox is not running (status={rec.status})"
+        err = getattr(rec, "error", None)
+        if isinstance(err, str) and err.strip():
+            detail = f"{detail}: {err.strip()}"[:2000]
+        logger.warning("sandbox gate blocked name=%s status=%s error=%s", name, rec.status, err)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Sandbox is not running (status={rec.status})",
+            detail=detail,
         )
     return rec
 

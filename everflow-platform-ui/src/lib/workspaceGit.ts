@@ -855,12 +855,30 @@ export async function listWorktrees(
   return parseWorktreePorcelain(res.stdout)
 }
 
+/** After a miss, skip re-reads briefly — chat/session refresh used to hammer a missing index. */
+const worktreeIndexMissUntil = new Map<string, number>()
+const WORKTREE_INDEX_MISS_BACKOFF_MS = 30_000
+
+function shouldBackoffWorktreeIndex(status: number): boolean {
+  // 404 = file not created yet; 409 = sandbox not ready / transitional.
+  return status === 404 || status === 409 || status === 502 || status === 503
+}
+
 export async function readWorktreeIndex(projectId: string): Promise<WorktreeIndexFile> {
+  const until = worktreeIndexMissUntil.get(projectId) || 0
+  if (Date.now() < until) {
+    return { entries: [] }
+  }
   try {
     const { readSandboxFs } = await import('@/lib/api')
     const raw = await readSandboxFs(projectId, WORKTREE_INDEX_PATH)
+    worktreeIndexMissUntil.delete(projectId)
     return parseWorktreeIndexJson(raw)
-  } catch {
+  } catch (e) {
+    const { ApiError } = await import('@/lib/api')
+    if (e instanceof ApiError && shouldBackoffWorktreeIndex(e.status)) {
+      worktreeIndexMissUntil.set(projectId, Date.now() + WORKTREE_INDEX_MISS_BACKOFF_MS)
+    }
     return { entries: [] }
   }
 }

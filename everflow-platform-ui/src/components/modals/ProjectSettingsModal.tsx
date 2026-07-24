@@ -24,7 +24,7 @@ import {
   TextInput,
 } from '@patternfly/react-core'
 import { enabledHarnessIds, harnessesFromIds } from '@/data/harnesses'
-import { getProject } from '@/data/projects'
+import { getProject, isSeedProjectId } from '@/data/projects'
 import { ProvidersManager } from '@/components/providers/ProvidersManager'
 import { HarnessPicker } from '@/components/project-settings/HarnessPicker'
 import { updateProject as apiUpdateProject, isDemoMode } from '@/lib/api'
@@ -36,7 +36,7 @@ import type {
   WorkspaceLayoutMode,
 } from '@/types/project'
 
-type SettingsTab = 'general' | 'harnesses' | 'providers' | 'workbench'
+type SettingsTab = 'general' | 'harnesses' | 'providers' | 'workbench' | 'danger'
 
 interface SettingsDraft {
   name: string
@@ -65,11 +65,14 @@ export function ProjectSettingsModal() {
   const projectId = usePlaygroundStore((s) => s.projectSettingsProjectId)
   const close = usePlaygroundStore((s) => s.closeProjectSettings)
   const updateProject = usePlaygroundStore((s) => s.updateProject)
+  const deleteProject = usePlaygroundStore((s) => s.deleteProject)
 
   const [tab, setTab] = useState<SettingsTab>('general')
   const [draft, setDraft] = useState<SettingsDraft | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmName, setConfirmName] = useState('')
   const [initialHarnessIds, setInitialHarnessIds] = useState<string[]>([])
 
   // Reset draft whenever the modal opens or target project changes
@@ -87,6 +90,8 @@ export function ProjectSettingsModal() {
     setError('')
     setTab('general')
     setSaving(false)
+    setDeleting(false)
+    setConfirmName('')
   }, [isOpen, projectId])
 
   const project = projectId ? getProject(projectId) : undefined
@@ -202,6 +207,7 @@ export function ProjectSettingsModal() {
               <Tab eventKey="harnesses" title={<TabTitleText>Harnesses</TabTitleText>} />
               <Tab eventKey="providers" title={<TabTitleText>Providers</TabTitleText>} />
               <Tab eventKey="workbench" title={<TabTitleText>Workbench</TabTitleText>} />
+              <Tab eventKey="danger" title={<TabTitleText>Danger zone</TabTitleText>} />
             </Tabs>
 
             <div className="project-settings-body">
@@ -392,21 +398,72 @@ export function ProjectSettingsModal() {
                   </FormSection>
                 </Form>
               )}
+
+              {tab === 'danger' && (
+                <Form className="project-settings-form">
+                  <FormSection title="Delete this project" titleElement="h2">
+                    <p className="project-settings-lead">
+                      Permanently delete this project, its sandbox, and related data. This
+                      cannot be undone.
+                    </p>
+                    {projectId && isSeedProjectId(projectId) ? (
+                      <Alert
+                        variant="info"
+                        isInline
+                        title="Demo projects cannot be deleted"
+                      />
+                    ) : (
+                      <>
+                        <FormGroup
+                          label={`Type “${project.name}” to confirm`}
+                          fieldId="ps-delete-confirm"
+                        >
+                          <TextInput
+                            id="ps-delete-confirm"
+                            value={confirmName}
+                            onChange={(_e, v) => setConfirmName(v)}
+                            aria-label="Confirm project name to delete"
+                            autoComplete="off"
+                          />
+                        </FormGroup>
+                        <Button
+                          variant="danger"
+                          isLoading={deleting}
+                          isDisabled={
+                            deleting ||
+                            confirmName.trim() !== project.name.trim() ||
+                            !projectId
+                          }
+                          onClick={() => {
+                            if (!projectId) return
+                            setDeleting(true)
+                            void deleteProject(projectId).finally(() => setDeleting(false))
+                          }}
+                        >
+                          Delete project
+                        </Button>
+                      </>
+                    )}
+                  </FormSection>
+                </Form>
+              )}
             </div>
           </>
         ) : null}
       </ModalBody>
       <ModalFooter>
-        <Button
-          variant="primary"
-          onClick={() => void onSave()}
-          isDisabled={!draft || saving}
-          isLoading={saving}
-        >
-          Save
-        </Button>
-        <Button variant="link" onClick={close} isDisabled={saving}>
-          Cancel
+        {tab !== 'danger' ? (
+          <Button
+            variant="primary"
+            onClick={() => void onSave()}
+            isDisabled={!draft || saving}
+            isLoading={saving}
+          >
+            Save
+          </Button>
+        ) : null}
+        <Button variant="link" onClick={close} isDisabled={saving || deleting}>
+          {tab === 'danger' ? 'Close' : 'Cancel'}
         </Button>
       </ModalFooter>
     </Modal>

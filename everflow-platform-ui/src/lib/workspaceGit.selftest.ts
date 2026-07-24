@@ -104,7 +104,7 @@ const withUrl = catalogReposToWorkspace([
   },
 ])
 assert(withUrl[0].path === 'my-app', 'URL basename even when localPath was .')
-assert(withUrl[0].path !== '.', 'remotes never map to workspace root')
+assert(String(withUrl[0].path) !== '.', 'remotes never map to workspace root')
 
 assert(sanitizeBranchName('main') === 'main', 'branch main')
 assert(sanitizeBranchName('feature/foo-bar') === 'feature/foo-bar', 'branch slash')

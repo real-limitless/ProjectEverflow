@@ -51,6 +51,29 @@ def _agent_http_error(exc: SandboxAgentError) -> HTTPException:
     return HTTPException(status_code=code, detail=str(exc))
 
 
+def _is_agent_path_missing(exc: SandboxAgentError) -> bool:
+    """True when agent 404 means a guest path is missing (not the sandbox itself)."""
+    msg = str(exc).lower()
+    return "path not found" in msg or "not a directory" in msg
+
+
+async def _fs_agent_error(
+    session: AsyncSession,
+    project: Project,
+    exc: SandboxAgentError,
+) -> HTTPException:
+    """Map agent FS errors: missing path → 404; missing sandbox → mark + 409."""
+    if exc.status_code == 404 and _is_agent_path_missing(exc):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    if exc.status_code == 404:
+        await mark_sandbox_missing(session, project)
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=MISSING_ON_AGENT,
+        )
+    return _agent_http_error(exc)
+
+
 def _status_read(
     project: Project,
     agent_info: dict | None = None,
@@ -75,15 +98,7 @@ async def get_sandbox_status(
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_settings),
 ) -> SandboxStatusRead:
-    project = await refresh_sandbox_status(session, project, settings=settings)
-    agent_info = None
-    if settings.sandbox_enabled and project.sandbox_name and project.sandbox_status != "error":
-        try:
-            agent_info = await SandboxAgentClient(settings).get_sandbox(project.sandbox_name)
-        except SandboxAgentError as exc:
-            if exc.status_code == 404:
-                project = await mark_sandbox_missing(session, project)
-            agent_info = None
+    project, agent_info = await refresh_sandbox_status(session, project, settings=settings)
     return _status_read(project, agent_info)
 
 
@@ -287,13 +302,7 @@ async def list_sandbox_fs(
     try:
         entries = await client.list_fs(name, path)
     except SandboxAgentError as exc:
-        if exc.status_code == 404:
-            await mark_sandbox_missing(session, project)
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=MISSING_ON_AGENT,
-            ) from exc
-        raise _agent_http_error(exc) from exc
+        raise await _fs_agent_error(session, project, exc) from exc
     return [SandboxFsEntry(**e) for e in entries]
 
 
@@ -309,13 +318,7 @@ async def read_sandbox_fs(
     try:
         text = await client.read_fs(name, path)
     except SandboxAgentError as exc:
-        if exc.status_code == 404:
-            await mark_sandbox_missing(session, project)
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=MISSING_ON_AGENT,
-            ) from exc
-        raise _agent_http_error(exc) from exc
+        raise await _fs_agent_error(session, project, exc) from exc
     return PlainTextResponse(text)
 
 
@@ -332,10 +335,4 @@ async def write_sandbox_fs(
     try:
         await client.write_fs(name, path, body.content)
     except SandboxAgentError as exc:
-        if exc.status_code == 404:
-            await mark_sandbox_missing(session, project)
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=MISSING_ON_AGENT,
-            ) from exc
-        raise _agent_http_error(exc) from exc
+        raise await _fs_agent_error(session, project, exc) from exc

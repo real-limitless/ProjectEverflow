@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Button,
   FormGroup,
@@ -122,6 +122,8 @@ export function RepositoryPanel() {
   const [workspaceRepos, setWorkspaceRepos] = useState<WorkspaceRepo[]>(() =>
     catalogReposToWorkspace(catalogRepos),
   )
+  const workspaceReposRef = useRef(workspaceRepos)
+  workspaceReposRef.current = workspaceRepos
   const [discovering, setDiscovering] = useState(false)
   const [liveChanges, setLiveChanges] = useState<GitFileChange[] | null>(null)
   const [liveCommits, setLiveCommits] = useState<GitCommit[] | null>(null)
@@ -288,6 +290,28 @@ export function RepositoryPanel() {
   useEffect(() => {
     void refreshDiscovery()
   }, [refreshDiscovery])
+
+  // Re-discover shortly after boot — provision can report running before clone/seed finishes.
+  // Keep this light: full discovery is expensive (git probes) and can stall chat.
+  useEffect(() => {
+    if (!liveMode || !currentProjectId) return
+    let cancelled = false
+    let attempts = 0
+    const maxAttempts = 8
+    const id = window.setInterval(() => {
+      if (cancelled) return
+      attempts += 1
+      if (workspaceReposRef.current.some((r) => r.hasGit) || attempts >= maxAttempts) {
+        window.clearInterval(id)
+        return
+      }
+      void refreshDiscovery()
+    }, 6000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [liveMode, currentProjectId, refreshDiscovery])
 
   const refreshLinkedWorktrees = useCallback(async () => {
     if (!liveMode || !currentProjectId || !selectedRepo.hasGit) {
