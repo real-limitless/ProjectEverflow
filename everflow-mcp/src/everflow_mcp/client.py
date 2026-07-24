@@ -9,12 +9,24 @@ from uuid import UUID
 
 import httpx
 
+# Short connect so unreachable guest URLs fail fast; read allows slower API work.
+DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
+
 
 class EverflowApiError(RuntimeError):
     def __init__(self, message: str, *, status_code: int | None = None, body: Any = None):
         super().__init__(message)
         self.status_code = status_code
         self.body = body
+
+
+def _resolve_timeout(timeout: httpx.Timeout | float | None) -> httpx.Timeout:
+    if timeout is None:
+        return DEFAULT_TIMEOUT
+    if isinstance(timeout, httpx.Timeout):
+        return timeout
+    # Single float: apply to all phases (tests / callers).
+    return httpx.Timeout(timeout)
 
 
 class EverflowClient:
@@ -24,7 +36,7 @@ class EverflowClient:
         base_url: str | None = None,
         token: str | None = None,
         project_id: str | None = None,
-        timeout: float = 60.0,
+        timeout: httpx.Timeout | float | None = None,
     ) -> None:
         self.base_url = (base_url or os.environ.get("EVERFLOW_API_URL") or "").rstrip("/")
         self.token = token or os.environ.get("EVERFLOW_TOKEN") or ""
@@ -40,7 +52,7 @@ class EverflowClient:
             UUID(self.project_id)
         except ValueError as exc:
             raise EverflowApiError("EVERFLOW_PROJECT_ID must be a UUID") from exc
-        self._timeout = timeout
+        self._timeout = _resolve_timeout(timeout)
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -54,7 +66,7 @@ class EverflowClient:
             path = "/" + path
         return f"{self.base_url}{path}"
 
-    def request(
+    async def request(
         self,
         method: str,
         path: str,
@@ -63,8 +75,8 @@ class EverflowClient:
         expect_empty: bool = False,
     ) -> Any:
         try:
-            with httpx.Client(timeout=self._timeout) as client:
-                res = client.request(
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                res = await client.request(
                     method,
                     self._url(path),
                     headers=self._headers(),
@@ -90,30 +102,30 @@ class EverflowClient:
 
     # --- context ---
 
-    def whoami(self) -> dict[str, Any]:
-        return self.request("GET", f"/api/v1/projects/{self.project_id}/mcp/context")
+    async def whoami(self) -> dict[str, Any]:
+        return await self.request("GET", f"/api/v1/projects/{self.project_id}/mcp/context")
 
-    def get_project(self) -> dict[str, Any]:
-        return self.request("GET", f"/api/v1/projects/{self.project_id}")
+    async def get_project(self) -> dict[str, Any]:
+        return await self.request("GET", f"/api/v1/projects/{self.project_id}")
 
-    def list_projects(self) -> list[dict[str, Any]]:
+    async def list_projects(self) -> list[dict[str, Any]]:
         """v1: only the bound project (mutations stay project-scoped)."""
-        proj = self.get_project()
+        proj = await self.get_project()
         return [proj] if isinstance(proj, dict) else []
 
     # --- knowledge ---
 
-    def list_canvases(self) -> list[dict[str, Any]]:
-        data = self.request("GET", f"/api/v1/projects/{self.project_id}/knowledge/canvases")
+    async def list_canvases(self) -> list[dict[str, Any]]:
+        data = await self.request("GET", f"/api/v1/projects/{self.project_id}/knowledge/canvases")
         return data if isinstance(data, list) else []
 
-    def get_canvas(self, canvas_id: str) -> dict[str, Any]:
-        return self.request(
+    async def get_canvas(self, canvas_id: str) -> dict[str, Any]:
+        return await self.request(
             "GET",
             f"/api/v1/projects/{self.project_id}/knowledge/canvases/{canvas_id}",
         )
 
-    def create_canvas(
+    async def create_canvas(
         self,
         *,
         name: str,
@@ -128,33 +140,33 @@ class EverflowClient:
         }
         if description is not None:
             body["description"] = description
-        return self.request(
+        return await self.request(
             "POST",
             f"/api/v1/projects/{self.project_id}/knowledge/canvases",
             json_body=body,
         )
 
-    def update_canvas(self, canvas_id: str, **fields: Any) -> dict[str, Any]:
-        return self.request(
+    async def update_canvas(self, canvas_id: str, **fields: Any) -> dict[str, Any]:
+        return await self.request(
             "PATCH",
             f"/api/v1/projects/{self.project_id}/knowledge/canvases/{canvas_id}",
             json_body={k: v for k, v in fields.items() if v is not None},
         )
 
-    def delete_canvas(self, canvas_id: str) -> None:
-        self.request(
+    async def delete_canvas(self, canvas_id: str) -> None:
+        await self.request(
             "DELETE",
             f"/api/v1/projects/{self.project_id}/knowledge/canvases/{canvas_id}",
             expect_empty=True,
         )
 
-    def reindex_canvas(self, canvas_id: str) -> dict[str, Any]:
-        return self.request(
+    async def reindex_canvas(self, canvas_id: str) -> dict[str, Any]:
+        return await self.request(
             "POST",
             f"/api/v1/projects/{self.project_id}/knowledge/canvases/{canvas_id}/reindex",
         )
 
-    def knowledge_search(
+    async def knowledge_search(
         self,
         query: str,
         *,
@@ -164,7 +176,7 @@ class EverflowClient:
         body: dict[str, Any] = {"query": query, "top_k": top_k}
         if agent_id:
             body["agent_id"] = agent_id
-        return self.request(
+        return await self.request(
             "POST",
             f"/api/v1/projects/{self.project_id}/knowledge/retrieve",
             json_body=body,
@@ -172,14 +184,14 @@ class EverflowClient:
 
     # --- agents ---
 
-    def list_agents(self) -> list[dict[str, Any]]:
-        data = self.request("GET", f"/api/v1/projects/{self.project_id}/agents")
+    async def list_agents(self) -> list[dict[str, Any]]:
+        data = await self.request("GET", f"/api/v1/projects/{self.project_id}/agents")
         return data if isinstance(data, list) else []
 
-    def get_agent(self, agent_id: str) -> dict[str, Any]:
-        return self.request("GET", f"/api/v1/projects/{self.project_id}/agents/{agent_id}")
+    async def get_agent(self, agent_id: str) -> dict[str, Any]:
+        return await self.request("GET", f"/api/v1/projects/{self.project_id}/agents/{agent_id}")
 
-    def create_agent(
+    async def create_agent(
         self,
         *,
         name: str,
@@ -189,7 +201,7 @@ class EverflowClient:
         tools: list[str] | None = None,
         active: bool = True,
     ) -> dict[str, Any]:
-        return self.request(
+        return await self.request(
             "POST",
             f"/api/v1/projects/{self.project_id}/agents",
             json_body={
@@ -202,15 +214,15 @@ class EverflowClient:
             },
         )
 
-    def update_agent(self, agent_id: str, **fields: Any) -> dict[str, Any]:
-        return self.request(
+    async def update_agent(self, agent_id: str, **fields: Any) -> dict[str, Any]:
+        return await self.request(
             "PATCH",
             f"/api/v1/projects/{self.project_id}/agents/{agent_id}",
             json_body={k: v for k, v in fields.items() if v is not None},
         )
 
-    def delete_agent(self, agent_id: str) -> None:
-        self.request(
+    async def delete_agent(self, agent_id: str) -> None:
+        await self.request(
             "DELETE",
             f"/api/v1/projects/{self.project_id}/agents/{agent_id}",
             expect_empty=True,
@@ -218,21 +230,21 @@ class EverflowClient:
 
     # --- tests ---
 
-    def list_test_suites(self) -> list[dict[str, Any]]:
-        data = self.request("GET", f"/api/v1/projects/{self.project_id}/tests/suites")
+    async def list_test_suites(self) -> list[dict[str, Any]]:
+        data = await self.request("GET", f"/api/v1/projects/{self.project_id}/tests/suites")
         return data if isinstance(data, list) else []
 
-    def create_test_suite(self, *, name: str, description: str | None = None) -> dict[str, Any]:
+    async def create_test_suite(self, *, name: str, description: str | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {"name": name}
         if description is not None:
             body["description"] = description
-        return self.request(
+        return await self.request(
             "POST",
             f"/api/v1/projects/{self.project_id}/tests/suites",
             json_body=body,
         )
 
-    def create_test_case(
+    async def create_test_case(
         self,
         suite_id: str,
         *,
@@ -240,39 +252,39 @@ class EverflowClient:
         type: str = "unit",
         command: str = "",
     ) -> dict[str, Any]:
-        return self.request(
+        return await self.request(
             "POST",
             f"/api/v1/projects/{self.project_id}/tests/suites/{suite_id}/cases",
             json_body={"name": name, "type": type, "command": command},
         )
 
-    def update_test_case(self, suite_id: str, case_id: str, **fields: Any) -> dict[str, Any]:
-        return self.request(
+    async def update_test_case(self, suite_id: str, case_id: str, **fields: Any) -> dict[str, Any]:
+        return await self.request(
             "PATCH",
             f"/api/v1/projects/{self.project_id}/tests/suites/{suite_id}/cases/{case_id}",
             json_body={k: v for k, v in fields.items() if v is not None},
         )
 
-    def delete_test_case(self, suite_id: str, case_id: str) -> None:
-        self.request(
+    async def delete_test_case(self, suite_id: str, case_id: str) -> None:
+        await self.request(
             "DELETE",
             f"/api/v1/projects/{self.project_id}/tests/suites/{suite_id}/cases/{case_id}",
             expect_empty=True,
         )
 
-    def run_test_suite(self, suite_id: str) -> dict[str, Any]:
-        return self.request(
+    async def run_test_suite(self, suite_id: str) -> dict[str, Any]:
+        return await self.request(
             "POST",
             f"/api/v1/projects/{self.project_id}/tests/suites/{suite_id}/run",
         )
 
     # --- http tools ---
 
-    def list_http_tools(self) -> list[dict[str, Any]]:
-        data = self.request("GET", f"/api/v1/projects/{self.project_id}/http-tools")
+    async def list_http_tools(self) -> list[dict[str, Any]]:
+        data = await self.request("GET", f"/api/v1/projects/{self.project_id}/http-tools")
         return data if isinstance(data, list) else []
 
-    def call_http_tool(
+    async def call_http_tool(
         self,
         tool_id: str,
         *,
@@ -288,7 +300,7 @@ class EverflowClient:
         }
         if body is not None:
             payload["body"] = body
-        return self.request(
+        return await self.request(
             "POST",
             f"/api/v1/projects/{self.project_id}/http-tools/{tool_id}/execute",
             json_body=payload,

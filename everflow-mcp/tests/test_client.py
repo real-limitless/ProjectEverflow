@@ -1,12 +1,10 @@
 """Unit tests for EverflowClient with mocked HTTP."""
 
-import json
-
 import httpx
 import pytest
 import respx
 
-from everflow_mcp.client import EverflowApiError, EverflowClient
+from everflow_mcp.client import DEFAULT_TIMEOUT, EverflowApiError, EverflowClient
 
 BASE = "http://api.test"
 PID = "11111111-1111-1111-1111-111111111111"
@@ -17,8 +15,9 @@ def _client() -> EverflowClient:
     return EverflowClient(base_url=BASE, token=TOKEN, project_id=PID)
 
 
+@pytest.mark.asyncio
 @respx.mock
-def test_whoami_and_create_canvas() -> None:
+async def test_whoami_and_create_canvas() -> None:
     respx.get(f"{BASE}/api/v1/projects/{PID}/mcp/context").mock(
         return_value=httpx.Response(
             200,
@@ -49,19 +48,20 @@ def test_whoami_and_create_canvas() -> None:
     )
 
     c = _client()
-    who = c.whoami()
+    who = await c.whoami()
     assert who["project_slug"] == "demo"
-    canvas = c.create_canvas(name="Arch", content_md="# hi")
+    canvas = await c.create_canvas(name="Arch", content_md="# hi")
     assert canvas["name"] == "Arch"
 
 
+@pytest.mark.asyncio
 @respx.mock
-def test_api_error() -> None:
+async def test_api_error() -> None:
     respx.get(f"{BASE}/api/v1/projects/{PID}/knowledge/canvases").mock(
         return_value=httpx.Response(403, json={"detail": "Missing scope"})
     )
     with pytest.raises(EverflowApiError) as ei:
-        _client().list_canvases()
+        await _client().list_canvases()
     assert ei.value.status_code == 403
 
 
@@ -70,8 +70,49 @@ def test_missing_env() -> None:
         EverflowClient(base_url="", token=TOKEN, project_id=PID)
 
 
+def test_default_timeout_is_split() -> None:
+    c = _client()
+    assert isinstance(c._timeout, httpx.Timeout)
+    assert c._timeout.connect == DEFAULT_TIMEOUT.connect
+    assert c._timeout.read == DEFAULT_TIMEOUT.read
+
+
+@pytest.mark.asyncio
 @respx.mock
-def test_list_and_call_http_tool() -> None:
+async def test_list_projects() -> None:
+    respx.get(f"{BASE}/api/v1/projects/{PID}").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": PID,
+                "name": "Demo",
+                "slug": "demo",
+                "organization_id": "33333333-3333-3333-3333-333333333333",
+                "sandbox_status": "running",
+            },
+        )
+    )
+    projects = await _client().list_projects()
+    assert len(projects) == 1
+    assert projects[0]["slug"] == "demo"
+
+
+@pytest.mark.asyncio
+async def test_connect_error_surfaces_quickly() -> None:
+    """Unreachable base URL should raise EverflowApiError (not hang indefinitely)."""
+    c = EverflowClient(
+        base_url="http://127.0.0.1:1",
+        token=TOKEN,
+        project_id=PID,
+        timeout=httpx.Timeout(connect=0.2, read=0.5, write=0.5, pool=0.2),
+    )
+    with pytest.raises(EverflowApiError, match="HTTP error"):
+        await c.get_project()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_list_and_call_http_tool() -> None:
     tool_id = "55555555-5555-5555-5555-555555555555"
     respx.get(f"{BASE}/api/v1/projects/{PID}/http-tools").mock(
         return_value=httpx.Response(
@@ -105,8 +146,8 @@ def test_list_and_call_http_tool() -> None:
         )
     )
     c = _client()
-    tools = c.list_http_tools()
+    tools = await c.list_http_tools()
     assert tools[0]["name"] == "status"
-    result = c.call_http_tool(tool_id)
+    result = await c.call_http_tool(tool_id)
     assert result["ok"] is True
     assert result["status_code"] == 200

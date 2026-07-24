@@ -460,6 +460,90 @@ async def test_opencode_ensure_and_proxy(client: AsyncClient) -> None:
     await client.post("/v1/sandboxes/ef-oc/remove", headers=HEADERS)
 
 
+@pytest.mark.asyncio
+async def test_opencode_ensure_guest_mcp_skips_without_tunnel(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guest MCP must not be configured with compose DNS when the reverse tunnel fails."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("SANDBOX_MOCK", "true")
+    monkeypatch.setenv("SANDBOX_AGENT_TOKEN", "test-token")
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path / "ws"))
+    get_settings.cache_clear()
+
+    application = create_app()
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        async with application.router.lifespan_context(application):
+            create = await ac.post(
+                "/v1/sandboxes",
+                headers=HEADERS,
+                json={"name": "ef-mcp-tunnel", "harnesses": ["agent-opencode"]},
+            )
+            assert create.status_code == 201, create.text
+
+            backend = application.state.backend
+            rec = backend._sandboxes["ef-mcp-tunnel"]
+            rec.workspace_path = "(guest-only)"
+
+            class _FailTunnel:
+                async def ensure(self, *_a, **_k):
+                    return {
+                        "ok": False,
+                        "error": "tunnel boom",
+                        "listen_port": 18765,
+                        "target": "backend:8000",
+                    }
+
+            monkeypatch.setattr(
+                "app.api_tunnel.get_api_tunnel_manager",
+                lambda: _FailTunnel(),
+            )
+            monkeypatch.setattr(
+                "app.everflow_mcp_inject.ensure_everflow_mcp_package",
+                AsyncMock(return_value={"installed": True, "source": "existing"}),
+            )
+            write_guest = AsyncMock()
+            monkeypatch.setattr(
+                "app.everflow_mcp_inject.write_everflow_mcp_guest",
+                write_guest,
+            )
+
+            from app.opencode_mgr import get_opencode_manager
+
+            monkeypatch.setattr(
+                get_opencode_manager(),
+                "ensure_guest_via_exec",
+                AsyncMock(
+                    return_value={
+                        "sandbox_name": "ef-mcp-tunnel",
+                        "healthy": True,
+                        "port": 4096,
+                        "mode": "guest",
+                    }
+                ),
+            )
+
+            ensure = await ac.post(
+                "/v1/sandboxes/ef-mcp-tunnel/opencode/ensure",
+                headers=HEADERS,
+                json={
+                    "everflow_token": "ef_sbox_test",
+                    "everflow_project_id": "11111111-1111-1111-1111-111111111111",
+                    "everflow_api_url": "http://backend:8000",
+                },
+            )
+            assert ensure.status_code == 200, ensure.text
+            mcp = ensure.json().get("everflow_mcp") or {}
+            assert mcp.get("configured") is False
+            assert mcp.get("tunnel", {}).get("ok") is False
+            assert "backend:8000" not in str(mcp.get("api_url", ""))
+            write_guest.assert_not_awaited()
+
+    get_settings.cache_clear()
+
+
 def test_remember_volume_strategy() -> None:
     import app.msb as msb_mod
 

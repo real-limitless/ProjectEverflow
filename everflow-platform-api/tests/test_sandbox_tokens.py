@@ -62,6 +62,11 @@ async def test_mint_and_use_sandbox_token(
     assert listed.status_code == 200
     assert len(listed.json()) == 1
 
+    # MCP list_projects / get_project hit GET /projects/{id} with sandbox token.
+    proj = await client.get(f"/api/v1/projects/{project_id}", headers=sbox)
+    assert proj.status_code == 200, proj.text
+    assert proj.json()["slug"] == "tok-app"
+
 
 @pytest.mark.asyncio
 async def test_sandbox_token_cannot_access_other_project(
@@ -93,6 +98,9 @@ async def test_sandbox_token_cannot_access_other_project(
         headers=sbox,
     )
     assert denied.status_code == 403
+
+    denied_proj = await client.get(f"/api/v1/projects/{project_b}", headers=sbox)
+    assert denied_proj.status_code == 403
 
 
 @pytest.mark.asyncio

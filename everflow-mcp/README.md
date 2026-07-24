@@ -10,7 +10,7 @@ Stdio MCP server that lets **OpenCode** (and the Everflow Chat tab) create and m
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `EVERFLOW_API_URL` | yes | Platform API base (e.g. `http://backend:8000` or `http://localhost:8000`) |
+| `EVERFLOW_API_URL` | yes | Platform API base (guest: tunnel `http://127.0.0.1:18765`; host: `http://localhost:8000`) |
 | `EVERFLOW_TOKEN` | yes | Sandbox access token (`ef_sbox_…`) |
 | `EVERFLOW_PROJECT_ID` | yes | Bound project UUID |
 
@@ -27,11 +27,12 @@ everflow-mcp
 ```
 
 OpenCode registers this as a local MCP (see sandbox-agent OpenCode ensure bootstrap).
+Hosts that prefix tools with the server name expose them as `everflow_<tool>` (e.g. `everflow_list_projects`).
 
 ## Tools
 
-- `everflow_whoami`
-- `everflow_get_project`
-- `everflow_list_projects` (bound project only in v1 — returns the active project)
-- `everflow_list_canvases` / `everflow_get_canvas` / `everflow_create_canvas` / `everflow_update_canvas` / `everflow_delete_canvas`
-- `everflow_list_agents` / `everflow_get_agent` / `everflow_create_agent` / `everflow_update_agent` / `everflow_delete_agent`
+- `whoami`
+- `get_project`
+- `list_projects` (bound project only in v1 — returns the active project)
+- `list_canvases` / `get_canvas` / `create_canvas` / `update_canvas` / `delete_canvas`
+- `list_agents` / `get_agent` / `create_agent` / `update_agent` / `delete_agent`

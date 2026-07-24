@@ -38,52 +38,52 @@ def _err(exc: Exception) -> str:
 
 
 @mcp.tool()
-def everflow_whoami() -> str:
+async def whoami() -> str:
     """Return the authenticated user, bound project, org, sandbox status, and scopes."""
     try:
-        return _ok(_client().whoami())
+        return _ok(await _client().whoami())
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_get_project() -> str:
+async def get_project() -> str:
     """Get the bound Everflow project summary (name, slug, repos, sandbox status)."""
     try:
-        return _ok(_client().get_project())
+        return _ok(await _client().get_project())
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_list_projects() -> str:
+async def list_projects() -> str:
     """List accessible projects. v1 returns only the sandbox-bound project (read-only navigation)."""
     try:
-        return _ok(_client().list_projects())
+        return _ok(await _client().list_projects())
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_list_canvases() -> str:
+async def list_canvases() -> str:
     """List knowledge canvases for the project (id, name, status — not full markdown)."""
     try:
-        return _ok(_client().list_canvases())
+        return _ok(await _client().list_canvases())
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_get_canvas(canvas_id: str) -> str:
+async def get_canvas(canvas_id: str) -> str:
     """Get a knowledge canvas including full markdown body."""
     try:
-        return _ok(_client().get_canvas(canvas_id))
+        return _ok(await _client().get_canvas(canvas_id))
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_create_canvas(
+async def create_canvas(
     name: str,
     content_md: str = "",
     description: str = "",
@@ -92,7 +92,7 @@ def everflow_create_canvas(
     """Create a knowledge canvas (markdown document) in the Everflow Knowledge panel."""
     try:
         return _ok(
-            _client().create_canvas(
+            await _client().create_canvas(
                 name=name,
                 description=description or None,
                 content_md=content_md,
@@ -104,7 +104,7 @@ def everflow_create_canvas(
 
 
 @mcp.tool()
-def everflow_update_canvas(
+async def update_canvas(
     canvas_id: str,
     name: str | None = None,
     content_md: str | None = None,
@@ -122,32 +122,32 @@ def everflow_update_canvas(
             fields["description"] = description
         if status is not None:
             fields["status"] = status
-        return _ok(_client().update_canvas(canvas_id, **fields))
+        return _ok(await _client().update_canvas(canvas_id, **fields))
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_delete_canvas(canvas_id: str) -> str:
+async def delete_canvas(canvas_id: str) -> str:
     """Permanently delete a knowledge canvas."""
     try:
-        _client().delete_canvas(canvas_id)
+        await _client().delete_canvas(canvas_id)
         return _ok({"deleted": True, "canvas_id": canvas_id})
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_reindex_canvas(canvas_id: str) -> str:
+async def reindex_canvas(canvas_id: str) -> str:
     """Chunk and embed a knowledge canvas so it can be retrieved by search."""
     try:
-        return _ok(_client().reindex_canvas(canvas_id))
+        return _ok(await _client().reindex_canvas(canvas_id))
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_knowledge_search(query: str, top_k: int = 5, agent_id: str = "") -> str:
+async def knowledge_search(query: str, top_k: int = 5, agent_id: str = "") -> str:
     """Search project knowledge canvases and return cite-backed chunks.
 
     Prefer this before answering questions about project docs, runbooks, or
@@ -155,7 +155,7 @@ def everflow_knowledge_search(query: str, top_k: int = 5, agent_id: str = "") ->
     """
     try:
         return _ok(
-            _client().knowledge_search(
+            await _client().knowledge_search(
                 query,
                 top_k=top_k,
                 agent_id=agent_id or None,
@@ -166,25 +166,25 @@ def everflow_knowledge_search(query: str, top_k: int = 5, agent_id: str = "") ->
 
 
 @mcp.tool()
-def everflow_list_agents() -> str:
+async def list_agents() -> str:
     """List Everflow project agent definitions (studio Agents panel — not OpenCode modes)."""
     try:
-        return _ok(_client().list_agents())
+        return _ok(await _client().list_agents())
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_get_agent(agent_id: str) -> str:
+async def get_agent(agent_id: str) -> str:
     """Get a full Everflow agent definition (system prompt, tools, active)."""
     try:
-        return _ok(_client().get_agent(agent_id))
+        return _ok(await _client().get_agent(agent_id))
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_create_agent(
+async def create_agent(
     name: str,
     role: str = "general",
     description: str = "",
@@ -200,7 +200,7 @@ def everflow_create_agent(
     try:
         tool_list = [t.strip() for t in tools.split(",") if t.strip()] if tools else []
         return _ok(
-            _client().create_agent(
+            await _client().create_agent(
                 name=name,
                 role=role,
                 description=description,
@@ -214,7 +214,7 @@ def everflow_create_agent(
 
 
 @mcp.tool()
-def everflow_update_agent(
+async def update_agent(
     agent_id: str,
     name: str | None = None,
     role: str | None = None,
@@ -238,36 +238,36 @@ def everflow_update_agent(
             fields["tools"] = [t.strip() for t in tools.split(",") if t.strip()]
         if active is not None:
             fields["active"] = active
-        return _ok(_client().update_agent(agent_id, **fields))
+        return _ok(await _client().update_agent(agent_id, **fields))
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_delete_agent(agent_id: str) -> str:
+async def delete_agent(agent_id: str) -> str:
     """Delete an Everflow agent definition."""
     try:
-        _client().delete_agent(agent_id)
+        await _client().delete_agent(agent_id)
         return _ok({"deleted": True, "agent_id": agent_id})
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_list_test_suites() -> str:
+async def list_test_suites() -> str:
     """List test suites for the project (includes cases and last_status)."""
     try:
-        return _ok(_client().list_test_suites())
+        return _ok(await _client().list_test_suites())
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_create_test_suite(name: str, description: str = "") -> str:
+async def create_test_suite(name: str, description: str = "") -> str:
     """Create a test suite in the Everflow Tests panel."""
     try:
         return _ok(
-            _client().create_test_suite(
+            await _client().create_test_suite(
                 name=name,
                 description=description or None,
             )
@@ -277,7 +277,7 @@ def everflow_create_test_suite(name: str, description: str = "") -> str:
 
 
 @mcp.tool()
-def everflow_create_test_case(
+async def create_test_case(
     suite_id: str,
     name: str,
     type: str = "unit",
@@ -286,7 +286,7 @@ def everflow_create_test_case(
     """Create a test case under a suite. ``type`` is unit, e2e, or smoke; ``command`` runs via sandbox shell."""
     try:
         return _ok(
-            _client().create_test_case(
+            await _client().create_test_case(
                 suite_id,
                 name=name,
                 type=type or "unit",
@@ -298,7 +298,7 @@ def everflow_create_test_case(
 
 
 @mcp.tool()
-def everflow_update_test_case(
+async def update_test_case(
     suite_id: str,
     case_id: str,
     name: str | None = None,
@@ -314,41 +314,41 @@ def everflow_update_test_case(
             fields["type"] = type
         if command is not None:
             fields["command"] = command
-        return _ok(_client().update_test_case(suite_id, case_id, **fields))
+        return _ok(await _client().update_test_case(suite_id, case_id, **fields))
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_delete_test_case(suite_id: str, case_id: str) -> str:
+async def delete_test_case(suite_id: str, case_id: str) -> str:
     """Delete a test case from a suite."""
     try:
-        _client().delete_test_case(suite_id, case_id)
+        await _client().delete_test_case(suite_id, case_id)
         return _ok({"deleted": True, "suite_id": suite_id, "case_id": case_id})
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_run_test_suite(suite_id: str) -> str:
+async def run_test_suite(suite_id: str) -> str:
     """Run all cases in a suite via sandbox shell; updates each case last_status."""
     try:
-        return _ok(_client().run_test_suite(suite_id))
+        return _ok(await _client().run_test_suite(suite_id))
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_list_http_tools() -> str:
+async def list_http_tools() -> str:
     """List registered HTTP tools for the project (name, method, url_template, enabled)."""
     try:
-        return _ok(_client().list_http_tools())
+        return _ok(await _client().list_http_tools())
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 
 
 @mcp.tool()
-def everflow_call_http_tool(
+async def call_http_tool(
     tool_id: str,
     path_params_json: str = "{}",
     query_json: str = "{}",
@@ -371,7 +371,7 @@ def everflow_call_http_tool(
         if body_json and body_json.strip():
             body = json.loads(body_json)
         return _ok(
-            _client().call_http_tool(
+            await _client().call_http_tool(
                 tool_id,
                 path_params={str(k): str(v) for k, v in path_params.items()},
                 query={str(k): str(v) for k, v in query.items()},

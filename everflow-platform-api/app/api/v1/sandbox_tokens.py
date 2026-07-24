@@ -89,7 +89,7 @@ async def mcp_context(
     project: Project = Depends(get_project_for_principal),
     principal: Principal = Depends(get_principal),
 ) -> McpContextRead:
-    """Bound identity for Everflow MCP ``everflow_whoami``."""
+    """Bound identity for Everflow MCP ``whoami``."""
     principal.require_scope("project:read")
     return McpContextRead(
         via=principal.via,

@@ -730,7 +730,9 @@ async def opencode_ensure(
         elif cfg.platform_api_url:
             agent_platform_url = cfg.platform_api_url.rstrip("/")
 
-        guest_api_url = agent_platform_url
+        # Guest MCP must use the reverse-tunnel URL (127.0.0.1); compose DNS like
+        # http://backend:8000 is not resolvable inside the microVM.
+        guest_api_url = ""
         tunnel_info: dict[str, Any] | None = None
         package_status: dict[str, Any] | None = None
 
@@ -784,6 +786,16 @@ async def opencode_ensure(
         command = body.everflow_mcp_command
 
         if guest:
+            if not guest_api_url:
+                mcp_status = {
+                    "configured": False,
+                    "error": (tunnel_info or {}).get("error")
+                    or "API reverse tunnel not available for guest MCP",
+                    "tunnel": tunnel_info,
+                    "package": package_status,
+                    "mode": "guest",
+                }
+                return
             mcp_status = await write_everflow_mcp_guest(
                 backend,
                 name,

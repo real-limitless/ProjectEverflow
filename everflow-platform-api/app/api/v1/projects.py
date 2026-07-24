@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.users import current_active_user
 from app.config import Settings, get_settings
 from app.core.deps import get_org_membership, get_project_for_member
+from app.core.principal import Principal, get_principal, get_project_for_principal
 from app.db.session import get_async_session, get_session_factory
 from app.models.organization import Organization, OrganizationMember
 from app.models.project import Project
@@ -283,8 +284,11 @@ async def create_project(
 
 @router.get("/projects/{project_id}", response_model=ProjectRead)
 async def get_project(
-    project: Project = Depends(get_project_for_member),
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
 ) -> Project:
+    """Project summary for JWT members and sandbox-token MCP tools."""
+    principal.require_scope("project:read")
     return project
 
 
