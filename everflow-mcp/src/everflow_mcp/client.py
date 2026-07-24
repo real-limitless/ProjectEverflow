@@ -148,6 +148,28 @@ class EverflowClient:
             expect_empty=True,
         )
 
+    def reindex_canvas(self, canvas_id: str) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/knowledge/canvases/{canvas_id}/reindex",
+        )
+
+    def knowledge_search(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        agent_id: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"query": query, "top_k": top_k}
+        if agent_id:
+            body["agent_id"] = agent_id
+        return self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/knowledge/retrieve",
+            json_body=body,
+        )
+
     # --- agents ---
 
     def list_agents(self) -> list[dict[str, Any]]:

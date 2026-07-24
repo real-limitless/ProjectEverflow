@@ -138,6 +138,34 @@ def everflow_delete_canvas(canvas_id: str) -> str:
 
 
 @mcp.tool()
+def everflow_reindex_canvas(canvas_id: str) -> str:
+    """Chunk and embed a knowledge canvas so it can be retrieved by search."""
+    try:
+        return _ok(_client().reindex_canvas(canvas_id))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+def everflow_knowledge_search(query: str, top_k: int = 5, agent_id: str = "") -> str:
+    """Search project knowledge canvases and return cite-backed chunks.
+
+    Prefer this before answering questions about project docs, runbooks, or
+    pinned web sources. Each hit includes canvas_id, canvas_name, text, and score.
+    """
+    try:
+        return _ok(
+            _client().knowledge_search(
+                query,
+                top_k=top_k,
+                agent_id=agent_id or None,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
 def everflow_list_agents() -> str:
     """List Everflow project agent definitions (studio Agents panel — not OpenCode modes)."""
     try:
