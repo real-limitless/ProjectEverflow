@@ -518,6 +518,71 @@ async def test_microsandbox_defers_bootstrap_and_cancels_on_remove() -> None:
     assert finished.is_set()
 
 
+@pytest.mark.asyncio
+async def test_msb_get_keeps_running_on_transient_sdk_error(monkeypatch) -> None:
+    """Transient Sandbox.get failures must not poison status to error (chat false negative)."""
+    import sys
+    import types
+    from datetime import datetime, timezone
+
+    from app.msb import MicrosandboxBackend, SandboxRecord
+
+    settings = Settings(sandbox_mock=False, workspace_root="/tmp/everflow-agent-test-ws")
+    backend = MicrosandboxBackend(settings)
+    name = "ef-transient"
+    backend._meta[name] = SandboxRecord(
+        name=name,
+        status="running",
+        image="python",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    class FakeSandbox:
+        @staticmethod
+        async def get(_name: str):
+            raise TimeoutError("msb API timeout")
+
+    fake_mod = types.ModuleType("microsandbox")
+    fake_mod.Sandbox = FakeSandbox  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "microsandbox", fake_mod)
+
+    rec = await backend.get(name)
+    assert rec is not None
+    assert rec.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_msb_get_marks_error_on_not_found(monkeypatch) -> None:
+    import sys
+    import types
+    from datetime import datetime, timezone
+
+    from app.msb import MicrosandboxBackend, SandboxRecord
+
+    settings = Settings(sandbox_mock=False, workspace_root="/tmp/everflow-agent-test-ws")
+    backend = MicrosandboxBackend(settings)
+    name = "ef-gone"
+    backend._meta[name] = SandboxRecord(
+        name=name,
+        status="running",
+        image="python",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    class FakeSandbox:
+        @staticmethod
+        async def get(_name: str):
+            raise RuntimeError("Sandbox not found")
+
+    fake_mod = types.ModuleType("microsandbox")
+    fake_mod.Sandbox = FakeSandbox  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "microsandbox", fake_mod)
+
+    rec = await backend.get(name)
+    assert rec is not None
+    assert rec.status == "error"
+
+
 def test_parse_ss_output_basic() -> None:
     from app.ports import parse_ss_output
 

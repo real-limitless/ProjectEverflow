@@ -6,6 +6,7 @@ Layout (OpenCode-native + Everflow metadata):
     opencode.json
     .opencode/agents/<slug>.md
     .opencode/skills/<name>/SKILL.md
+    .opencode/commands/<name>.md
     .everflow/harness-manifest.json
 """
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,7 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MANIFEST_REL = ".everflow/harness-manifest.json"
 AGENTS_DIR = ".opencode/agents"
 SKILLS_DIR = ".opencode/skills"
+COMMANDS_DIR = ".opencode/commands"
 OPENCODE_JSON = "opencode.json"
 
 # Built-in OpenCode agent names (not managed via markdown files we own)
@@ -255,6 +258,10 @@ def render_skill_markdown(skill: dict[str, Any]) -> str:
     name = str(skill.get("id") or skill.get("name") or "").strip()
     if not is_valid_slug(name):
         raise ValueError(f"invalid skill name: {name!r}")
+    # Full file content (e.g. fetched ECC SKILL.md) — write as-is.
+    raw = skill.get("content")
+    if isinstance(raw, str) and raw.strip():
+        return raw if raw.endswith("\n") else raw + "\n"
     description = str(skill.get("description") or "").strip() or f"Skill {name}"
     body = str(skill.get("body") or skill.get("prompt") or "").rstrip()
     lines = [
@@ -269,6 +276,116 @@ def render_skill_markdown(skill: dict[str, Any]) -> str:
         lines.append(body)
         lines.append("")
     return "\n".join(lines)
+
+
+def render_command_markdown(command: dict[str, Any]) -> str:
+    name = str(command.get("id") or command.get("name") or "").strip()
+    if not is_valid_slug(name):
+        raise ValueError(f"invalid command name: {name!r}")
+    raw = command.get("content")
+    if isinstance(raw, str) and raw.strip():
+        return raw if raw.endswith("\n") else raw + "\n"
+    description = str(command.get("description") or "").strip() or f"Command {name}"
+    body = str(command.get("body") or command.get("prompt") or "").rstrip()
+    lines = [
+        "---",
+        f"description: {dump_yaml_scalar(description)}",
+        "---",
+        "",
+    ]
+    if body:
+        lines.append(body)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def parse_command_markdown(text: str, *, name: str) -> dict[str, Any]:
+    cmd: dict[str, Any] = {
+        "id": name,
+        "name": name,
+        "description": "",
+        "body": "",
+        "managed": True,
+        "source": "opencode-file",
+    }
+    raw = text.lstrip("\ufeff")
+    if not raw.startswith("---"):
+        cmd["body"] = raw.strip()
+        cmd["description"] = f"Command {name}"
+        return cmd
+    end = raw.find("\n---", 3)
+    if end < 0:
+        cmd["body"] = raw.strip()
+        cmd["description"] = f"Command {name}"
+        return cmd
+    fm_block = raw[3:end].strip("\n")
+    body = raw[end + 4 :].lstrip("\n")
+    cmd["body"] = body.rstrip()
+    for line in fm_block.splitlines():
+        m = re.match(r"^([A-Za-z0-9_]+):\s*(.*)$", line)
+        if not m:
+            continue
+        key, rest = m.group(1), m.group(2).strip()
+        val = _parse_fm_value(rest)
+        if key == "description":
+            cmd["description"] = str(val)
+        elif key == "name":
+            cmd["name"] = str(val)
+            cmd["id"] = str(val)
+    if not cmd["description"]:
+        cmd["description"] = f"Command {name}"
+    return cmd
+
+
+def merge_plugin_list(existing: list[Any] | None, incoming: list[Any] | None) -> list[str]:
+    """Merge OpenCode plugin package names; incoming appends unique entries."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for src in (existing or [], incoming or []):
+        for item in src:
+            name = str(item).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def merge_marketplace_items(
+    existing: list[Any] | None,
+    incoming: list[Any] | None,
+    *,
+    remove: list[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Upsert marketplace provenance entries keyed by kind+id."""
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in existing or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip()
+        item_id = str(item.get("id") or "").strip()
+        if kind and item_id:
+            by_key[(kind, item_id)] = dict(item)
+    for item in incoming or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip()
+        item_id = str(item.get("id") or "").strip()
+        if not kind or not item_id:
+            continue
+        row = {**by_key.get((kind, item_id), {}), **item}
+        if not row.get("installed_at"):
+            row["installed_at"] = datetime.now(timezone.utc).isoformat()
+        by_key[(kind, item_id)] = row
+    for rem in remove or []:
+        if isinstance(rem, dict):
+            kind = str(rem.get("kind") or "").strip()
+            item_id = str(rem.get("id") or "").strip()
+        else:
+            continue
+        if kind and item_id:
+            by_key.pop((kind, item_id), None)
+    return [by_key[k] for k in sorted(by_key.keys())]
 
 
 def parse_skill_markdown(text: str, *, name: str) -> dict[str, Any]:
@@ -339,7 +456,13 @@ def deep_merge_mcp(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[s
     return out
 
 
-def merge_opencode_json(existing: dict[str, Any], *, mcp: dict[str, Any] | None) -> dict[str, Any]:
+def merge_opencode_json(
+    existing: dict[str, Any],
+    *,
+    mcp: dict[str, Any] | None = None,
+    plugin: list[Any] | None = None,
+    remove_plugins: list[Any] | None = None,
+) -> dict[str, Any]:
     """Merge managed sections into opencode.json without dropping server/config."""
     out = dict(existing) if existing else {}
     if "$schema" not in out:
@@ -347,11 +470,18 @@ def merge_opencode_json(existing: dict[str, Any], *, mcp: dict[str, Any] | None)
     if mcp is not None:
         prev_mcp = out.get("mcp") if isinstance(out.get("mcp"), dict) else {}
         out["mcp"] = deep_merge_mcp(prev_mcp, mcp)
+    if plugin is not None or remove_plugins:
+        prev_plugins = out.get("plugin") if isinstance(out.get("plugin"), list) else []
+        merged = merge_plugin_list(prev_plugins, plugin if plugin is not None else [])
+        if remove_plugins:
+            drop = {str(x).strip() for x in remove_plugins if str(x).strip()}
+            merged = [p for p in merged if p not in drop]
+        out["plugin"] = merged
     return out
 
 
 def read_pack_from_workspace(workspace: Path) -> dict[str, Any]:
-    """Scan workspace for agents, skills, mcp, manifest."""
+    """Scan workspace for agents, skills, commands, mcp, plugins, manifest."""
     root = workspace.resolve()
     agents: list[dict[str, Any]] = []
     agents_dir = _safe_join(root, AGENTS_DIR)
@@ -387,19 +517,35 @@ def read_pack_from_workspace(workspace: Path) -> dict[str, Any]:
                 continue
             skills.append(parse_skill_markdown(text, name=name))
 
+    commands: list[dict[str, Any]] = []
+    commands_dir = _safe_join(root, COMMANDS_DIR)
+    if commands_dir.is_dir():
+        for path in sorted(commands_dir.glob("*.md")):
+            name = path.stem
+            if not is_valid_slug(name):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            commands.append(parse_command_markdown(text, name=name))
+
     oc = load_json_file(_safe_join(root, OPENCODE_JSON))
     mcp = oc.get("mcp") if isinstance(oc.get("mcp"), dict) else {}
+    plugins = oc.get("plugin") if isinstance(oc.get("plugin"), list) else []
     manifest = load_json_file(_safe_join(root, MANIFEST_REL))
 
     return {
         "agents": agents,
         "skills": skills,
+        "commands": commands,
         "mcp": mcp,
+        "plugins": [str(p) for p in plugins],
         "manifest": manifest,
         "opencode_json": {
             k: v
             for k, v in oc.items()
-            if k in ("model", "small_model", "default_agent", "server", "$schema")
+            if k in ("model", "small_model", "default_agent", "server", "$schema", "plugin")
         },
     }
 
@@ -410,14 +556,18 @@ def apply_pack_to_workspace(
     *,
     replace_managed_agents: bool = True,
     replace_managed_skills: bool = True,
+    replace_managed_commands: bool = True,
 ) -> dict[str, Any]:
     """
     Write pack into workspace.
 
     - agents: list of agent dicts → .opencode/agents/<id>.md
     - skills: list of skill dicts → .opencode/skills/<id>/SKILL.md
+    - commands: list of command dicts → .opencode/commands/<id>.md
     - mcp: dict merged into opencode.json
-    - remove_agents / remove_skills: list of slugs to delete (managed only)
+    - plugin: list of npm plugin package names merged into opencode.json
+    - remove_agents / remove_skills / remove_commands / remove_plugins
+    - marketplace_items / remove_marketplace_items: provenance in manifest
     - manifest: merged into .everflow/harness-manifest.json
     """
     root = workspace.resolve()
@@ -425,13 +575,19 @@ def apply_pack_to_workspace(
 
     written_agents: list[str] = []
     written_skills: list[str] = []
+    written_commands: list[str] = []
+    written_plugins: list[str] = []
     removed_agents: list[str] = []
     removed_skills: list[str] = []
+    removed_commands: list[str] = []
+    removed_plugins: list[str] = []
 
     manifest_path = _safe_join(root, MANIFEST_REL)
     manifest = load_json_file(manifest_path)
     managed_agents: set[str] = set(manifest.get("managed_agents") or [])
     managed_skills: set[str] = set(manifest.get("managed_skills") or [])
+    managed_commands: set[str] = set(manifest.get("managed_commands") or [])
+    managed_plugins: set[str] = set(manifest.get("managed_plugins") or [])
 
     # Removals
     for slug in pack.get("remove_agents") or []:
@@ -453,13 +609,28 @@ def apply_pack_to_workspace(
         if skill_md.is_file():
             skill_md.unlink()
             removed_skills.append(s)
-        # remove empty dir
         try:
             if skill_dir.is_dir() and not any(skill_dir.iterdir()):
                 skill_dir.rmdir()
         except OSError:
             pass
         managed_skills.discard(s)
+
+    for slug in pack.get("remove_commands") or []:
+        s = str(slug)
+        if not is_valid_slug(s):
+            continue
+        path = _safe_join(root, COMMANDS_DIR, f"{s}.md")
+        if path.is_file():
+            path.unlink()
+            removed_commands.append(s)
+        managed_commands.discard(s)
+
+    for name in pack.get("remove_plugins") or []:
+        s = str(name).strip()
+        if s:
+            removed_plugins.append(s)
+            managed_plugins.discard(s)
 
     # Agents upsert
     agents_in = pack.get("agents")
@@ -511,16 +682,49 @@ def apply_pack_to_workspace(
             written_skills.append(name)
             managed_skills.add(name)
 
-    # MCP merge into opencode.json
+    # Commands upsert
+    commands_in = pack.get("commands")
+    if isinstance(commands_in, list):
+        if replace_managed_commands and pack.get("replace_all_commands"):
+            for old in list(managed_commands):
+                path = _safe_join(root, COMMANDS_DIR, f"{old}.md")
+                if path.is_file():
+                    path.unlink()
+                    removed_commands.append(old)
+            managed_commands.clear()
+
+        commands_dir = _safe_join(root, COMMANDS_DIR)
+        commands_dir.mkdir(parents=True, exist_ok=True)
+        for command in commands_in:
+            if not isinstance(command, dict):
+                continue
+            name = str(command.get("id") or command.get("name") or "").strip()
+            if not is_valid_slug(name):
+                raise ValueError(f"invalid command name: {name!r}")
+            content = render_command_markdown(command)
+            (commands_dir / f"{name}.md").write_text(content, encoding="utf-8")
+            written_commands.append(name)
+            managed_commands.add(name)
+
+    # MCP + plugin merge into opencode.json
     mcp_in = pack.get("mcp")
+    plugin_in = pack.get("plugin")
     oc_path = _safe_join(root, OPENCODE_JSON)
     existing_oc = load_json_file(oc_path)
-    if isinstance(mcp_in, dict) or pack.get("small_model") or pack.get("model") or pack.get(
-        "default_agent"
-    ):
+    touch_oc = (
+        isinstance(mcp_in, dict)
+        or isinstance(plugin_in, list)
+        or bool(pack.get("remove_plugins"))
+        or pack.get("small_model")
+        or pack.get("model")
+        or pack.get("default_agent")
+    )
+    if touch_oc:
         merged = merge_opencode_json(
             existing_oc,
             mcp=mcp_in if isinstance(mcp_in, dict) else None,
+            plugin=plugin_in if isinstance(plugin_in, list) else None,
+            remove_plugins=pack.get("remove_plugins") or None,
         )
         if pack.get("model"):
             merged["model"] = str(pack["model"])
@@ -528,18 +732,41 @@ def apply_pack_to_workspace(
             merged["small_model"] = str(pack["small_model"])
         if pack.get("default_agent"):
             merged["default_agent"] = str(pack["default_agent"])
-        # Preserve server block already present
         oc_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         existing_oc = merged
+        if isinstance(plugin_in, list):
+            for p in plugin_in:
+                name = str(p).strip()
+                if name:
+                    written_plugins.append(name)
+                    managed_plugins.add(name)
 
     # Manifest
     extra_meta = pack.get("manifest") if isinstance(pack.get("manifest"), dict) else {}
     agent_meta = pack.get("agent_meta") if isinstance(pack.get("agent_meta"), dict) else {}
+    marketplace_items = merge_marketplace_items(
+        manifest.get("marketplace_items") if isinstance(manifest.get("marketplace_items"), list) else [],
+        pack.get("marketplace_items") if isinstance(pack.get("marketplace_items"), list) else [],
+        remove=pack.get("remove_marketplace_items")
+        if isinstance(pack.get("remove_marketplace_items"), list)
+        else [],
+    )
+    # Prefer pack.manifest marketplace_items if caller already merged
+    if isinstance(extra_meta.get("marketplace_items"), list):
+        marketplace_items = merge_marketplace_items(
+            marketplace_items,
+            extra_meta.get("marketplace_items"),
+        )
+        extra_meta = {k: v for k, v in extra_meta.items() if k != "marketplace_items"}
+
     new_manifest = {
         **manifest,
         **extra_meta,
         "managed_agents": sorted(managed_agents),
         "managed_skills": sorted(managed_skills),
+        "managed_commands": sorted(managed_commands),
+        "managed_plugins": sorted(managed_plugins),
+        "marketplace_items": marketplace_items,
         "version": int(manifest.get("version") or 0) + 1,
     }
     if agent_meta:
@@ -552,8 +779,12 @@ def apply_pack_to_workspace(
     result["written"] = {
         "agents": written_agents,
         "skills": written_skills,
+        "commands": written_commands,
+        "plugins": written_plugins,
         "removed_agents": removed_agents,
         "removed_skills": removed_skills,
+        "removed_commands": removed_commands,
+        "removed_plugins": removed_plugins,
     }
     return result
 
@@ -604,7 +835,7 @@ async def _guest_rm(backend: Any, sandbox_name: str, path: str) -> bool:
 
 
 async def read_pack_via_backend(backend: Any, sandbox_name: str) -> dict[str, Any]:
-    """Scan guest workspace for agents/skills/mcp/manifest via list_fs + read_fs."""
+    """Scan guest workspace for agents/skills/commands/mcp/plugins/manifest."""
     agents: list[dict[str, Any]] = []
     for entry in await _guest_list(backend, sandbox_name, AGENTS_DIR):
         name = str(entry.get("name") or "")
@@ -633,6 +864,19 @@ async def read_pack_via_backend(backend: Any, sandbox_name: str) -> dict[str, An
             continue
         skills.append(parse_skill_markdown(text, name=name))
 
+    commands: list[dict[str, Any]] = []
+    for entry in await _guest_list(backend, sandbox_name, COMMANDS_DIR):
+        name = str(entry.get("name") or "")
+        if entry.get("is_dir") or not name.endswith(".md"):
+            continue
+        slug = name[: -len(".md")]
+        if not is_valid_slug(slug):
+            continue
+        text = await _guest_read_text(backend, sandbox_name, f"{COMMANDS_DIR}/{name}")
+        if text is None:
+            continue
+        commands.append(parse_command_markdown(text, name=slug))
+
     oc_raw = await _guest_read_text(backend, sandbox_name, OPENCODE_JSON)
     oc: dict[str, Any] = {}
     if oc_raw:
@@ -643,6 +887,7 @@ async def read_pack_via_backend(backend: Any, sandbox_name: str) -> dict[str, An
         except json.JSONDecodeError:
             oc = {}
     mcp = oc.get("mcp") if isinstance(oc.get("mcp"), dict) else {}
+    plugins = oc.get("plugin") if isinstance(oc.get("plugin"), list) else []
 
     man_raw = await _guest_read_text(backend, sandbox_name, MANIFEST_REL)
     manifest: dict[str, Any] = {}
@@ -657,12 +902,14 @@ async def read_pack_via_backend(backend: Any, sandbox_name: str) -> dict[str, An
     return {
         "agents": agents,
         "skills": skills,
+        "commands": commands,
         "mcp": mcp,
+        "plugins": [str(p) for p in plugins],
         "manifest": manifest,
         "opencode_json": {
             k: v
             for k, v in oc.items()
-            if k in ("model", "small_model", "default_agent", "server", "$schema")
+            if k in ("model", "small_model", "default_agent", "server", "$schema", "plugin")
         },
     }
 
@@ -674,12 +921,17 @@ async def apply_pack_via_backend(
     *,
     replace_managed_agents: bool = True,
     replace_managed_skills: bool = True,
+    replace_managed_commands: bool = True,
 ) -> dict[str, Any]:
     """Write pack into guest workspace using write_fs / exec rm (no host mount)."""
     written_agents: list[str] = []
     written_skills: list[str] = []
+    written_commands: list[str] = []
+    written_plugins: list[str] = []
     removed_agents: list[str] = []
     removed_skills: list[str] = []
+    removed_commands: list[str] = []
+    removed_plugins: list[str] = []
 
     man_raw = await _guest_read_text(backend, sandbox_name, MANIFEST_REL)
     manifest: dict[str, Any] = {}
@@ -692,6 +944,8 @@ async def apply_pack_via_backend(
             manifest = {}
     managed_agents: set[str] = set(manifest.get("managed_agents") or [])
     managed_skills: set[str] = set(manifest.get("managed_skills") or [])
+    managed_commands: set[str] = set(manifest.get("managed_commands") or [])
+    managed_plugins: set[str] = set(manifest.get("managed_plugins") or [])
 
     for slug in pack.get("remove_agents") or []:
         s = str(slug)
@@ -708,6 +962,20 @@ async def apply_pack_via_backend(
         if await _guest_rm(backend, sandbox_name, f"{SKILLS_DIR}/{s}"):
             removed_skills.append(s)
         managed_skills.discard(s)
+
+    for slug in pack.get("remove_commands") or []:
+        s = str(slug)
+        if not is_valid_slug(s):
+            continue
+        if await _guest_rm(backend, sandbox_name, f"{COMMANDS_DIR}/{s}.md"):
+            removed_commands.append(s)
+        managed_commands.discard(s)
+
+    for name in pack.get("remove_plugins") or []:
+        s = str(name).strip()
+        if s:
+            removed_plugins.append(s)
+            managed_plugins.discard(s)
 
     agents_in = pack.get("agents")
     if isinstance(agents_in, list):
@@ -752,7 +1020,32 @@ async def apply_pack_via_backend(
             written_skills.append(name)
             managed_skills.add(name)
 
+    commands_in = pack.get("commands")
+    if isinstance(commands_in, list):
+        if replace_managed_commands and pack.get("replace_all_commands"):
+            for old in list(managed_commands):
+                if await _guest_rm(backend, sandbox_name, f"{COMMANDS_DIR}/{old}.md"):
+                    removed_commands.append(old)
+            managed_commands.clear()
+
+        for command in commands_in:
+            if not isinstance(command, dict):
+                continue
+            name = str(command.get("id") or command.get("name") or "").strip()
+            if not is_valid_slug(name):
+                raise ValueError(f"invalid command name: {name!r}")
+            content = render_command_markdown(command)
+            await _guest_write_text(
+                backend,
+                sandbox_name,
+                f"{COMMANDS_DIR}/{name}.md",
+                content,
+            )
+            written_commands.append(name)
+            managed_commands.add(name)
+
     mcp_in = pack.get("mcp")
+    plugin_in = pack.get("plugin")
     oc_raw = await _guest_read_text(backend, sandbox_name, OPENCODE_JSON)
     existing_oc: dict[str, Any] = {}
     if oc_raw:
@@ -763,12 +1056,20 @@ async def apply_pack_via_backend(
         except json.JSONDecodeError:
             existing_oc = {}
 
-    if isinstance(mcp_in, dict) or pack.get("small_model") or pack.get("model") or pack.get(
-        "default_agent"
-    ):
+    touch_oc = (
+        isinstance(mcp_in, dict)
+        or isinstance(plugin_in, list)
+        or bool(pack.get("remove_plugins"))
+        or pack.get("small_model")
+        or pack.get("model")
+        or pack.get("default_agent")
+    )
+    if touch_oc:
         merged = merge_opencode_json(
             existing_oc,
             mcp=mcp_in if isinstance(mcp_in, dict) else None,
+            plugin=plugin_in if isinstance(plugin_in, list) else None,
+            remove_plugins=pack.get("remove_plugins") or None,
         )
         if pack.get("model"):
             merged["model"] = str(pack["model"])
@@ -782,14 +1083,37 @@ async def apply_pack_via_backend(
             OPENCODE_JSON,
             json.dumps(merged, indent=2, ensure_ascii=False) + "\n",
         )
+        if isinstance(plugin_in, list):
+            for p in plugin_in:
+                name = str(p).strip()
+                if name:
+                    written_plugins.append(name)
+                    managed_plugins.add(name)
 
     extra_meta = pack.get("manifest") if isinstance(pack.get("manifest"), dict) else {}
     agent_meta = pack.get("agent_meta") if isinstance(pack.get("agent_meta"), dict) else {}
+    marketplace_items = merge_marketplace_items(
+        manifest.get("marketplace_items") if isinstance(manifest.get("marketplace_items"), list) else [],
+        pack.get("marketplace_items") if isinstance(pack.get("marketplace_items"), list) else [],
+        remove=pack.get("remove_marketplace_items")
+        if isinstance(pack.get("remove_marketplace_items"), list)
+        else [],
+    )
+    if isinstance(extra_meta.get("marketplace_items"), list):
+        marketplace_items = merge_marketplace_items(
+            marketplace_items,
+            extra_meta.get("marketplace_items"),
+        )
+        extra_meta = {k: v for k, v in extra_meta.items() if k != "marketplace_items"}
+
     new_manifest = {
         **manifest,
         **extra_meta,
         "managed_agents": sorted(managed_agents),
         "managed_skills": sorted(managed_skills),
+        "managed_commands": sorted(managed_commands),
+        "managed_plugins": sorted(managed_plugins),
+        "marketplace_items": marketplace_items,
         "version": int(manifest.get("version") or 0) + 1,
     }
     if agent_meta:
@@ -806,7 +1130,11 @@ async def apply_pack_via_backend(
     result["written"] = {
         "agents": written_agents,
         "skills": written_skills,
+        "commands": written_commands,
+        "plugins": written_plugins,
         "removed_agents": removed_agents,
         "removed_skills": removed_skills,
+        "removed_commands": removed_commands,
+        "removed_plugins": removed_plugins,
     }
     return result

@@ -280,3 +280,73 @@ def test_guest_backend_apply_and_read(tmp_path: Path) -> None:
         assert oc["server"]["port"] == 14102
 
     asyncio.run(_run())
+
+
+def test_commands_plugins_and_marketplace_manifest(tmp_path: Path) -> None:
+    (tmp_path / "opencode.json").write_text(
+        json.dumps({"$schema": "https://opencode.ai/config.json"}),
+        encoding="utf-8",
+    )
+    result = apply_pack_to_workspace(
+        tmp_path,
+        {
+            "commands": [
+                {
+                    "id": "code-review",
+                    "description": "Review code",
+                    "body": "Review the current changes.",
+                }
+            ],
+            "plugin": ["oh-my-opencode"],
+            "marketplace_items": [
+                {
+                    "kind": "plugin",
+                    "id": "oh-my-opencode",
+                    "source": "curated",
+                },
+                {
+                    "kind": "command",
+                    "id": "code-review",
+                    "source": "ecc",
+                },
+            ],
+        },
+    )
+    assert "code-review" in result["written"]["commands"]
+    assert "oh-my-opencode" in result["written"]["plugins"]
+    cmd_path = tmp_path / ".opencode" / "commands" / "code-review.md"
+    assert cmd_path.is_file()
+    oc = json.loads((tmp_path / "opencode.json").read_text(encoding="utf-8"))
+    assert oc["plugin"] == ["oh-my-opencode"]
+    pack = read_pack_from_workspace(tmp_path)
+    assert pack["commands"][0]["id"] == "code-review"
+    assert pack["plugins"] == ["oh-my-opencode"]
+    assert "code-review" in pack["manifest"]["managed_commands"]
+    assert "oh-my-opencode" in pack["manifest"]["managed_plugins"]
+    kinds = {(m["kind"], m["id"]) for m in pack["manifest"]["marketplace_items"]}
+    assert ("plugin", "oh-my-opencode") in kinds
+    assert ("command", "code-review") in kinds
+
+    apply_pack_to_workspace(
+        tmp_path,
+        {
+            "remove_commands": ["code-review"],
+            "remove_plugins": ["oh-my-opencode"],
+            "remove_marketplace_items": [
+                {"kind": "plugin", "id": "oh-my-opencode"},
+                {"kind": "command", "id": "code-review"},
+            ],
+        },
+    )
+    assert not cmd_path.is_file()
+    oc2 = json.loads((tmp_path / "opencode.json").read_text(encoding="utf-8"))
+    assert oc2.get("plugin") == []
+    pack2 = read_pack_from_workspace(tmp_path)
+    assert pack2["manifest"]["marketplace_items"] == []
+
+
+def test_skill_content_passthrough() -> None:
+    raw = "---\nname: api-design\ndescription: REST patterns\n---\n\n# API\n"
+    md = render_skill_markdown({"id": "api-design", "content": raw})
+    assert md.startswith("---\nname: api-design")
+    assert "# API" in md

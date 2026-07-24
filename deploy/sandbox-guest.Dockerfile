@@ -42,10 +42,20 @@ RUN apt-get update \
         ca-certificates \
         curl \
         git \
+        openssh-client \
         bash \
         procps \
-        # Lean noVNC webtop (HTTP + websockify on :6080); avoid apt novnc (pulls nodejs)
+        # noVNC webtop (HTTP + websockify on :6080); avoid apt novnc (pulls nodejs)
         xvfb \
+        dbus-x11 \
+        xfce4 \
+        xfce4-terminal \
+        xfce4-session \
+        xfwm4 \
+        xfdesktop4 \
+        xfce4-panel \
+        thunar \
+        fonts-dejavu-core \
         openbox \
         x11vnc \
         websockify \

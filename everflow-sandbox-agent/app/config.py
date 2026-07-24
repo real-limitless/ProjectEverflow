@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # Explicit true → mock. False/None → real microsandbox (fail if KVM/SDK missing).
     sandbox_mock: bool | None = False
     # Guest microVM image (prebaked harnesses on GHCR)
-    default_image: str = "ghcr.io/real-limitless/everflow-sandbox-guest:dev"
+    default_image: str = "ghcr.io/limitless-rh/everflow-sandbox-guest:dev"
     default_cpus: int = 2
     default_memory_mib: int = 2048
     # Mount strategy for microVM workspace: named-volume | bind | no-volumes | auto

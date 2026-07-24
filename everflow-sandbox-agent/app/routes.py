@@ -882,6 +882,8 @@ async def get_opencode_harness(
         sandbox_name=name,
         agents=list(pack.get("agents") or []),
         skills=list(pack.get("skills") or []),
+        commands=list(pack.get("commands") or []),
+        plugins=[str(p) for p in (pack.get("plugins") or [])],
         mcp=dict(pack.get("mcp") or {}),
         manifest=dict(pack.get("manifest") or {}),
         opencode_json=dict(pack.get("opencode_json") or {}),
@@ -901,7 +903,10 @@ async def put_opencode_harness(
     """Write/merge OpenCode agents, skills, and MCP into the sandbox workspace."""
     rec = await _require_running_sandbox(name, backend)
     ws = _host_workspace_path(rec)
+    # Keep null MCP values (server deletion) — exclude_none would drop them.
     payload = body.model_dump(exclude_none=True)
+    if body.mcp is not None:
+        payload["mcp"] = body.mcp
     try:
         if ws is not None:
             pack = apply_pack_to_workspace(ws, payload)
@@ -932,6 +937,8 @@ async def put_opencode_harness(
         sandbox_name=name,
         agents=list(pack.get("agents") or []),
         skills=list(pack.get("skills") or []),
+        commands=list(pack.get("commands") or []),
+        plugins=[str(p) for p in (pack.get("plugins") or [])],
         mcp=dict(pack.get("mcp") or {}),
         manifest=dict(pack.get("manifest") or {}),
         opencode_json=dict(pack.get("opencode_json") or {}),
@@ -1049,6 +1056,9 @@ async def sandbox_port_proxy(
     if port < 1 or port > 65535:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid port")
     await _require_running_sandbox(name, backend)
+    from app.desktop import ensure_guest_desktop_for_proxy
+
+    await ensure_guest_desktop_for_proxy(backend.exec, name, port)
     try:
         dial_host, dial_port, mode = await resolve_dial_target(name, port, backend=backend)
     except Exception as exc:  # noqa: BLE001
@@ -1110,6 +1120,10 @@ async def sandbox_port_proxy_ws(
     if rec is None or rec.status != "running":
         await _reject(4404)
         return
+
+    from app.desktop import ensure_guest_desktop_for_proxy
+
+    await ensure_guest_desktop_for_proxy(backend.exec, name, port)
 
     query = websocket.url.query
     # Strip agent auth params only; keep Vite HMR ?token= (and everything else)

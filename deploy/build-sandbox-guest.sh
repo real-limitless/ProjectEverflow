@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TAG="${SANDBOX_GUEST_IMAGE:-everflow-sandbox-guest:dev}"
+TAG="${SANDBOX_GUEST_IMAGE:-ghcr.io/limitless-rh/everflow-sandbox-guest:dev}"
 DOCKERFILE="${ROOT}/deploy/sandbox-guest.Dockerfile"
 PUSH="${PUSH:-false}"
 ENGINE="${CONTAINER_ENGINE:-}"

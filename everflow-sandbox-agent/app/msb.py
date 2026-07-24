@@ -716,6 +716,10 @@ class MicrosandboxBackend(SandboxBackend):
             created_at=datetime.now(timezone.utc),
         )
         self._meta[name] = rec
+        # krun does not run the OCI ENTRYPOINT — start noVNC via guest exec.
+        from app.desktop import schedule_ensure_guest_desktop
+
+        schedule_ensure_guest_desktop(self.exec, name)
         if harnesses:
             self._schedule_bootstrap(name, list(harnesses))
             logger.info(
@@ -733,12 +737,23 @@ class MicrosandboxBackend(SandboxBackend):
 
         try:
             handle = await Sandbox.get(name)
-        except Exception:
-            # Do not return stale in-memory "running" if the VM is gone
+        except Exception as exc:
             meta = self._meta.get(name)
-            if meta is not None:
-                meta.status = "error"
-                meta.error = meta.error or "Sandbox not found on microsandbox runtime"
+            if _is_sandbox_not_found(exc):
+                # Confirmed gone — demote so callers do not treat a dead VM as running.
+                if meta is not None:
+                    meta.status = "error"
+                    meta.error = meta.error or "Sandbox not found on microsandbox runtime"
+                return meta
+            # Transient msb/API failures must NOT poison status to error — that makes
+            # OpenCode/chat return "Sandbox is not running (status=error)" while the
+            # microVM is still up (desktop/terminal still work).
+            logger.warning(
+                "Sandbox.get(%s) failed transiently; keeping status=%s: %s",
+                name,
+                getattr(meta, "status", None),
+                exc,
+            )
             return meta
 
         meta = self._meta.get(name)
@@ -791,6 +806,9 @@ class MicrosandboxBackend(SandboxBackend):
         if rec is None:
             raise KeyError(name)
         rec.status = "running"
+        from app.desktop import schedule_ensure_guest_desktop
+
+        schedule_ensure_guest_desktop(self.exec, name)
         return rec
 
     async def stop(self, name: str) -> SandboxRecord:
