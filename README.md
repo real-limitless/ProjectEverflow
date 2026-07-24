@@ -9,43 +9,74 @@ Users can freely create applications within pre-approved boundaries, ensuring co
 
 Every **project** is backed by an isolated [microsandbox](https://agentsandbox.dev/) microVM. Clients talk only to the Everflow API; an internal **sandbox-agent** owns KVM and the microsandbox SDK.
 
-## Docker Compose
+## Install (Docker / Podman only)
 
-Three services:
+The supported product install runs **entirely in containers**. The host only needs:
+
+- **Docker** or **Podman** with the Compose V2 plugin (`docker compose` / `podman compose`)
+- Linux with **`/dev/kvm`** for real microVMs (`ls -l /dev/kvm`)
+- Privileged containers + device passthrough for `sandbox-agent`
+- Without KVM, set `SANDBOX_MOCK=true` in `.env` (CI/dev only — not for product use)
+
+No host Python, Node, or package installs are required for the control plane.
+
+### Quick install (prebuilt images)
+
+End users should **pull** published images from GitHub Container Registry — no local compile:
+
+```bash
+./scripts/everflow-install.sh
+# optional: CONTAINER_ENGINE=podman ./scripts/everflow-install.sh
+```
+
+That generates `.env` secrets, `compose pull`s:
+
+| Image | Default tag |
+|-------|-------------|
+| `everflow-frontend` | `ghcr.io/limitless-rh/everflow-frontend:latest` |
+| `everflow-backend` | `ghcr.io/limitless-rh/everflow-backend:latest` |
+| `everflow-sandbox-agent` | `ghcr.io/limitless-rh/everflow-sandbox-agent:latest` |
+| `everflow-sandbox-guest` | `ghcr.io/limitless-rh/everflow-sandbox-guest:latest` |
+
+…then starts the stack. Quiet by default (logs → `.everflow-install.log`).
+
+If a pull fails (images not published yet), the installer falls back to a local build.
+
+**Build from source** (contributors / offline):
+
+```bash
+BUILD_FROM_SOURCE=1 ./scripts/everflow-install.sh
+# or: VERBOSE=1 BUILD_FROM_SOURCE=1 ./scripts/everflow-install.sh
+```
+
+Then open the UI for **first-run setup** (platform admin + first organization).
+
+Manual equivalents:
+
+```bash
+cp .env.example .env
+# pull path (preferred for users):
+docker compose pull && docker compose up -d --no-build
+# build path:
+docker compose up --build -d
+```
+
+> **Note:** Prebuilt frontend images use same-origin `/api` (nginx → backend), so one image works on any host without baking `VITE_API_URL` at build time. Publish images to GHCR from CI for the pull path to work without fallback.
+
+### Stack services
 
 | Service | Role | Ports (prod / dev) |
 |---------|------|--------------------|
 | `frontend` | UI | `3000` (nginx) / `5173` (Vite HMR) |
 | `backend` | **Sole public API** (`everflow-platform-api`) | `8000` |
 | `sandbox-agent` | Privileged microsandbox control plane | not published / `8090` in dev |
-
-### Host requirements
-
-- Linux with **`/dev/kvm`** for real microVMs (`ls -l /dev/kvm`)
-- Docker or Podman with privileged containers + device passthrough
-- Without KVM, set `SANDBOX_MOCK=true` (default in compose) for in-memory mock sandboxes
-
-### Quick install
-
-```bash
-./scripts/everflow-install.sh
-```
-
-Generates `.env` secrets, starts Compose, waits for `GET /api/v1/system/health`, then open the UI for **first-run setup** (platform admin + first organization).
-
-Manual alternative:
-
-```bash
-cp .env.example .env
-# edit SANDBOX_AGENT_TOKEN, SECRET_KEY, and CREDENTIALS_ENCRYPTION_KEY
-docker compose up --build
-```
+| `searxng` | Internal knowledge search | not published |
 
 ### Production checklist (operators)
 
 - Set `ENVIRONMENT=production` (API refuses default `SECRET_KEY` / `SANDBOX_AGENT_TOKEN`)
 - Set unique `SECRET_KEY`, `SANDBOX_AGENT_TOKEN`, and `CREDENTIALS_ENCRYPTION_KEY`
-- Prefer PostgreSQL via `DATABASE_URL=postgresql+asyncpg://…`
+- Prefer PostgreSQL via `DATABASE_URL=postgresql+asyncpg://…` (run Postgres as another Compose service or external DB)
 - Confirm `/dev/kvm` and `SANDBOX_MOCK=false` for real sandboxes
 - Optional: `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` (+ `OAUTH_REDIRECT_BASE_URL`) for Sign in with GitHub
 - After boot: complete first-run wizard → invite teammates → add GitHub PAT under Organization & Git
@@ -55,7 +86,8 @@ docker compose up --build
 Built images, static UI (nginx), no source mounts:
 
 ```bash
-docker compose up --build
+docker compose up --build -d
+# or: podman compose up --build -d
 ```
 
 - UI: http://localhost:3000  
@@ -100,19 +132,24 @@ SANDBOX_AGENT_TOKEN=your-long-secret
 
 Project create → backend provisions a detached sandbox via sandbox-agent. Create returns once the microVM is up; harness install (if needed) runs in the background.
 
-### Prebaked guest image (recommended)
+### Publishing images (maintainers)
 
-Project sandboxes boot an **OCI guest image** (separate from the sandbox-agent host image). Bake Node + Claude Code + OpenCode into that image so tools are ready immediately:
+Build all control-plane + guest images (matches installer’s GHCR pull tags):
 
 ```bash
-./deploy/build-sandbox-guest.sh
-# optional: PUSH=true ./deploy/build-sandbox-guest.sh
-# default tag: ghcr.io/limitless-rh/everflow-sandbox-guest:dev
+./deploy/build-images.sh
+# push:  docker login ghcr.io && PUSH=true ./deploy/build-images.sh
+# tag:   EVERFLOW_IMAGE_TAG=v0.1.0 PUSH=true ./deploy/build-images.sh
+# guest only: ./deploy/build-sandbox-guest.sh
 ```
 
-Set `SANDBOX_DEFAULT_IMAGE=ghcr.io/limitless-rh/everflow-sandbox-guest:dev` (default in `.env.example`). Microsandbox must be able to pull the tag (local store or registry). First boot may pull/cache the image once; later creates stay fast.
+See [`deploy/README.md`](deploy/README.md).
 
-See `deploy/sandbox-guest.Dockerfile` and `everflow-sandbox-agent/README.md`.
+### Prebaked guest image
+
+Project sandboxes boot an **OCI guest image** (separate from the sandbox-agent host image). Included in `./deploy/build-images.sh`, or build alone with `./deploy/build-sandbox-guest.sh`.
+
+Set `SANDBOX_DEFAULT_IMAGE=ghcr.io/limitless-rh/everflow-sandbox-guest:latest` (default in `.env.example`). Microsandbox must be able to pull the tag. First boot may pull/cache once; later creates stay fast.
 
 ### App toolkits
 
@@ -121,7 +158,10 @@ Project create templates seed cloneable starters from [`toolkits/`](toolkits/REA
 - Local seed: `TOOLKIT_LOCAL_ROOT=/toolkits` (mounted/copied into the API image)
 - Optional remote: `TOOLKIT_REPO_BASE=https://github.com/org/everflow-toolkit-{id}.git`
 
-## Local development (without Compose)
+## Contributor development (optional, not the product install)
+
+Product deployments use Compose/Podman only (see above). The following is for
+contributors iterating on a single service outside containers.
 
 ### Platform API
 

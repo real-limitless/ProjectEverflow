@@ -2,7 +2,20 @@
 
 Python **FastAPI** backend for the Everflow platform UI. Dual-database (SQLite by default, PostgreSQL via `DATABASE_URL`), JWT auth, optional GitHub/Google OAuth, and org/project CRUD.
 
-## Quick start (SQLite)
+## Product install (Docker / Podman)
+
+The supported way to run the API in production/self-hosted is the root Compose stack
+(all services in containers):
+
+```bash
+# from repository root
+./scripts/everflow-install.sh
+# or: docker compose up --build -d
+```
+
+Migrations run inside the backend container entrypoint. First-run admin setup is in the UI.
+
+## Contributor quick start (SQLite, host venv)
 
 ```bash
 cd everflow-platform-api

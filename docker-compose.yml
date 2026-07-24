@@ -1,39 +1,33 @@
-# Project Everflow — three services:
-#   frontend       UI (public)
-#   backend        everflow-platform-api (sole public API)
-#   sandbox-agent  privileged KVM / microsandbox control plane (internal)
+# Project Everflow — container-only control plane (Docker or Podman Compose).
 #
-# Host requirements: Linux with /dev/kvm for real microVMs.
-# Without KVM, set SANDBOX_MOCK=true (default in this file for safety).
+# Default: pull prebuilt images from GHCR (fast end-user install).
+# From source: BUILD_FROM_SOURCE=1 ./scripts/everflow-install.sh
+#   or: docker compose up --build -d
+#
+# Host: Docker or Podman + Compose plugin; Linux /dev/kvm for real microVMs.
+# Without KVM, set SANDBOX_MOCK=true for CI/dev only (not product use).
 
 services:
   sandbox-agent:
+    image: ${EVERFLOW_SANDBOX_AGENT_IMAGE:-ghcr.io/limitless-rh/everflow-sandbox-agent:latest}
     build:
       context: .
       dockerfile: deploy/sandbox-agent.Dockerfile
-    # Required for real microVMs (libkrun + KVM)
     privileged: true
     devices:
       - /dev/kvm
     environment:
       SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
-      # Real microVMs only (official msb image). Set true only for CI without KVM.
       SANDBOX_MOCK: ${SANDBOX_MOCK:-false}
-      # Guest image for project microVMs (build: ./deploy/build-sandbox-guest.sh)
-      DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ghcr.io/limitless-rh/everflow-sandbox-guest:dev}
-      # named-volume | bind | no-volumes | auto (caches last success)
+      DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ghcr.io/limitless-rh/everflow-sandbox-guest:latest}
       VOLUME_STRATEGY: ${VOLUME_STRATEGY:-auto}
       WORKSPACE_ROOT: /workspaces
       MSB_HOME: /root/.microsandbox
     volumes:
-      # Guest images + runtime state (must persist across restarts)
       - msb_data:/root/.microsandbox
       - project_workspaces:/workspaces
     expose:
       - "8090"
-    # Debug only — do not publish in production:
-    # ports:
-    #   - "8090:8090"
     healthcheck:
       test:
         [
@@ -72,6 +66,7 @@ services:
       start_period: 20s
 
   backend:
+    image: ${EVERFLOW_BACKEND_IMAGE:-ghcr.io/limitless-rh/everflow-backend:latest}
     build:
       context: .
       dockerfile: deploy/backend.Dockerfile
@@ -90,7 +85,7 @@ services:
       SANDBOX_ENABLED: ${SANDBOX_ENABLED:-true}
       SANDBOX_AGENT_URL: http://sandbox-agent:8090
       SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
-      SANDBOX_DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ghcr.io/limitless-rh/everflow-sandbox-guest:dev}
+      SANDBOX_DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ghcr.io/limitless-rh/everflow-sandbox-guest:latest}
       SANDBOX_DEFAULT_MEMORY_MIB: ${SANDBOX_DEFAULT_MEMORY_MIB:-2048}
       SANDBOX_DEFAULT_CPUS: ${SANDBOX_DEFAULT_CPUS:-2}
       PREVIEW_ENABLED: ${PREVIEW_ENABLED:-true}
@@ -117,11 +112,13 @@ services:
       start_period: 15s
 
   frontend:
+    image: ${EVERFLOW_FRONTEND_IMAGE:-ghcr.io/limitless-rh/everflow-frontend:latest}
     build:
       context: .
       dockerfile: deploy/frontend.Dockerfile
       args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+        # Same-origin /api via nginx — works for any host with one prebuilt image
+        VITE_API_URL: ${VITE_API_URL:-}
     ports:
       - "3000:80"
     depends_on:

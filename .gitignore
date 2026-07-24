@@ -23,3 +23,4 @@ dist/
 # Tooling / generated
 graphify-out/
 .cache/
+.everflow-install.log

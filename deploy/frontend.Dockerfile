@@ -6,7 +6,9 @@ COPY everflow-platform-ui/package.json everflow-platform-ui/package-lock.json ./
 RUN npm ci
 COPY everflow-platform-ui/ ./
 
-ARG VITE_API_URL=http://localhost:8000
+# Empty = same-origin /api (nginx proxies to backend). Required for prebuilt
+# GHCR images so one image works on any host without rebuilding.
+ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 
 RUN npm run build

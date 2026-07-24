@@ -2,30 +2,66 @@
 
 | File | Purpose |
 |------|---------|
+| `build-images.sh` | Build/push **all** Everflow images (frontend, backend, sandbox-agent, guest) |
+| `build-sandbox-guest.sh` | Thin wrapper: guest image only (`ONLY=guest`) |
 | `sandbox-agent.Dockerfile` | **Host** control plane: microsandbox runtime + Everflow sandbox-agent API |
 | `sandbox-guest.Dockerfile` | **Guest** microVM image for projects (Node + agent harnesses prebaked) |
-| `build-sandbox-guest.sh` | Build/push the guest image |
 | `backend.Dockerfile` / `frontend*.Dockerfile` | Platform API and UI |
 
-## Guest image (fast project sandboxes)
+## Build all images (recommended for publishers)
+
+From repo root:
 
 ```bash
-# From repo root
+# Local tags (ghcr.io/limitless-rh/everflow-*:latest)
+./deploy/build-images.sh
+
+# Push to GHCR (login first: docker login ghcr.io / podman login ghcr.io)
+PUSH=true ./deploy/build-images.sh
+
+# Versioned release
+EVERFLOW_IMAGE_TAG=v0.1.0 PUSH=true ./deploy/build-images.sh
+
+# Subset
+ONLY=backend,frontend ./deploy/build-images.sh
+ONLY=guest ./deploy/build-images.sh
+
+# Podman
+CONTAINER_ENGINE=podman ./deploy/build-images.sh
+```
+
+| Image | Default ref |
+|-------|-------------|
+| Frontend | `ghcr.io/limitless-rh/everflow-frontend:latest` |
+| Backend | `ghcr.io/limitless-rh/everflow-backend:latest` |
+| Sandbox agent | `ghcr.io/limitless-rh/everflow-sandbox-agent:latest` |
+| Sandbox guest | `ghcr.io/limitless-rh/everflow-sandbox-guest:latest` (+ `:dev` alias) |
+
+Frontend is built with **empty** `VITE_API_URL` so the UI uses same-origin `/api` (nginx → backend). One prebuilt frontend works on any host.
+
+After publishing, end users install with:
+
+```bash
+./scripts/everflow-install.sh   # pulls GHCR images, no local compile
+```
+
+## Guest image only (legacy)
+
+```bash
 ./deploy/build-sandbox-guest.sh
 
-# Custom tag / push
 SANDBOX_GUEST_IMAGE=ghcr.io/limitless-rh/everflow-sandbox-guest:v1 PUSH=true ./deploy/build-sandbox-guest.sh
 ```
 
 Then set:
 
 ```bash
-SANDBOX_DEFAULT_IMAGE=ghcr.io/limitless-rh/everflow-sandbox-guest:dev
+SANDBOX_DEFAULT_IMAGE=ghcr.io/limitless-rh/everflow-sandbox-guest:latest
 ```
 
-Microsandbox pulls OCI images into its cache (`MSB_HOME`). Use a tag the agent host can pull (local engine store when supported, or a registry). First provision may download once; later creates reuse the cache.
+Microsandbox pulls OCI images into its cache (`MSB_HOME`). First provision may download once; later creates reuse the cache.
 
-Upgrade harness versions by rebuilding the guest image (optional build-args: `CLAUDE_CODE_VERSION`, `OPENCODE_PACKAGE`).
+Upgrade harness versions by rebuilding the guest image (optional build-args on the Dockerfile: `CLAUDE_CODE_VERSION`, `OPENCODE_PACKAGE`).
 
 ## Live Preview (wildcard subdomains)
 

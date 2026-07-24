@@ -16,7 +16,14 @@ import type {
   OcSession,
 } from './types'
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+function resolveApiBase(): string {
+  const raw = import.meta.env.VITE_API_URL as string | undefined
+  if (raw === '' || raw === '/') return ''
+  if (typeof raw === 'string' && raw.trim()) return raw.replace(/\/$/, '')
+  return 'http://localhost:8000'
+}
+
+const API_BASE = resolveApiBase()
 
 function base(projectId: string): string {
   return `${API_BASE}/api/v1/projects/${projectId}/opencode`
