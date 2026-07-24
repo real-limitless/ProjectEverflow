@@ -21,11 +21,18 @@ router = APIRouter(tags=["harness"])
 class OpenCodeHarnessPackBody(BaseModel):
     agents: list[dict[str, Any]] | None = None
     skills: list[dict[str, Any]] | None = None
+    commands: list[dict[str, Any]] | None = None
     mcp: dict[str, Any] | None = None
+    plugin: list[str] | None = None
+    marketplace_items: list[dict[str, Any]] | None = None
     remove_agents: list[str] = Field(default_factory=list)
     remove_skills: list[str] = Field(default_factory=list)
+    remove_commands: list[str] = Field(default_factory=list)
+    remove_plugins: list[str] = Field(default_factory=list)
+    remove_marketplace_items: list[dict[str, Any]] = Field(default_factory=list)
     replace_all_agents: bool = False
     replace_all_skills: bool = False
+    replace_all_commands: bool = False
     model: str | None = None
     small_model: str | None = None
     default_agent: str | None = None

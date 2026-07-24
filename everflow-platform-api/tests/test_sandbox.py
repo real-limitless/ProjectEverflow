@@ -371,6 +371,56 @@ async def test_refresh_maps_crashed_to_error(
 
 
 @pytest.mark.asyncio
+async def test_refresh_heals_stale_error_when_agent_running(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    """Stale DB error must not stick when the agent still reports running (chat gate)."""
+    fake = FakeAgentClient()
+    org_id = await _create_org(client, auth_headers, slug="sbx-heal-err")
+    create = await client.post(
+        f"/api/v1/orgs/{org_id}/projects",
+        headers=auth_headers,
+        json={"name": "HealErr", "slug": "heal-err"},
+    )
+    project_id = UUID(create.json()["id"])
+
+    settings = Settings(
+        environment="test",
+        secret_key="test-secret-key-for-jwt-signing-not-for-prod",
+        database_url="sqlite+aiosqlite:///:memory:",
+        sandbox_enabled=True,
+        sandbox_agent_url="http://fake",
+        sandbox_agent_token="t",
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        proj = await sandbox_service._load_project(session, project_id, with_org=True)
+        name = sandbox_service.make_sandbox_name(proj.organization.slug, proj.slug)
+        proj.sandbox_name = name
+        proj.sandbox_status = "error"
+        proj.sandbox_error = "Sandbox is not running (status=error)"
+        await session.commit()
+        fake.sandboxes[name] = {
+            "name": name,
+            "status": "running",
+            "image": "img",
+            "labels": {},
+            "harnesses": [],
+        }
+
+        healed = await sandbox_service.refresh_sandbox_status(
+            session,
+            await sandbox_service._load_project(session, project_id),
+            settings=settings,
+            client=fake,  # type: ignore[arg-type]
+        )
+        assert healed.sandbox_status == "running"
+        assert healed.sandbox_error is None
+
+
+@pytest.mark.asyncio
 async def test_refresh_creating_adopts_running_keeps_404(
     client: AsyncClient,
     auth_headers: dict[str, str],

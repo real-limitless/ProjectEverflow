@@ -18,7 +18,7 @@ from app.db.session import get_async_session
 from app.models.project import Project
 from app.models.user import User
 from app.services.provider_inject import inject_project_provider_secrets
-from app.services.sandbox import mark_sandbox_missing
+from app.services.sandbox import mark_sandbox_missing, refresh_sandbox_status
 from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
 
 logger = logging.getLogger(__name__)
@@ -42,18 +42,24 @@ class OpenCodeEnsureBody(BaseModel):
     force_restart: bool = False
 
 
-def _require_running_sandbox(project: Project) -> str:
+async def _require_running_sandbox(
+    session: AsyncSession,
+    project: Project,
+    settings: Settings,
+) -> tuple[Project, str]:
+    """Refresh agent status first so stale DB ``error`` does not block chat."""
     if not project.sandbox_name:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Project has no sandbox yet",
         )
+    project = await refresh_sandbox_status(session, project, settings=settings)
     if project.sandbox_status != "running":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Sandbox is not running (status={project.sandbox_status})",
         )
-    return project.sandbox_name
+    return project, project.sandbox_name
 
 
 def _agent_http_error(exc: SandboxAgentError) -> HTTPException:
@@ -82,7 +88,7 @@ async def ensure_opencode(
     Also mints a project-scoped sandbox token and registers the Everflow MCP
     server so Chat/OpenCode can create canvases and agents.
     """
-    name = _require_running_sandbox(project)
+    project, name = await _require_running_sandbox(session, project, settings)
     client = SandboxAgentClient(settings)
 
     mcp_token: str | None = None
@@ -171,8 +177,7 @@ async def proxy_opencode(
             detail="Use POST /opencode/ensure",
         )
 
-    name = _require_running_sandbox(project)
-    _ = settings
+    project, name = await _require_running_sandbox(session, project, settings)
     body = await request.body()
     fwd_headers = {
         k: v

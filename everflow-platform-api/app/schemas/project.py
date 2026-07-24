@@ -63,6 +63,8 @@ class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     description: str | None = None
+    template_id: str | None = Field(default=None, max_length=64)
+    preview_device: str | None = Field(default=None, max_length=64)
     repos: list[ProjectRepoIn] = Field(default_factory=list, max_length=10)
     # Harness ids (e.g. agent-opencode, db-postgres) or {id, enabled} objects
     harnesses: list[str | dict[str, Any]] | None = Field(default=None, max_length=40)
@@ -106,6 +108,8 @@ class ProjectRead(BaseModel):
     name: str
     slug: str
     description: str | None
+    template_id: str | None = None
+    preview_device: str | None = None
     repos: list[dict[str, Any]] = Field(default_factory=list)
     harnesses: list[Any] = Field(default_factory=list)
     sandbox_name: str | None = None

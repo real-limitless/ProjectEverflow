@@ -32,8 +32,22 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         self.verification_token_secret = secret
 
     async def on_after_register(self, user: User, request: Request | None = None) -> None:
-        # Hook for welcome email / default org — left intentional no-op for foundation.
-        pass
+        # First registered user becomes platform admin when setup wizard was skipped.
+        from sqlalchemy import func, select
+
+        from app.db.session import get_session_factory
+
+        factory = get_session_factory()
+        async with factory() as session:
+            result = await session.execute(select(func.count()).select_from(User))
+            if int(result.scalar_one()) == 1 and not user.is_superuser:
+                db_user = await session.get(User, user.id)
+                if db_user is not None:
+                    db_user.is_superuser = True
+                    db_user.is_verified = True
+                    await session.commit()
+                    user.is_superuser = True
+                    user.is_verified = True
 
 
 async def get_user_manager(

@@ -3,14 +3,19 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    admin,
     agents,
+    auth_providers,
     deploy,
     deploy_runs,
+    git_credentials,
+    git_ops,
     harness,
     health,
     http_tools,
     jobs,
     knowledge,
+    marketplace,
     opencode,
     orgs,
     preview,
@@ -20,7 +25,9 @@ from app.api.v1 import (
     sandbox,
     sandbox_shell,
     sandbox_tokens,
+    setup,
     tests,
+    usage,
     workflows,
 )
 from app.auth.oauth import build_github_client, build_google_client
@@ -31,7 +38,13 @@ from app.schemas.user import UserCreate, UserRead, UserUpdate
 api_router = APIRouter(prefix="/api/v1")
 
 api_router.include_router(health.router)
+api_router.include_router(setup.router)
+api_router.include_router(auth_providers.router)
+api_router.include_router(admin.router)
 api_router.include_router(orgs.router)
+api_router.include_router(orgs.invites_router)
+api_router.include_router(git_credentials.router)
+api_router.include_router(git_ops.router)
 api_router.include_router(projects.router)
 api_router.include_router(knowledge.router)
 api_router.include_router(agents.router)
@@ -48,6 +61,8 @@ api_router.include_router(deploy_runs.router)
 api_router.include_router(project_database.router)
 api_router.include_router(opencode.router)
 api_router.include_router(harness.router)
+api_router.include_router(marketplace.router)
+api_router.include_router(usage.router)
 api_router.include_router(preview.router)
 
 # Auth: register, JWT login/logout, users/me

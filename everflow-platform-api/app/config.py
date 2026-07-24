@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     sandbox_agent_url: str = "http://localhost:8090"
     sandbox_agent_token: str = "change-me"
     # Prebaked guest image (./deploy/build-sandbox-guest.sh); override via SANDBOX_DEFAULT_IMAGE
-    sandbox_default_image: str = "ghcr.io/real-limitless/everflow-sandbox-guest:dev"
+    sandbox_default_image: str = "ghcr.io/limitless-rh/everflow-sandbox-guest:dev"
     sandbox_default_memory_mib: int = 2048
     sandbox_default_cpus: int = 2
     sandbox_default_harnesses: StrList = Field(
@@ -109,6 +109,12 @@ class Settings(BaseSettings):
     # cloud metadata (169.254.169.254) remain blocked either way.
     http_tools_allow_sandbox_internal: bool = False
     http_tools_request_timeout_seconds: float = 30.0
+
+    # App toolkits (starter trees under /toolkits). Use {id} placeholder for toolkit id.
+    # Example: https://github.com/org/everflow-toolkit-{id}.git
+    # When empty, create seeds from toolkit_local_root into the sandbox.
+    toolkit_repo_base: str = ""
+    toolkit_local_root: str = "/toolkits"
 
     @property
     def is_sqlite(self) -> bool:

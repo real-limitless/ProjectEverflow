@@ -107,3 +107,22 @@ async def test_create_project_with_repos(client: AsyncClient, auth_headers: dict
     got = await client.get(f"/api/v1/projects/{body['id']}", headers=auth_headers)
     assert got.status_code == 200
     assert got.json()["repos"][0]["label"] == "app"
+
+
+@pytest.mark.asyncio
+async def test_create_project_with_template(client: AsyncClient, auth_headers: dict[str, str]) -> None:
+    org_id = await _create_org(client, auth_headers, slug="template-proj-org")
+    create = await client.post(
+        f"/api/v1/orgs/{org_id}/projects",
+        headers=auth_headers,
+        json={
+            "name": "RN Mobile",
+            "slug": "rn-mobile",
+            "template_id": "mobile-ios",
+            "preview_device": "iphone-12",
+        },
+    )
+    assert create.status_code == 201, create.text
+    body = create.json()
+    assert body["template_id"] == "mobile-ios"
+    assert body["preview_device"] == "iphone-12"

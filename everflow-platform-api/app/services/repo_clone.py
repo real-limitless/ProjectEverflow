@@ -171,14 +171,56 @@ async def _exec(
     script: str,
     *,
     timeout: float = 60.0,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     return await client.exec(
         name,
         cmd="sh",
         args=["-c", script],
         cwd="/workspace",
+        env=env,
         timeout_seconds=timeout,
     )
+
+
+def _git_auth_env(token: str | None) -> dict[str, str] | None:
+    """Env for GIT_ASKPASS so PATs never land in remote URLs."""
+    if not token:
+        return None
+    return {
+        "GIT_ASKPASS": "/tmp/.everflow-git-askpass",
+        "GIT_TERMINAL_PROMPT": "0",
+        "EVERFLOW_GIT_TOKEN": token,
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "credential.helper",
+        "GIT_CONFIG_VALUE_0": "",
+    }
+
+
+_ASKPASS_SETUP = (
+    "cat > /tmp/.everflow-git-askpass <<'EOF'\n"
+    "#!/bin/sh\n"
+    "case \"$1\" in\n"
+    "*[Uu]sername*) echo x-access-token ;;\n"
+    "*) echo \"$EVERFLOW_GIT_TOKEN\" ;;\n"
+    "esac\n"
+    "EOF\n"
+    "chmod 700 /tmp/.everflow-git-askpass"
+)
+
+
+def _https_clone_url(url: str) -> str:
+    """Prefer HTTPS for token auth (convert git@github.com:org/repo.git)."""
+    s = url.strip()
+    if s.startswith("git@github.com:"):
+        path = s.removeprefix("git@github.com:")
+        if not path.endswith(".git"):
+            path = f"{path}.git"
+        return f"https://github.com/{path}"
+    if s.startswith("ssh://git@github.com/"):
+        path = s.removeprefix("ssh://git@github.com/")
+        return f"https://github.com/{path}"
+    return s
 
 
 async def _workspace_is_effectively_empty(client: SandboxAgentClient, name: str) -> bool:
@@ -221,6 +263,7 @@ async def clone_one(
     repo: dict[str, Any],
     *,
     allow_root: bool = False,
+    token: str | None = None,
 ) -> dict[str, Any]:
     """
     Clone a single repo into /workspace/<dest>/.
@@ -246,6 +289,7 @@ async def clone_one(
             local_path=None,
         )
     branch = (updated.get("branch") or "main").strip() or "main"
+    clone_url = _https_clone_url(url) if token else url
 
     if await _is_git_root(client, sandbox_name, dest):
         updated["local_path"] = dest
@@ -270,27 +314,41 @@ async def clone_one(
     updated["clone_status"] = "cloning"
     updated["clone_error"] = None
 
+    auth_prefix = f"{_ASKPASS_SETUP}; " if token else ""
     # Always clone into a named subdirectory under /workspace
     script = (
+        f"{auth_prefix}"
         "set -e; "
         "cd /workspace; "
-        f"(git clone --depth 1 -b {_shell_quote(branch)} -- {_shell_quote(url)} {_shell_quote(dest)} "
-        f"|| git clone --depth 1 -- {_shell_quote(url)} {_shell_quote(dest)}); "
+        f"(git clone --depth 1 -b {_shell_quote(branch)} -- {_shell_quote(clone_url)} {_shell_quote(dest)} "
+        f"|| git clone --depth 1 -- {_shell_quote(clone_url)} {_shell_quote(dest)}); "
         f"test -d {_shell_quote(dest)}/.git"
     )
 
     try:
-        res = await _exec(client, sandbox_name, script, timeout=CLONE_TIMEOUT_SECONDS)
+        res = await _exec(
+            client,
+            sandbox_name,
+            script,
+            timeout=CLONE_TIMEOUT_SECONDS,
+            env=_git_auth_env(token),
+        )
         code = _exit_code(res)
         if code != 0:
             err = (res.get("stderr") or res.get("stdout") or "git clone failed").strip()
             err = err[-1500:]
             low = err.lower()
             if "authentication" in low or "403" in low or "could not read username" in low:
-                err = (
-                    f"{err}\n\nPrivate repositories need a GitHub token "
-                    "(not configured yet). Use a public HTTPS URL for now."
-                )
+                if token:
+                    err = (
+                        f"{err}\n\nAuthentication failed with the stored GitHub token. "
+                        "Check the PAT scopes (repo) or regenerate it in Settings → Git credentials."
+                    )
+                else:
+                    err = (
+                        f"{err}\n\nPrivate repositories need a GitHub token. "
+                        "Add a PAT under Settings → Git credentials, then retry."
+                    )
             updated["clone_status"] = "error"
             updated["clone_error"] = err
             updated["local_path"] = dest
@@ -332,6 +390,8 @@ async def clone_project_repos(
     client: SandboxAgentClient,
     sandbox_name: str,
     repos: list[dict[str, Any]] | None,
+    *,
+    token: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Clone all cloneable repos into the sandbox. Returns updated repos list
@@ -346,7 +406,9 @@ async def clone_project_repos(
     result: list[dict[str, Any]] = []
     for r in planned:
         # Strip internal dest key from stored form after clone_one uses it
-        updated = await clone_one(client, sandbox_name, r, allow_root=False)
+        updated = await clone_one(
+            client, sandbox_name, r, allow_root=False, token=token
+        )
         updated.pop("dest", None)
         result.append(updated)
         logger.info(
@@ -357,6 +419,49 @@ async def clone_project_repos(
             updated.get("local_path"),
         )
     return result
+
+
+async def git_remote_op(
+    client: SandboxAgentClient,
+    sandbox_name: str,
+    *,
+    op: str,
+    path: str,
+    remote: str = "origin",
+    branch: str | None = None,
+    token: str | None = None,
+) -> dict[str, Any]:
+    """Run git pull / push / fetch with optional PAT via askpass."""
+    if op not in ("pull", "push", "fetch"):
+        raise ValueError(f"unsupported git op: {op}")
+    rel = sanitize_local_path(path)
+    work = "/workspace" if rel in (".", "") else f"/workspace/{rel}"
+    auth_prefix = f"{_ASKPASS_SETUP}; " if token else ""
+    if op == "fetch":
+        git_cmd = f"git -C {_shell_quote(work)} fetch {_shell_quote(remote)}"
+    elif op == "pull":
+        if branch:
+            git_cmd = (
+                f"git -C {_shell_quote(work)} pull {_shell_quote(remote)} {_shell_quote(branch)}"
+            )
+        else:
+            git_cmd = f"git -C {_shell_quote(work)} pull {_shell_quote(remote)}"
+    else:  # push
+        if branch:
+            git_cmd = (
+                f"git -C {_shell_quote(work)} push -u {_shell_quote(remote)} {_shell_quote(branch)}"
+            )
+        else:
+            git_cmd = f"git -C {_shell_quote(work)} push {_shell_quote(remote)}"
+
+    script = f"{auth_prefix}{git_cmd}"
+    return await _exec(
+        client,
+        sandbox_name,
+        script,
+        timeout=CLONE_TIMEOUT_SECONDS,
+        env=_git_auth_env(token),
+    )
 
 
 def repos_to_storage(repos_in: list[Any] | None) -> list[dict[str, Any]]:

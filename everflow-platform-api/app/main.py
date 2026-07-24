@@ -24,6 +24,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if db_path.parent and str(db_path.parent) not in (".", ""):
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    if settings.environment == "production":
+        from app.services.production_checks import assert_production_secrets
+
+        assert_production_secrets(settings)
+
     init_db(settings)
     # Warm engine
     get_engine()

@@ -15,7 +15,7 @@ from app.models.organization import Organization, OrganizationMember
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectRead, ProjectUpdate
-from app.services.repo_clone import clone_project_repos, repos_to_storage
+from app.services.repo_clone import clone_project_repos, is_cloneable_url, repos_to_storage
 from app.services.sandbox import (
     destroy_project_sandbox,
     make_sandbox_name,
@@ -24,6 +24,11 @@ from app.services.sandbox import (
     reconfigure_project_sandbox,
 )
 from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
+from app.services.toolkits import (
+    inject_toolkit_repo,
+    resolve_template_meta,
+    seed_toolkit_into_sandbox,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +60,13 @@ async def _require_project_admin(
     return membership
 
 
-async def _clone_repos_for_project(session: AsyncSession, project: Project, settings: Settings) -> Project:
+async def _clone_repos_for_project(
+    session: AsyncSession,
+    project: Project,
+    settings: Settings,
+    *,
+    user_id: UUID | None = None,
+) -> Project:
     """Clone stored remotes into the running sandbox and persist status on project.repos."""
     repos = list(project.repos or [])
     if not repos or not project.sandbox_name or project.sandbox_status != "running":
@@ -68,12 +79,29 @@ async def _clone_repos_for_project(session: AsyncSession, project: Project, sett
     if not needs:
         return project
 
+    from app.services import git_credentials as git_svc
+
+    token, cred = await git_svc.resolve_git_token(
+        session,
+        user_id=user_id,
+        org_id=project.organization_id,
+        project_id=project.id,
+        provider="github",
+        settings=settings,
+    )
+
     client = SandboxAgentClient(settings)
     try:
-        updated = await clone_project_repos(client, project.sandbox_name, repos)
+        updated = await clone_project_repos(
+            client, project.sandbox_name, repos, token=token
+        )
         project.repos = updated
         await session.commit()
         await session.refresh(project)
+        if cred is not None and any(
+            isinstance(r, dict) and r.get("clone_status") == "ready" for r in updated
+        ):
+            await git_svc.touch_used(session, cred)
     except SandboxAgentError as exc:
         logger.warning("repo clone agent error project=%s: %s", project.id, exc)
         # Mark pending clones as error without failing sandbox
@@ -106,14 +134,77 @@ async def _clone_repos_for_project(session: AsyncSession, project: Project, sett
     return project
 
 
+async def _seed_toolkit_for_project(
+    session: AsyncSession,
+    project: Project,
+    settings: Settings,
+) -> Project:
+    """Seed local toolkit files when no cloneable remotes were configured."""
+    if not project.sandbox_name or project.sandbox_status != "running":
+        return project
+    repos = list(project.repos or [])
+    if any(is_cloneable_url(str(r.get("url") or "")) for r in repos if isinstance(r, dict)):
+        return project
+
+    client = SandboxAgentClient(settings)
+    meta = resolve_template_meta(project.template_id)
+    toolkit_id = meta.get("toolkit_id") or ""
+    if not toolkit_id:
+        return project
+
+    try:
+        result = await seed_toolkit_into_sandbox(
+            client,
+            project.sandbox_name,
+            template_id=project.template_id,
+            settings=settings,
+            dest_subdir=toolkit_id,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("toolkit seed failed project=%s", project.id)
+        return project
+
+    if not result.get("seeded"):
+        return project
+
+    # Record a synthetic repo entry so the UI shows the workspace path.
+    local_path = str(result.get("local_path") or toolkit_id)
+    if repos:
+        updated = [dict(r) for r in repos if isinstance(r, dict)]
+        if updated:
+            updated[0]["local_path"] = local_path
+            updated[0]["clone_status"] = "ready"
+            updated[0]["clone_error"] = None
+            project.repos = updated
+    else:
+        project.repos = [
+            {
+                "id": toolkit_id,
+                "label": f"{project.slug}/{toolkit_id}",
+                "url": None,
+                "branch": "main",
+                "provider": "none",
+                "local_path": local_path,
+                "active": True,
+                "clone_status": "ready",
+                "clone_error": None,
+            }
+        ]
+    await session.commit()
+    await session.refresh(project)
+    return project
+
+
 async def _bg_provision(project_id: UUID) -> None:
-    """Background task: provision sandbox, then clone project repos into workspace."""
+    """Background task: provision sandbox, then clone or seed toolkit into workspace."""
     settings = get_settings()
     factory = get_session_factory()
     async with factory() as session:
         project = await provision_project_sandbox(session, project_id, settings=settings)
         if project.sandbox_status == "running":
             await _clone_repos_for_project(session, project, settings)
+            await session.refresh(project)
+            await _seed_toolkit_for_project(session, project, settings)
 
 
 @router.get("/orgs/{org_id}/projects", response_model=list[ProjectRead])
@@ -145,7 +236,18 @@ async def create_project(
     org = org_result.scalar_one()
 
     sandbox_name = make_sandbox_name(org.slug, body.slug) if settings.sandbox_enabled else None
-    stored_repos = repos_to_storage(body.repos)
+    template_id = (body.template_id or "").strip() or None
+    meta = resolve_template_meta(template_id)
+    preview_device = (body.preview_device or "").strip() or meta.get("preview_device") or None
+
+    raw_repos = [r.model_dump() for r in body.repos]
+    injected = inject_toolkit_repo(
+        raw_repos,
+        template_id=template_id,
+        settings=settings,
+        project_slug=body.slug,
+    )
+    stored_repos = repos_to_storage(injected)
     harness_ids = normalize_harness_ids(body.harnesses)
     if not harness_ids:
         harness_ids = list(settings.sandbox_default_harnesses)
@@ -154,6 +256,8 @@ async def create_project(
         name=body.name,
         slug=body.slug,
         description=body.description,
+        template_id=template_id,
+        preview_device=preview_device,
         repos=stored_repos,
         harnesses=harness_ids,
         sandbox_name=sandbox_name,

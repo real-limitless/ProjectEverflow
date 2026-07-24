@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from app.models.agent import ProjectAgent
     from app.models.deploy import DeployNode, DeploySshKey
     from app.models.http_tool import ProjectHttpTool
-    from app.models.knowledge import KnowledgeCanvas
+    from app.models.knowledge import KnowledgeCanvas, KnowledgeCollection
     from app.models.organization import Organization
     from app.models.test_suite import TestSuite
     from app.models.workflow import Workflow
@@ -35,6 +35,10 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Create-wizard template (web-npm, mobile-ios, …) and Preview device frame id.
+    template_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    preview_device: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Catalog of attached git remotes (cloned into sandbox workspace after provision).
     # List of dicts: id, label, url, branch, provider, local_path, clone_status, clone_error
@@ -66,6 +70,11 @@ class Project(Base):
     organization: Mapped["Organization"] = relationship("Organization", back_populates="projects")
     knowledge_canvases: Mapped[list["KnowledgeCanvas"]] = relationship(
         "KnowledgeCanvas",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    knowledge_collections: Mapped[list["KnowledgeCollection"]] = relationship(
+        "KnowledgeCollection",
         back_populates="project",
         cascade="all, delete-orphan",
     )

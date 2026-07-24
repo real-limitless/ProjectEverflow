@@ -12,7 +12,16 @@ from app.db.base import Base
 from app.db.session import get_async_session, init_db
 from app.main import create_app
 from app.models import (  # noqa: F401
+    AgentCollectionGrant,
+    AiUsageEvent,
     KnowledgeCanvas,
+    KnowledgeCanvasVersion,
+    KnowledgeChunk,
+    KnowledgeCollection,
+    KnowledgeEvalQuestion,
+    KnowledgeEvalSet,
+    KnowledgeLink,
+    KnowledgeMindMap,
     OAuthAccount,
     Organization,
     OrganizationMember,
