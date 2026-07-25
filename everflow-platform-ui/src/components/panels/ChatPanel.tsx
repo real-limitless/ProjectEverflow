@@ -1714,21 +1714,47 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const send = (text?: string) => {
     const body = (text ?? draft).trim()
     if (!body) return
-    setDraft('')
-    if (useLive && (liveStatus === 'ready' || liveStatus === 'needs_provider')) {
-      // Soft gate only: offer provider once, but never hard-block free OpenCode models
-      if (liveStatus === 'needs_provider' && !providerSkipped && !(models && models.length)) {
-        setProviderOpen(true)
-        setDraft(body)
+
+    // Live OpenCode path: only send when harness is ready (or optional provider gate).
+    // Never fall through to demo replies while connecting / idle / error.
+    if (useLive) {
+      if (liveStatus === 'ready' || liveStatus === 'needs_provider') {
+        setDraft('')
+        // Soft gate only: offer provider once, but never hard-block free OpenCode models
+        if (
+          liveStatus === 'needs_provider' &&
+          !providerSkipped &&
+          !(models && models.length)
+        ) {
+          setProviderOpen(true)
+          setDraft(body)
+          return
+        }
+        if (liveStatus === 'needs_provider') {
+          setLiveStatus('ready')
+        }
+        void sendLive(body)
         return
       }
-      if (liveStatus === 'needs_provider') {
-        setLiveStatus('ready')
-      }
-      void sendLive(body)
+      // Harness not ready — restore draft; modal gate is open.
+      setDraft(body)
       return
     }
-    appendChatMessage(panelKey, body)
+
+    // Offline / showcase catalog only. Real API projects must not use demo replies.
+    if (isDemoMode() || !p?.fromApi) {
+      setDraft('')
+      appendChatMessage(panelKey, body)
+      return
+    }
+
+    // API project but sandbox/OpenCode not usable (useLive false): keep draft, no demo.
+    setDraft(body)
+    pushToast('Chat harness not ready', {
+      description: 'Start the project sandbox and wait for OpenCode before sending.',
+      kind: 'warning',
+      ms: 4000,
+    })
   }
 
   const onPermission = async (
@@ -2152,80 +2178,88 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           }}
         />
 
-        {useLive && liveStatus === 'connecting' ? (
-          <ChatHarnessUnavailable connecting />
-        ) : null}
-
-        {useLive && liveStatus === 'error' ? (
-          <ChatHarnessUnavailable
-            detail={(() => {
-              const down = liveError ? sandboxDownFromError(new Error(liveError)) : null
-              if (down) {
-                const statusLine = `Sandbox is not running (status=${down.status})`
-                return down.reason && down.reason !== statusLine
-                  ? `${statusLine} — ${down.reason}`
-                  : statusLine
-              }
-              return liveError
-            })()}
-            onRetry={() => {
-              // Force effect re-run by bumping generation and toggling status
-              bootGenRef.current += 1
-              setLiveError(null)
-              setLiveStatus('connecting')
-              const projectId = currentProjectId!
-              const gen = bootGenRef.current
-              ;(async () => {
-                try {
-                  const ensured = await withTimeout(
-                    ensureOpenCode(projectId, true),
-                    25_000,
-                    'OpenCode ensure',
-                  )
-                  if (gen !== bootGenRef.current) return
-                  if (!ensured?.healthy || isFakeOpenCodeEnsure(ensured)) {
-                    throw new Error(
-                      isFakeOpenCodeEnsure(ensured)
-                        ? 'OpenCode fake harness is disabled. Real sandbox harness is required for chat.'
-                        : ensured?.error ||
-                            'OpenCode harness did not become healthy. Background chat is unavailable.',
-                    )
-                  }
-                  const cat = await withTimeout(
-                    loadCatalogs(projectId),
-                    20_000,
-                    'Provider catalog',
-                  )
-                  if (gen !== bootGenRef.current) return
-                  await withTimeout(refreshSessions(projectId), 25_000, 'Session list')
-                  if (gen !== bootGenRef.current) return
+        {/* Full-tab modal gate: greys out chat until OpenCode is ready (no demo fallback). */}
+        <ChatHarnessUnavailable
+          isOpen={
+            useLive &&
+            (liveStatus === 'connecting' ||
+              liveStatus === 'idle' ||
+              liveStatus === 'error')
+          }
+          connecting={liveStatus === 'connecting' || liveStatus === 'idle'}
+          detail={(() => {
+            if (liveStatus !== 'error') return null
+            const down = liveError ? sandboxDownFromError(new Error(liveError)) : null
+            if (down) {
+              const statusLine = `Sandbox is not running (status=${down.status})`
+              return down.reason && down.reason !== statusLine
+                ? `${statusLine} — ${down.reason}`
+                : statusLine
+            }
+            return liveError
+          })()}
+          onRetry={
+            liveStatus === 'error'
+              ? () => {
+                  bootGenRef.current += 1
                   setLiveError(null)
-                  setLiveStatus(
-                    cat.connected.length > 0 || cat.modelItems.length > 0 || providerSkipped
-                      ? 'ready'
-                      : 'needs_provider',
-                  )
-                } catch (e) {
-                  if (gen !== bootGenRef.current) return
-                  const down = sandboxDownFromError(e)
-                  if (down && isHardSandboxDown(down)) {
-                    const store = usePlaygroundStore.getState()
-                    store.patchProjectSandbox(projectId, {
-                      sandboxStatus: isSandboxDeadStatus(down.status)
-                        ? down.status
-                        : 'error',
-                      sandboxError: down.message,
-                    })
-                    store.setSandboxReady(projectId, false)
-                    return
-                  }
-                  setLiveError((e as Error).message)
-                  setLiveStatus('error')
+                  setLiveStatus('connecting')
+                  const projectId = currentProjectId!
+                  const gen = bootGenRef.current
+                  ;(async () => {
+                    try {
+                      const ensured = await withTimeout(
+                        ensureOpenCode(projectId, true),
+                        25_000,
+                        'OpenCode ensure',
+                      )
+                      if (gen !== bootGenRef.current) return
+                      if (!ensured?.healthy || isFakeOpenCodeEnsure(ensured)) {
+                        throw new Error(
+                          isFakeOpenCodeEnsure(ensured)
+                            ? 'OpenCode fake harness is disabled. Real sandbox harness is required for chat.'
+                            : ensured?.error ||
+                                'OpenCode harness did not become healthy. Background chat is unavailable.',
+                        )
+                      }
+                      const cat = await withTimeout(
+                        loadCatalogs(projectId),
+                        20_000,
+                        'Provider catalog',
+                      )
+                      if (gen !== bootGenRef.current) return
+                      await withTimeout(refreshSessions(projectId), 25_000, 'Session list')
+                      if (gen !== bootGenRef.current) return
+                      setLiveError(null)
+                      setLiveStatus(
+                        cat.connected.length > 0 ||
+                          cat.modelItems.length > 0 ||
+                          providerSkipped
+                          ? 'ready'
+                          : 'needs_provider',
+                      )
+                    } catch (e) {
+                      if (gen !== bootGenRef.current) return
+                      const down = sandboxDownFromError(e)
+                      if (down && isHardSandboxDown(down)) {
+                        const store = usePlaygroundStore.getState()
+                        store.patchProjectSandbox(projectId, {
+                          sandboxStatus: isSandboxDeadStatus(down.status)
+                            ? down.status
+                            : 'error',
+                          sandboxError: down.message,
+                        })
+                        store.setSandboxReady(projectId, false)
+                        return
+                      }
+                      setLiveError((e as Error).message)
+                      setLiveStatus('error')
+                    }
+                  })()
                 }
-              })()
-            }}
-          />
-        ) : null}
+              : undefined
+          }
+        />
 
         {useLive && liveStatus === 'needs_provider' && !providerSkipped ? (
           <div className="chat-empty" style={{ minHeight: 100 }}>
