@@ -579,6 +579,22 @@
   color: var(--pf-t--global--text--color--subtle);
 }
 
+.chat-layout .composer-soft-perm {
+  display: inline-flex;
+  align-items: center;
+  max-width: 9.5rem;
+  padding-inline: 0.15rem;
+}
+
+.chat-layout .composer-soft-perm .pf-v6-c-switch {
+  font-size: 0.7rem;
+}
+
+.chat-layout .composer-soft-perm .pf-v6-c-switch__label {
+  font-size: 0.7rem !important;
+  white-space: nowrap;
+}
+
 .chat-layout .messages.messages--empty {
   display: grid !important;
   place-items: center;

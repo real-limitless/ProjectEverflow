@@ -7,6 +7,7 @@ import {
   Select,
   SelectList,
   SelectOption,
+  Switch,
 } from '@patternfly/react-core'
 import ClockIcon from '@patternfly/react-icons/dist/esm/icons/clock-icon'
 import PaperPlaneIcon from '@patternfly/react-icons/dist/esm/icons/paper-plane-icon'
@@ -24,6 +25,7 @@ import {
   modeLabel,
   type CatalogItem,
 } from '@/data/chatCatalog'
+import { modePolicyHint } from '@/lib/opencode/chatMode'
 import type { ChatMode } from '@/types/panels'
 
 interface ChatComposerProps {
@@ -37,12 +39,15 @@ interface ChatComposerProps {
   /** Primary OpenCode agent for this conversation */
   agent: string
   mode: ChatMode
+  /** Soft permissions: approve tools instead of hard-deny (Ask/Edit). */
+  softPermissions?: boolean
   onModelChange: (id: string) => void
   onToolsChange: (ids: string[]) => void
   onMcpsChange: (ids: string[]) => void
   onSkillsChange: (ids: string[]) => void
   onAgentChange: (id: string) => void
   onModeChange: (mode: ChatMode) => void
+  onSoftPermissionsChange?: (enabled: boolean) => void
   /** Live catalogs from OpenCode (optional) */
   modelOptions?: CatalogItem[]
   /** Full OpenCode catalog for browse (defaults to modelOptions) */
@@ -79,12 +84,14 @@ export function ChatComposer({
   skills,
   agent,
   mode,
+  softPermissions = false,
   onModelChange,
   onToolsChange,
   onMcpsChange,
   onSkillsChange,
   onAgentChange,
   onModeChange,
+  onSoftPermissionsChange,
   modelOptions,
   allModelOptions,
   allowDemoModelFallback = true,
@@ -253,7 +260,7 @@ export function ChatComposer({
                 className={`composer-mode-toggle composer-mode-toggle--${mode}`}
                 onClick={() => setModeOpen(!modeOpen)}
                 isExpanded={modeOpen}
-                title={`Permission mode: ${modeLabel(mode)}`}
+                title={`Permission mode: ${modePolicyHint(mode, softPermissions)}`}
               >
                 <span className="composer-mode-label">{modeLabel(mode)}</span>
               </MenuToggle>
@@ -267,6 +274,24 @@ export function ChatComposer({
               ))}
             </SelectList>
           </Select>
+
+          <span
+            className="composer-soft-perm"
+            title={
+              mode === 'auto'
+                ? 'Automatic already runs tools without asking'
+                : 'When on, Ask/Edit may use edit/shell if you approve each request'
+            }
+          >
+            <Switch
+              id="composer-soft-permissions"
+              label="Approve tools"
+              isChecked={mode === 'auto' ? false : softPermissions}
+              isDisabled={mode === 'auto' || !onSoftPermissionsChange}
+              onChange={(_e, checked) => onSoftPermissionsChange?.(checked)}
+              ouiaId="soft-permissions"
+            />
+          </span>
 
           <Select
             isOpen={agentOpen}
@@ -363,8 +388,8 @@ export function ChatComposer({
         </div>
       </div>
       <div className="chat-composer-hint">
-        Enter to send · Shift+Enter newline · / for skills · {modeLabel(mode)} ·{' '}
-        {agentLabel} · {modelLabel}
+        Enter to send · Shift+Enter newline · / for skills ·{' '}
+        {modePolicyHint(mode, softPermissions)} · {agentLabel} · {modelLabel}
       </div>
     </div>
   )

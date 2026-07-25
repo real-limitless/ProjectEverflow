@@ -236,6 +236,11 @@ export interface PanelInstanceState {
    */
   primaryAgent?: string
   chatMode?: ChatMode
+  /**
+   * When true (Ask/Edit only): do not hard-deny tools; require in-chat
+   * Allow once / Always / Deny for sensitive actions. Default false = strict.
+   */
+  softPermissions?: boolean
   /** Preview multi-service */
   previewServiceId?: string
   previewUrl?: string

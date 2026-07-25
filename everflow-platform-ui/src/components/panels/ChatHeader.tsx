@@ -100,15 +100,6 @@ export function ChatHeader({
       </div>
 
       <div className="chat-metrics" aria-label="Conversation metrics">
-        <span className="metric" title={`Context ${used.toLocaleString()} / ${window.toLocaleString()} tokens`}>
-          <span className="metric-label">Context</span>
-          <span className="metric-value">
-            {formatTokenCount(used)}/{formatTokenCount(window)}
-          </span>
-          <span className="metric-bar" aria-hidden>
-            <span className="metric-bar-fill" style={{ width: `${pct}%` }} />
-          </span>
-        </span>
         <span className="metric" title="Tokens per second (last response)">
           <span className="metric-label">tok/s</span>
           <span className="metric-value">
@@ -123,6 +114,15 @@ export function ChatHeader({
             {metrics?.ttftMs != null && metrics.ttftMs > 0
               ? `${metrics.ttftMs}ms`
               : '—'}
+          </span>
+        </span>
+        <span className="metric" title={`Context ${used.toLocaleString()} / ${window.toLocaleString()} tokens`}>
+          <span className="metric-label">Context</span>
+          <span className="metric-value">
+            {formatTokenCount(used)}/{formatTokenCount(window)}
+          </span>
+          <span className="metric-bar" aria-hidden>
+            <span className="metric-bar-fill" style={{ width: `${pct}%` }} />
           </span>
         </span>
         <span

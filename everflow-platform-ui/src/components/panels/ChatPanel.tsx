@@ -203,6 +203,8 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const everflowDefaultedRef = useRef(false)
   /** Current chat mode for SSE handlers (avoid stale closures). */
   const modeRef = useRef<ChatMode>(DEFAULT_CHAT_MODE)
+  /** Soft permissions for SSE auto-approve decisions. */
+  const softPermissionsRef = useRef(false)
   /** Permission ids we already auto-approved this session (dedupe). */
   const autoApprovedPermIdsRef = useRef<Set<string>>(new Set())
 
@@ -274,6 +276,8 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const skills = st.enabledSkills || DEFAULT_CHAT_SKILLS
   const mode = (st.chatMode || DEFAULT_CHAT_MODE) as ChatMode
   modeRef.current = mode
+  const softPermissions = Boolean(st.softPermissions)
+  softPermissionsRef.current = softPermissions
   const railCollapsed = !!st.railCollapsed
   const messages = st.messages || []
   const isEmpty = messages.length === 0
@@ -1117,8 +1121,9 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
                 ) {
                   return
                 }
-                const autoApprove =
-                  openCodePromptForMode(modeRef.current).autoApprovePermissions
+                const autoApprove = openCodePromptForMode(modeRef.current, {
+                  softPermissions: softPermissionsRef.current,
+                }).autoApprovePermissions
                 const msgs =
                   usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
                   []
@@ -1365,7 +1370,9 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           ? parseModelId(model)
           : null
       // Permission mode only (tools + auto-approve); agent is user-selected
-      const modePrompt = openCodePromptForMode(modeRef.current)
+      const modePrompt = openCodePromptForMode(modeRef.current, {
+        softPermissions: softPermissionsRef.current,
+      })
       const selectedAgent =
         usePlaygroundStore.getState().instanceState[panelKey]?.primaryAgent ||
         primaryAgent
@@ -2364,7 +2371,25 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
             ensureInstanceState(panelKey, { enabledSkills: ids })
           }
           onAgentChange={(id) => setConversationAgent(panelKey, id)}
-          onModeChange={(m) => setChatMode(panelKey, m)}
+          onModeChange={(m) => {
+            setChatMode(panelKey, m)
+            // Auto is always full power; clear soft toggle for clarity.
+            if (m === 'auto') {
+              ensureInstanceState(panelKey, { softPermissions: false })
+            }
+          }}
+          softPermissions={softPermissions}
+          onSoftPermissionsChange={(enabled) => {
+            ensureInstanceState(panelKey, { softPermissions: enabled })
+            if (enabled) {
+              pushToast('Approve tools enabled', {
+                description:
+                  'Ask/Edit may use edit or shell when you approve each request.',
+                kind: 'info',
+                ms: 4000,
+              })
+            }
+          }}
           modelOptions={composerModels || undefined}
           allModelOptions={models || undefined}
           allowDemoModelFallback={!useLive}
