@@ -8,6 +8,8 @@ from httpx import ASGITransport, AsyncClient
 
 # Force mock before app import side effects
 os.environ.setdefault("SANDBOX_MOCK", "true")
+# Mock tests have no real OpenCode CLI; allow fake harness for ensure/proxy unit tests only.
+os.environ.setdefault("OPENCODE_ALLOW_FAKE", "true")
 os.environ.setdefault("SANDBOX_AGENT_TOKEN", "test-token")
 os.environ.setdefault("WORKSPACE_ROOT", "/tmp/everflow-agent-test-ws")
 
@@ -732,6 +734,88 @@ async def test_msb_exec_serializes_per_sandbox(monkeypatch) -> None:
         backend.exec(name, "true", [], timeout_seconds=5),
     )
     assert max_active == 1
+
+
+@pytest.mark.asyncio
+async def test_msb_stream_exec_releases_lock_during_yield(monkeypatch) -> None:
+    """Long-lived SSE must not hold the guest lock while streaming events.
+
+    Chat opens /event (stream_exec) for the session life; prompt_async uses
+    exec. Holding the lock during yield causes UI 45s busy timeouts.
+    """
+    from datetime import datetime, timezone
+
+    from app.msb import MicrosandboxBackend, SandboxRecord
+
+    settings = Settings(sandbox_mock=False, workspace_root="/tmp/everflow-agent-test-ws")
+    backend = MicrosandboxBackend(settings)
+    name = "ef-stream-lock"
+    backend._meta[name] = SandboxRecord(
+        name=name,
+        status="running",
+        image="python",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    stream_opened = asyncio.Event()
+    stream_gate = asyncio.Event()
+
+    class StreamEvent:
+        def __init__(self, kind: str, data: bytes = b""):
+            self.event_type = kind
+            self.data = data
+
+    class FakeHandle:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not stream_opened.is_set():
+                stream_opened.set()
+                await stream_gate.wait()
+                return StreamEvent("stdout", b"chunk")
+            raise StopAsyncIteration
+
+        async def kill(self) -> None:
+            return None
+
+    class FakeSb:
+        async def exec_stream(self, cmd, args, **kwargs):  # noqa: ANN001
+            return FakeHandle()
+
+        async def exec(self, cmd, args, **kwargs):  # noqa: ANN001
+            class Out:
+                stdout_text = "ok"
+                stderr_text = ""
+                exit_code = 0
+
+            return Out()
+
+    async def fake_connect(_name: str):
+        return FakeSb()
+
+    monkeypatch.setattr(backend, "_connect", fake_connect)
+
+    async def consume_stream() -> list[bytes]:
+        chunks: list[bytes] = []
+        async for chunk in backend.stream_exec(name, "curl", ["-N", "http://x"]):
+            chunks.append(chunk)
+        return chunks
+
+    stream_task = asyncio.create_task(consume_stream())
+    await asyncio.wait_for(stream_opened.wait(), timeout=2.0)
+
+    # While the stream is mid-yield, a short exec must complete (lock free).
+    code, stdout, _ = await asyncio.wait_for(
+        backend.exec(name, "true", [], timeout_seconds=5),
+        timeout=1.0,
+    )
+    assert code == 0
+    assert stdout == "ok"
+
+    stream_gate.set()
+    chunks = await asyncio.wait_for(stream_task, timeout=2.0)
+    assert chunks == [b"chunk"]
 
 
 @pytest.mark.asyncio

@@ -151,3 +151,56 @@ async def test_list_and_call_http_tool() -> None:
     result = await c.call_http_tool(tool_id)
     assert result["ok"] is True
     assert result["status_code"] == 200
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_create_list_and_job_logs() -> None:
+    job_id = "66666666-6666-6666-6666-666666666666"
+    job = {
+        "id": job_id,
+        "title": "Dev server",
+        "command": "npm run dev",
+        "cwd": None,
+        "pid": 4242,
+        "status": "running",
+        "log_path": f"/workspace/.everflow/jobs/{job_id}.log",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+        "exit_code": None,
+    }
+    respx.post(f"{BASE}/api/v1/projects/{PID}/jobs").mock(
+        return_value=httpx.Response(201, json=job)
+    )
+    respx.get(f"{BASE}/api/v1/projects/{PID}/jobs").mock(
+        return_value=httpx.Response(200, json=[job])
+    )
+    respx.get(url__regex=rf"{BASE}/api/v1/projects/{PID}/jobs/{job_id}/logs(\?.*)?").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "job_id": job_id,
+                "status": "running",
+                "tail": 200,
+                "content": "ready on http://0.0.0.0:3000\n",
+            },
+        )
+    )
+    respx.post(f"{BASE}/api/v1/projects/{PID}/jobs/{job_id}/stop").mock(
+        return_value=httpx.Response(200, json={**job, "status": "exited", "pid": None})
+    )
+
+    c = _client()
+    created = await c.create_job(title="Dev server", command="npm run dev")
+    assert created["id"] == job_id
+    assert created["status"] == "running"
+
+    jobs = await c.list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]["command"] == "npm run dev"
+
+    logs = await c.get_job_logs(job_id, tail=200)
+    assert "ready on" in logs["content"]
+
+    stopped = await c.stop_job(job_id)
+    assert stopped["status"] == "exited"

@@ -693,19 +693,39 @@ class MicrosandboxBackend(SandboxBackend):
         used_workspace = str(ws)
         won_label: str | None = None
 
+        from app.msb_registry import (
+            image_needs_insecure_pull,
+            registry_pull_error_hint,
+            resolve_insecure_registry_hosts,
+        )
+
+        insecure_hosts = resolve_insecure_registry_hosts(
+            default_image=self._settings.default_image,
+            extra_hosts=getattr(self._settings, "msb_insecure_registries", None),
+        )
+        use_insecure = image_needs_insecure_pull(image, insecure_hosts)
+
         for label, extra in attempts:
             try:
-                logger.info("Sandbox.create attempt=%s name=%s image=%s", label, name, image)
-                sb = await Sandbox.create(
+                logger.info(
+                    "Sandbox.create attempt=%s name=%s image=%s insecure=%s",
+                    label,
                     name,
-                    image=image,
-                    cpus=cpus,
-                    memory=memory_mib,
-                    labels=labels,
-                    detached=True,
-                    replace=True,
-                    **extra,
+                    image,
+                    use_insecure,
                 )
+                create_kwargs: dict[str, Any] = {
+                    "image": image,
+                    "cpus": cpus,
+                    "memory": memory_mib,
+                    "labels": labels,
+                    "detached": True,
+                    "replace": True,
+                    **extra,
+                }
+                if use_insecure:
+                    create_kwargs["insecure"] = True
+                sb = await Sandbox.create(name, **create_kwargs)
                 await sb.detach()
                 logger.info("Sandbox.create succeeded attempt=%s name=%s", label, name)
                 won_label = label
@@ -724,6 +744,7 @@ class MicrosandboxBackend(SandboxBackend):
 
         if sb is None:
             detail = " | ".join(errors) if errors else "unknown error"
+            detail = registry_pull_error_hint(detail)
             raise RuntimeError(
                 "Failed to boot microVM sandbox. "
                 f"Attempts: {detail}. "
@@ -1036,6 +1057,9 @@ class MicrosandboxBackend(SandboxBackend):
                     cmd, args, **{k: v for k, v in kwargs.items() if k != "tty"}
                 )
 
+        # Hold the guest lock only while opening the stream. Chat keeps
+        # /event open for minutes; locking during yield starves prompt_async,
+        # FS, and ensure health checks (UI "sandbox may be busy" timeout).
         async with self._guest_lock(name):
             try:
                 handle = await _open_handle()
@@ -1061,24 +1085,24 @@ class MicrosandboxBackend(SandboxBackend):
                     logger.exception("exec_stream failed name=%s cmd=%s: %s", name, cmd, exc)
                     raise RuntimeError(f"stream_exec failed: {exc}") from exc
 
+        try:
+            async for event in handle:
+                et = getattr(event, "event_type", None) or getattr(event, "kind", None)
+                et_s = str(et).lower() if et else type(event).__name__.lower()
+                if "stdout" in et_s or "stderr" in et_s:
+                    data = getattr(event, "data", None) or b""
+                    if data:
+                        yield bytes(data)
+                elif "exit" in et_s or "fail" in et_s:
+                    break
+        finally:
             try:
-                async for event in handle:
-                    et = getattr(event, "event_type", None) or getattr(event, "kind", None)
-                    et_s = str(et).lower() if et else type(event).__name__.lower()
-                    if "stdout" in et_s or "stderr" in et_s:
-                        data = getattr(event, "data", None) or b""
-                        if data:
-                            yield bytes(data)
-                    elif "exit" in et_s or "fail" in et_s:
-                        break
-            finally:
-                try:
-                    if hasattr(handle, "kill"):
-                        res = handle.kill()
-                        if asyncio.iscoroutine(res):
-                            await res
-                except Exception:  # noqa: BLE001
-                    pass
+                if hasattr(handle, "kill"):
+                    res = handle.kill()
+                    if asyncio.iscoroutine(res):
+                        await res
+            except Exception:  # noqa: BLE001
+                pass
 
     async def list_fs(self, name: str, path: str) -> list[dict[str, Any]]:
         """List one directory under the guest workspace (relative paths, no . / ..)."""

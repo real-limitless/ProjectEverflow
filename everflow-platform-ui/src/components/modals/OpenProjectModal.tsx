@@ -22,7 +22,7 @@ import PlusCircleIcon from '@patternfly/react-icons/dist/esm/icons/plus-circle-i
 import SearchIcon from '@patternfly/react-icons/dist/esm/icons/search-icon'
 import { getProject, isSeedProjectId, listVisibleProjectIds } from '@/data/projects'
 import { getTemplate } from '@/data/projectTemplates'
-import { isDemoMode, listProjects } from '@/lib/api'
+import { isDemoMode } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
@@ -49,7 +49,7 @@ export function OpenProjectModal() {
   const setCreate = usePlaygroundStore((s) => s.setCreateProjectModal)
   const openProject = usePlaygroundStore((s) => s.openProject)
   const deleteProject = usePlaygroundStore((s) => s.deleteProject)
-  const ingestApiProject = usePlaygroundStore((s) => s.ingestApiProject)
+  const syncProjectsFromApi = usePlaygroundStore((s) => s.syncProjectsFromApi)
   const openProjectIds = usePlaygroundStore((s) => s.openProjectIds)
   const currentProjectId = usePlaygroundStore((s) => s.currentProjectId)
   const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
@@ -78,15 +78,13 @@ export function OpenProjectModal() {
 
     let cancelled = false
     setLoadingApi(true)
-    void listProjects(org.id)
-      .then((projects) => {
+    // Full reconcile: ingest API rows and drop local ghosts not in the DB
+    void syncProjectsFromApi(org.id)
+      .then((result) => {
         if (cancelled) return
-        for (const ap of projects) {
-          ingestApiProject(ap)
+        if (!result.ok) {
+          setApiError(result.error || 'Failed to load projects')
         }
-      })
-      .catch((e) => {
-        if (!cancelled) setApiError(e instanceof Error ? e.message : 'Failed to load projects')
       })
       .finally(() => {
         if (!cancelled) setLoadingApi(false)
@@ -94,7 +92,7 @@ export function OpenProjectModal() {
     return () => {
       cancelled = true
     }
-  }, [isOpen, user, org, ingestApiProject])
+  }, [isOpen, user, org, syncProjectsFromApi])
 
   const rows = useMemo((): ProjectRow[] => {
     // Visible catalog (excludes pure demo seeds outside demo mode) + already-open tabs

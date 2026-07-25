@@ -14,7 +14,11 @@ export interface PersistedPlayground {
   projectLayouts: Record<string, LayoutNode>
   paletteMode?: PaletteMode
   palettePos?: { x: number; y: number }
-  /** User-created demo projects (not in seed catalog) */
+  /**
+   * User-created / API-hydrated projects (not in seed catalog).
+   * In live mode this is a **cache** only — the org project list from the API is
+   * source of truth; stale entries are pruned by `syncProjectsFromApi`.
+   */
   userProjects?: Record<string, Project>
 }
 

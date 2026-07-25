@@ -4,7 +4,8 @@
 #
 # Usage:
 #   ./deploy/build-sandbox-guest.sh
-#   SANDBOX_GUEST_IMAGE=ghcr.io/limitless-rh/everflow-sandbox-guest:v1 PUSH=true ./deploy/build-sandbox-guest.sh
+#   SANDBOX_GUEST_IMAGE=localhost:5000/everflow/everflow-sandbox-guest:v1 PUSH=true ./deploy/build-sandbox-guest.sh
+# Prefer: ONLY=guest ./deploy/local-registry.sh build-push
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

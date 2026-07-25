@@ -46,6 +46,7 @@ async def test_mint_and_use_sandbox_token(
     assert ctx.json()["via"] == "sandbox_token"
     assert ctx.json()["project_slug"] == "tok-app"
     assert "knowledge:rw" in ctx.json()["scopes"]
+    assert "jobs:rw" in ctx.json()["scopes"]
 
     create = await client.post(
         f"/api/v1/projects/{project_id}/knowledge/canvases",
@@ -66,6 +67,11 @@ async def test_mint_and_use_sandbox_token(
     proj = await client.get(f"/api/v1/projects/{project_id}", headers=sbox)
     assert proj.status_code == 200, proj.text
     assert proj.json()["slug"] == "tok-app"
+
+    # Jobs accept sandbox tokens (scope jobs:rw). Without a running sandbox → 409, not 401/403.
+    jobs = await client.get(f"/api/v1/projects/{project_id}/jobs", headers=sbox)
+    assert jobs.status_code == 409, jobs.text
+    assert "sandbox" in jobs.json()["detail"].lower()
 
 
 @pytest.mark.asyncio

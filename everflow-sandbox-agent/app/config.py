@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     sandbox_agent_token: str = "change-me"
     # Explicit true → mock. False/None → real microsandbox (fail if KVM/SDK missing).
     sandbox_mock: bool | None = False
-    # Guest microVM image (prebaked harnesses on GHCR)
-    default_image: str = "ghcr.io/limitless-rh/everflow-sandbox-guest:dev"
+    # Guest microVM image (msb pulls via compose DNS into local registry)
+    default_image: str = "registry:5000/everflow/everflow-sandbox-guest:latest"
     default_cpus: int = 2
     default_memory_mib: int = 2048
     # Mount strategy for microVM workspace: named-volume | bind | no-volumes | auto
@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     platform_api_url: str = "http://backend:8000"
     # Guest-local port for the reverse tunnel listener
     everflow_mcp_tunnel_port: int = 18765
+    # microsandbox home (image cache + config.json). Compose sets MSB_HOME.
+    msb_home: str = "/root/.microsandbox"
+    # Extra plain-HTTP registry hosts (comma-separated), merged with builtins.
+    # Env: MSB_INSECURE_REGISTRIES=registry:5000,localhost:5000
+    msb_insecure_registries: str | None = None
+    # Best-effort `msb pull --insecure` of default_image on agent start.
+    msb_prepull_default_image: bool = True
 
     def resolve_mock(self) -> bool:
         """Only mock when explicitly enabled."""

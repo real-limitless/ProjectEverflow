@@ -3,7 +3,10 @@
 # before startup without libkrunfw (unix_wait_status 256).
 #
 # Base: https://github.com/superradcompany/microsandbox (ghcr.io)
-FROM ghcr.io/superradcompany/microsandbox:latest
+# Override for airgap after: ./deploy/local-registry.sh mirror-upstream
+#   --build-arg MICRO_SANDBOX_BASE=localhost:5000/everflow/upstream-microsandbox:latest
+ARG MICRO_SANDBOX_BASE=ghcr.io/superradcompany/microsandbox:latest
+FROM ${MICRO_SANDBOX_BASE}
 
 USER root
 WORKDIR /app

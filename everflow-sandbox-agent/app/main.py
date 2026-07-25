@@ -18,6 +18,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log = logging.getLogger("everflow.sandbox_agent")
     settings = get_settings()
     Path(settings.workspace_root).mkdir(parents=True, exist_ok=True)
+
+    # Embedded registry is plain HTTP; msb defaults to HTTPS for pulls.
+    # Seed $MSB_HOME/config.json registries.hosts.*.insecure before any create.
+    if not settings.resolve_mock():
+        try:
+            from app.msb_registry import (
+                ensure_msb_insecure_registries,
+                prepull_default_image,
+                resolve_insecure_registry_hosts,
+            )
+
+            hosts = resolve_insecure_registry_hosts(
+                default_image=settings.default_image,
+                extra_hosts=settings.msb_insecure_registries,
+            )
+            ensure_msb_insecure_registries(settings.msb_home, hosts)
+            log.info("msb insecure registries ready: %s", ", ".join(hosts))
+            if settings.msb_prepull_default_image and settings.default_image:
+                from app.msb_registry import image_needs_insecure_pull
+
+                ok = prepull_default_image(
+                    settings.default_image,
+                    insecure=image_needs_insecure_pull(settings.default_image, hosts),
+                )
+                if not ok:
+                    log.warning(
+                        "msb pre-pull of default guest image failed image=%s "
+                        "(first project create will retry; seed with ./deploy/local-registry.sh)",
+                        settings.default_image,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("msb registry bootstrap failed (provision may fail): %s", exc)
+
     backend = build_backend(settings)
     app.state.backend = backend
     try:

@@ -141,7 +141,8 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/session":
             import uuid
 
-            sid = str(uuid.uuid4())
+            # Prefer real OpenCode id shape so UI filters (ses_…) accept fake sessions.
+            sid = f"ses_{uuid.uuid4().hex[:24]}"
             sess = {
                 "id": sid,
                 "title": body.get("title") or "New session",

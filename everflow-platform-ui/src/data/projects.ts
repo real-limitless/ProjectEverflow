@@ -296,6 +296,14 @@ export function mergeUserProjects(
   }
 }
 
+/** Snapshot of catalog ids + fromApi for API reconcile (excludes nothing). */
+export function listCatalogProjectRefs(): Array<{ id: string; fromApi?: boolean }> {
+  return Object.values(PROJECTS).map((p) => ({
+    id: p.id,
+    fromApi: p.fromApi,
+  }))
+}
+
 export function listUserCreatedProjects(
   seedIds: Set<string> = SEED_PROJECT_IDS,
 ): Record<string, Project> {

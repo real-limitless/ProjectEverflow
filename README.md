@@ -20,36 +20,104 @@ The supported product install runs **entirely in containers**. The host only nee
 
 No host Python, Node, or package installs are required for the control plane.
 
-### Quick install (prebuilt images)
+### One-liner (website / remote bootstrap)
 
-End users should **pull** published images from GitHub Container Registry — no local compile:
-
-```bash
-./scripts/everflow-install.sh
-# optional: CONTAINER_ENGINE=podman ./scripts/everflow-install.sh
-```
-
-That generates `.env` secrets, `compose pull`s:
-
-| Image | Default tag |
-|-------|-------------|
-| `everflow-frontend` | `ghcr.io/limitless-rh/everflow-frontend:latest` |
-| `everflow-backend` | `ghcr.io/limitless-rh/everflow-backend:latest` |
-| `everflow-sandbox-agent` | `ghcr.io/limitless-rh/everflow-sandbox-agent:latest` |
-| `everflow-sandbox-guest` | `ghcr.io/limitless-rh/everflow-sandbox-guest:latest` |
-
-…then starts the stack. Quiet by default (logs → `.everflow-install.log`).
-
-If a pull fails (images not published yet), the installer falls back to a local build.
-
-**Build from source** (contributors / offline):
+Ship a **single bash script** on your site (or use the copy in this repo). Users run:
 
 ```bash
-BUILD_FROM_SOURCE=1 ./scripts/everflow-install.sh
-# or: VERBOSE=1 BUILD_FROM_SOURCE=1 ./scripts/everflow-install.sh
+curl -fsSL https://raw.githubusercontent.com/real-limitless/ProjectEverflow/main/scripts/get-everflow.sh | bash
 ```
 
-Then open the UI for **first-run setup** (platform admin + first organization).
+Or host the same file on your domain (recommended for branding / stable URLs):
+
+```bash
+# After you publish scripts/get-everflow.sh as https://YOUR_DOMAIN/install
+curl -fsSL https://YOUR_DOMAIN/install | bash
+```
+
+Safer (inspect before run):
+
+```bash
+curl -fsSL https://YOUR_DOMAIN/install -o get-everflow.sh
+less get-everflow.sh
+bash get-everflow.sh
+```
+
+What the bootstrap does: check Docker/Podman → clone/download ProjectEverflow into `~/everflow` → run `./scripts/everflow` (interactive menu on a TTY, or `install` when non-interactive).
+
+Useful env vars:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `EVERFLOW_DIR` | `$HOME/everflow` | Install path |
+| `EVERFLOW_VERSION` | `main` | Git branch or tag |
+| `EVERFLOW_ACTION` | `menu` (TTY) / `install` | What to run after download |
+| `EVERFLOW_NONINTERACTIVE=1` | — | Force `install` (no menu) |
+| `EVERFLOW_REPO` | this GitHub repo | Override source |
+
+```bash
+# Non-interactive example
+EVERFLOW_NONINTERACTIVE=1 EVERFLOW_DIR=/opt/everflow \
+  curl -fsSL https://YOUR_DOMAIN/install | bash
+```
+
+Details: [`scripts/get-everflow.sh`](scripts/get-everflow.sh) · [`scripts/README.md`](scripts/README.md).
+
+### Quick install (from a git clone — embedded local registry)
+
+Everflow runs an **always-on private OCI registry** (`registry` compose service) so control-plane and **guest microVM** images are pulled locally — microsandbox does not need GitHub Container Registry after seed.
+
+**Recommended:** interactive installer — **ask → install registry → full stack**:
+
+```bash
+./scripts/everflow
+# or:
+./scripts/everflow install
+# optional: CONTAINER_ENGINE=podman ./scripts/everflow install
+```
+
+The wizard asks how to fill the local registry (build / GHCR mirror / skip), then:
+
+1. **Phase 1** — start the embedded registry and seed images  
+2. **Phase 2** — start frontend, backend, sandbox-agent, searxng  
+
+Registry-only: `./scripts/everflow registry status|seed|up`
+
+`./scripts/everflow-install.sh` still works (wrapper around `everflow install`).
+
+| Image | Host pull (compose) | Inside agent (msb) |
+|-------|---------------------|--------------------|
+| Frontend / backend / agent | `localhost:5000/everflow/everflow-*:latest` | — |
+| Guest microVM | (same host path for push) | `registry:5000/everflow/everflow-sandbox-guest:latest` |
+| SearXNG / microsandbox base | `localhost:5000/everflow/upstream-*:latest` | — |
+
+Quiet by default (logs → `.everflow-install.log`). If the local registry is empty, install falls back to build+seed.
+
+**Other install modes:**
+
+```bash
+# Build + seed local registry, then start
+BUILD_FROM_SOURCE=1 ./scripts/everflow install
+
+# Mirror published GHCR images into the local registry (no compile), then start
+INSTALL_MODE=ghcr ./scripts/everflow install
+
+# Airgap: on online host export, on offline host import
+./deploy/local-registry.sh export /path/everflow-images.tar
+./deploy/local-registry.sh import /path/everflow-images.tar
+```
+
+Configure Docker/Podman for the HTTP registry (`insecure-registries` / Podman `insecure=true`) — see [`deploy/README.md`](deploy/README.md).
+
+**First-run admin** (platform admin + organization) — either:
+
+```bash
+./scripts/everflow setup-admin
+# non-interactive:
+# EVERFLOW_ADMIN_EMAIL=you@example.com EVERFLOW_ADMIN_PASSWORD='…' ./scripts/everflow setup-admin
+```
+
+…or open the UI wizard at http://localhost:3000. See [`scripts/README.md`](scripts/README.md) for the full menu (status, logs, upgrade, uninstall, reinstall).
 
 Manual equivalents:
 
@@ -67,6 +135,7 @@ docker compose up --build -d
 
 | Service | Role | Ports (prod / dev) |
 |---------|------|--------------------|
+| `registry` | Embedded private OCI registry | `127.0.0.1:5000` (host push/pull) |
 | `frontend` | UI | `3000` (nginx) / `5173` (Vite HMR) |
 | `backend` | **Sole public API** (`everflow-platform-api`) | `8000` |
 | `sandbox-agent` | Privileged microsandbox control plane | not published / `8090` in dev |
@@ -134,22 +203,37 @@ Project create → backend provisions a detached sandbox via sandbox-agent. Crea
 
 ### Publishing images (maintainers)
 
-Build all control-plane + guest images (matches installer’s GHCR pull tags):
+Default build targets the **local** registry. GHCR remains optional for public distribution:
 
 ```bash
-./deploy/build-images.sh
-# push:  docker login ghcr.io && PUSH=true ./deploy/build-images.sh
-# tag:   EVERFLOW_IMAGE_TAG=v0.1.0 PUSH=true ./deploy/build-images.sh
-# guest only: ./deploy/build-sandbox-guest.sh
+./deploy/local-registry.sh seed          # local product path
+./deploy/build-images.sh                 # tag localhost:5000/everflow/*
+PUSH=true ./deploy/build-images.sh
+
+# Public GHCR publish:
+docker login ghcr.io
+EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
+EVERFLOW_IMAGE_TAG=v0.1.0 EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
 ```
 
 See [`deploy/README.md`](deploy/README.md).
 
 ### Prebaked guest image
 
-Project sandboxes boot an **OCI guest image** (separate from the sandbox-agent host image). Included in `./deploy/build-images.sh`, or build alone with `./deploy/build-sandbox-guest.sh`.
+Project sandboxes boot an **OCI guest image** (separate from the sandbox-agent host image). Microsandbox pulls it into `MSB_HOME` from the **embedded registry** by default:
 
-Set `SANDBOX_DEFAULT_IMAGE=ghcr.io/limitless-rh/everflow-sandbox-guest:latest` (default in `.env.example`). Microsandbox must be able to pull the tag. First boot may pull/cache once; later creates stay fast.
+```bash
+SANDBOX_DEFAULT_IMAGE=registry:5000/everflow/everflow-sandbox-guest:latest
+```
+
+Use `localhost:5000/...` only for host-side `docker push`/`pull`. Inside the agent container, `localhost` is wrong — always use the compose service hostname `registry`.
+
+The local registry is **HTTP-only**. microsandbox defaults to HTTPS, so the agent
+marks `registry:5000` as insecure in `$MSB_HOME/config.json` on startup and
+passes `insecure=True` when creating sandboxes from that image. If provision
+fails with `https://registry:5000/... registry error`, seed the guest image
+(`./deploy/local-registry.sh seed` or `ONLY=guest … build-push`) and restart
+`sandbox-agent`.
 
 ### App toolkits
 

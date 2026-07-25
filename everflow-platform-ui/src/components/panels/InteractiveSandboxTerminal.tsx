@@ -214,6 +214,16 @@ export function InteractiveSandboxTerminal({
 
     let closed = false
     let fitTimer: number | null = null
+    let reconnectTimer: number | null = null
+    let pingTimer: number | null = null
+    let reconnectAttempt = 0
+    let intentionalClose = false
+    // Skip auto-reconnect after intentional process exit when a custom cmd was set.
+    let suppressReconnect = false
+    const PING_MS = 25_000
+    const RECONNECT_BASE_MS = 500
+    const RECONNECT_MAX_MS = 10_000
+
     const scheduleFit = () => {
       if (fitTimer != null) window.clearTimeout(fitTimer)
       fitTimer = window.setTimeout(() => {
@@ -222,10 +232,58 @@ export function InteractiveSandboxTerminal({
       }, 40)
     }
 
-    const connect = async () => {
+    const clearPing = () => {
+      if (pingTimer != null) {
+        window.clearInterval(pingTimer)
+        pingTimer = null
+      }
+    }
+
+    const startPing = (ws: WebSocket) => {
+      clearPing()
+      pingTimer = window.setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({ type: 'ping' }))
+          } catch {
+            /* ignore */
+          }
+        }
+      }, PING_MS)
+    }
+
+    const scheduleReconnect = (reason: string) => {
+      if (closed || suppressReconnect) return
+      if (reconnectTimer != null) return
+      const delay = Math.min(
+        RECONNECT_MAX_MS,
+        RECONNECT_BASE_MS * 2 ** Math.min(reconnectAttempt, 5),
+      )
+      reconnectAttempt += 1
+      term.writeln(
+        `\r\n\x1b[90m[disconnected${reason ? `: ${reason}` : ''}] reconnecting in ${Math.round(delay / 1000)}s…\x1b[0m`,
+      )
+      onStatus?.('closed', reason)
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null
+        void connect({ isReconnect: true })
+      }, delay)
+    }
+
+    const connect = async (opts?: { isReconnect?: boolean }) => {
       if (closed) return
+      if (reconnectTimer != null) {
+        window.clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+      suppressReconnect = false
+      intentionalClose = false
       onStatus?.('connecting')
-      term.writeln('\x1b[90mconnecting to sandbox shell…\x1b[0m')
+      if (opts?.isReconnect) {
+        term.writeln('\x1b[90mreconnecting to sandbox shell…\x1b[0m')
+      } else {
+        term.writeln('\x1b[90mconnecting to sandbox shell…\x1b[0m')
+      }
 
       // Wait until the dock panel has a real box so initial cols/rows are correct.
       await waitForHostSize(host)
@@ -241,6 +299,8 @@ export function InteractiveSandboxTerminal({
       wsRef.current = ws
 
       ws.onopen = () => {
+        reconnectAttempt = 0
+        startPing(ws)
         // Server waits for first resize before starting the guest process
         measureAndResize(term, host, fit)
         const { cols, rows } = term
@@ -284,23 +344,25 @@ export function InteractiveSandboxTerminal({
             term.focus()
           } else if (msg.type === 'output') {
             term.write(decodeOutput(msg))
+          } else if (msg.type === 'pong') {
+            /* keepalive ack */
           } else if (msg.type === 'error') {
             onStatus?.('error', msg.message)
             term.writeln(`\r\n\x1b[31m${msg.message || 'error'}\x1b[0m`)
           } else if (msg.type === 'exit') {
             term.writeln(`\r\n\x1b[90m[process exited ${msg.code ?? '?'}]\x1b[0m`)
             onStatus?.('closed', String(msg.code ?? ''))
+            // Default interactive shell: restart. Custom cmd (e.g. one-shot): stop.
             if (!cmd && !closed) {
-              setTimeout(() => {
-                if (!closed) {
-                  try {
-                    ws.close()
-                  } catch {
-                    /* ignore */
-                  }
-                  void connect()
-                }
-              }, 400)
+              intentionalClose = true
+              try {
+                ws.close()
+              } catch {
+                /* ignore */
+              }
+              scheduleReconnect('shell exited')
+            } else {
+              suppressReconnect = true
             }
           }
         } catch {
@@ -309,15 +371,18 @@ export function InteractiveSandboxTerminal({
       }
 
       ws.onerror = () => {
+        // onclose will schedule reconnect; avoid double banners
         onStatus?.('error', 'WebSocket error')
-        term.writeln('\r\n\x1b[31mWebSocket error\x1b[0m')
       }
 
       ws.onclose = () => {
-        if (!closed) {
-          onStatus?.('closed')
-          term.writeln('\r\n\x1b[90m[disconnected]\x1b[0m')
+        clearPing()
+        if (wsRef.current === ws) wsRef.current = null
+        if (closed || intentionalClose) {
+          intentionalClose = false
+          return
         }
+        scheduleReconnect('connection lost')
       }
     }
 
@@ -351,7 +416,10 @@ export function InteractiveSandboxTerminal({
 
     return () => {
       closed = true
+      suppressReconnect = true
       if (fitTimer != null) window.clearTimeout(fitTimer)
+      if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
+      clearPing()
       dataDisp.dispose()
       ro.disconnect()
       window.removeEventListener('resize', scheduleFit)

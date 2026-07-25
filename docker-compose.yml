@@ -1,33 +1,79 @@
 # Project Everflow — container-only control plane (Docker or Podman Compose).
 #
-# Default: pull prebuilt images from GHCR (fast end-user install).
-# From source: BUILD_FROM_SOURCE=1 ./scripts/everflow-install.sh
+# Default: embedded local OCI registry (always-on). Seed once, then run offline.
+#   ./deploy/local-registry.sh seed
+#   ./scripts/everflow install
+#
+# Maintainers can still publish to GHCR:
+#   EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
+#
+# From source without seed: BUILD_FROM_SOURCE=1 ./scripts/everflow-install.sh
 #   or: docker compose up --build -d
 #
 # Host: Docker or Podman + Compose plugin; Linux /dev/kvm for real microVMs.
 # Without KVM, set SANDBOX_MOCK=true for CI/dev only (not product use).
+#
+# Image hostname split (same registry content, different resolvers):
+#   Host engine / compose image:  — localhost:5000/everflow/...
+#   Inside containers (msb pull)  — registry:5000/everflow/...
 
 services:
+  # Always-on private registry for Everflow + mirrored upstream images.
+  # Bootstrap image stays registry:2 (host-cached); do not point this at itself.
+  registry:
+    image: ${EVERFLOW_REGISTRY_IMAGE:-docker.io/library/registry:2}
+    restart: unless-stopped
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    volumes:
+      - registry_data:/var/lib/registry
+    ports:
+      # Host seed/push only (bind loopback)
+      - "127.0.0.1:${REGISTRY_HOST_PORT:-5000}:5000"
+    expose:
+      - "5000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://127.0.0.1:5000/v2/",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 8
+      start_period: 5s
+
   sandbox-agent:
-    image: ${EVERFLOW_SANDBOX_AGENT_IMAGE:-ghcr.io/limitless-rh/everflow-sandbox-agent:latest}
+    image: ${EVERFLOW_SANDBOX_AGENT_IMAGE:-localhost:5000/everflow/everflow-sandbox-agent:latest}
     build:
       context: .
       dockerfile: deploy/sandbox-agent.Dockerfile
+      args:
+        MICRO_SANDBOX_BASE: ${MICRO_SANDBOX_BASE:-ghcr.io/superradcompany/microsandbox:latest}
     privileged: true
     devices:
       - /dev/kvm
     environment:
       SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
       SANDBOX_MOCK: ${SANDBOX_MOCK:-false}
-      DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ghcr.io/limitless-rh/everflow-sandbox-guest:latest}
+      # msb pulls from compose DNS — use registry:5000, not localhost
+      DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-registry:5000/everflow/everflow-sandbox-guest:latest}
       VOLUME_STRATEGY: ${VOLUME_STRATEGY:-auto}
       WORKSPACE_ROOT: /workspaces
       MSB_HOME: /root/.microsandbox
+      # Platform API as reached from agent (MCP reverse tunnel dial target)
+      PLATFORM_API_URL: ${AGENT_PLATFORM_API_URL:-http://backend:8000}
     volumes:
       - msb_data:/root/.microsandbox
       - project_workspaces:/workspaces
     expose:
       - "8090"
+    depends_on:
+      registry:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -42,15 +88,19 @@ services:
       start_period: 30s
 
   searxng:
-    image: docker.io/searxng/searxng:latest
+    image: ${SEARXNG_IMAGE:-localhost:5000/everflow/upstream-searxng:latest}
     environment:
       SEARXNG_BASE_URL: http://searxng:8080/
       SEARXNG_SECRET: ${SEARXNG_SECRET:-everflow-dev-searxng-change-me}
     volumes:
-      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
-      - ./deploy/searxng/limiter.toml:/etc/searxng/limiter.toml:ro
+      # :Z required on SELinux (Fedora/RHEL/Podman); without it searxng gets EACCES on settings.yml
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:Z,ro
+      - ./deploy/searxng/limiter.toml:/etc/searxng/limiter.toml:Z,ro
     expose:
       - "8080"
+    depends_on:
+      registry:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -66,7 +116,7 @@ services:
       start_period: 20s
 
   backend:
-    image: ${EVERFLOW_BACKEND_IMAGE:-ghcr.io/limitless-rh/everflow-backend:latest}
+    image: ${EVERFLOW_BACKEND_IMAGE:-localhost:5000/everflow/everflow-backend:latest}
     build:
       context: .
       dockerfile: deploy/backend.Dockerfile
@@ -85,7 +135,8 @@ services:
       SANDBOX_ENABLED: ${SANDBOX_ENABLED:-true}
       SANDBOX_AGENT_URL: http://sandbox-agent:8090
       SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
-      SANDBOX_DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-ghcr.io/limitless-rh/everflow-sandbox-guest:latest}
+      # Same guest ref msb uses (compose DNS host)
+      SANDBOX_DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-registry:5000/everflow/everflow-sandbox-guest:latest}
       SANDBOX_DEFAULT_MEMORY_MIB: ${SANDBOX_DEFAULT_MEMORY_MIB:-2048}
       SANDBOX_DEFAULT_CPUS: ${SANDBOX_DEFAULT_CPUS:-2}
       PREVIEW_ENABLED: ${PREVIEW_ENABLED:-true}
@@ -100,6 +151,8 @@ services:
     ports:
       - "8000:8000"
     depends_on:
+      registry:
+        condition: service_healthy
       sandbox-agent:
         condition: service_healthy
       searxng:
@@ -112,7 +165,7 @@ services:
       start_period: 15s
 
   frontend:
-    image: ${EVERFLOW_FRONTEND_IMAGE:-ghcr.io/limitless-rh/everflow-frontend:latest}
+    image: ${EVERFLOW_FRONTEND_IMAGE:-localhost:5000/everflow/everflow-frontend:latest}
     build:
       context: .
       dockerfile: deploy/frontend.Dockerfile
@@ -122,6 +175,8 @@ services:
     ports:
       - "3000:80"
     depends_on:
+      registry:
+        condition: service_healthy
       backend:
         condition: service_healthy
 
@@ -129,3 +184,4 @@ volumes:
   everflow_db:
   msb_data:
   project_workspaces:
+  registry_data:

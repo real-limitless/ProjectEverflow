@@ -742,7 +742,8 @@ async def opencode_ensure(
         package_status: dict[str, Any] | None = None
 
         if guest:
-            # Stale guest images often lack everflow_mcp; install from agent bundle.
+            # Install or upgrade everflow_mcp from agent bundle (fingerprint stamp).
+            # Prebaked/stale guest packages keep old tools if we only check import.
             package_status = await ensure_everflow_mcp_package(backend, name)
             if not package_status.get("installed"):
                 mcp_status = {
@@ -752,6 +753,12 @@ async def opencode_ensure(
                     "mode": "guest",
                 }
                 return
+            # Package content changed → OpenCode must restart to re-spawn MCP.
+            if package_status.get("upgraded") or package_status.get("source") in (
+                "vendor",
+                "upgraded",
+            ):
+                force = True
 
         if guest and agent_platform_url:
             async def _kill_guest_port(sandbox_name: str, listen_port: int) -> None:
@@ -826,17 +833,36 @@ async def opencode_ensure(
             force = True
 
     try:
-        # Host path available → run OpenCode as host process against workspace
-        if workspace and not workspace.startswith("named:") and workspace != "(guest-only)":
-            ws_path = Path(workspace)
-            if ws_path.is_dir():
-                await _configure_everflow_mcp(guest=False, host_ws=ws_path)
-                status_dict = await mgr.ensure_host(name, str(ws_path), force_restart=force)
-                resp = OpenCodeEnsureResponse(**status_dict)
-                resp.everflow_mcp = mcp_status
-                return resp
+        # Real microVMs always run OpenCode *inside the guest* (prebaked CLI + harness
+        # tools). Host-path ensure is only for MockSandboxBackend / pure host workspaces.
+        # Previously a bind-mounted host workspace caused ensure_host → no opencode on
+        # the agent image → silent fake server with demo models (OpenRouter Auto, etc.).
+        from app.msb import MicrosandboxBackend
 
-        # Guest-only microVM: write MCP into guest FS + reverse tunnel
+        host_ws_path = (
+            Path(workspace)
+            if workspace
+            and not workspace.startswith("named:")
+            and workspace != "(guest-only)"
+            else None
+        )
+        use_host_opencode = (
+            not isinstance(backend, MicrosandboxBackend)
+            and host_ws_path is not None
+            and host_ws_path.is_dir()
+        )
+
+        if use_host_opencode:
+            assert host_ws_path is not None
+            await _configure_everflow_mcp(guest=False, host_ws=host_ws_path)
+            status_dict = await mgr.ensure_host(
+                name, str(host_ws_path), force_restart=force
+            )
+            resp = OpenCodeEnsureResponse(**status_dict)
+            resp.everflow_mcp = mcp_status
+            return resp
+
+        # Guest microVM: write MCP into guest FS + reverse tunnel
         await _configure_everflow_mcp(guest=True, host_ws=_host_workspace_path(rec))
         # Also mirror to host path if present (best-effort)
         host_ws = _host_workspace_path(rec)
@@ -993,7 +1019,27 @@ async def opencode_proxy(
         inst = mgr.get(name)
 
     if inst and inst.mode == "guest":
-        # MicroVM: REST via exec; SSE via stream_exec (token streaming)
+        # Prefer TCP mux tunnel (same path as preview) so REST + SSE do not
+        # contend with guest exec/FS under the per-sandbox lock.
+        base = mgr.base_url(name)
+        if not base:
+            try:
+                host_port = await mgr.attach_guest_tunnel(
+                    name, guest_port=inst.port or 4096
+                )
+                if host_port:
+                    base = mgr.base_url(name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("opencode guest tunnel attach failed name=%s: %s", name, exc)
+        if base:
+            return await proxy_to_opencode(request, base_url=base, path=path or "")
+
+        # Fallback: REST via exec; SSE via stream_exec (token streaming)
+        logger.warning(
+            "opencode guest proxy falling back to exec name=%s path=%s",
+            name,
+            path or "",
+        )
         stream_fn = getattr(backend, "stream_exec", None)
         return await proxy_to_opencode_guest(
             request,

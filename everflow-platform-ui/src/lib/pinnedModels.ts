@@ -26,6 +26,16 @@ export function savePinnedModels(projectId: string, ids: string[]): void {
   }
 }
 
+/** Drop pinned-model cache for a project that no longer exists. */
+export function clearPinnedModels(projectId: string): void {
+  if (!projectId || typeof localStorage === 'undefined') return
+  try {
+    localStorage.removeItem(PREFIX + projectId)
+  } catch {
+    /* ignore */
+  }
+}
+
 export function togglePinnedModel(projectId: string, modelId: string): string[] {
   const cur = loadPinnedModels(projectId)
   const next = cur.includes(modelId)

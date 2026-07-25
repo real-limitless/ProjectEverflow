@@ -38,6 +38,8 @@ class OpenCodeInstance:
     mode: str = "host"  # host | guest
     version: str | None = None
     started_at: float = field(default_factory=time.time)
+    # Guest mode: host-side mux listener for guest 127.0.0.1:port (preview-style tunnel).
+    host_port: int | None = None
 
 
 class OpenCodeManager:
@@ -66,11 +68,15 @@ class OpenCodeManager:
         return self._instances.get(name)
 
     def base_url(self, name: str) -> str | None:
-        """Host-reachable OpenCode URL (only for mode=host)."""
+        """Host-reachable OpenCode URL (host mode, or guest with TCP tunnel)."""
         inst = self._instances.get(name)
-        if not inst or inst.mode != "host":
+        if not inst:
             return None
-        return f"http://{OPENCODE_HOSTNAME}:{inst.port}"
+        if inst.mode == "host":
+            return f"http://{OPENCODE_HOSTNAME}:{inst.port}"
+        if inst.host_port:
+            return f"http://{OPENCODE_HOSTNAME}:{inst.host_port}"
+        return None
 
     async def stop(self, name: str) -> None:
         async with self._lock:
@@ -169,6 +175,22 @@ class OpenCodeManager:
         self._instances[name] = inst
         return self._status_dict(inst, healthy=True)
 
+    @staticmethod
+    def fake_allowed(*, allow_fake: bool = True) -> bool:
+        """Fake OpenCode is test-only: requires explicit OPENCODE_ALLOW_FAKE=true."""
+        if not allow_fake:
+            return False
+        return os.environ.get("OPENCODE_ALLOW_FAKE", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+
+    @staticmethod
+    def is_fake_version(version: str | None) -> bool:
+        v = (version or "").strip().lower()
+        return v.startswith("fake") or v == "mock"
+
     async def ensure_host(
         self,
         name: str,
@@ -177,33 +199,51 @@ class OpenCodeManager:
         force_restart: bool = False,
         allow_fake: bool = True,
     ) -> dict[str, Any]:
-        """Ensure opencode serve is running against a host workspace path."""
+        """Ensure opencode serve is running against a host workspace path.
+
+        Never silently starts the fake server in product. Fake requires
+        ``OPENCODE_ALLOW_FAKE=true`` (unit tests only).
+        """
         async with self._lock:
             existing = self._instances.get(name)
             if existing and not force_restart:
-                health = await self.health_check(existing.port)
-                alive = True
-                if isinstance(existing.process, subprocess.Popen):
-                    alive = existing.process.poll() is None
-                if health is not None and alive:
-                    existing.version = str(health.get("version") or existing.version or "")
-                    return self._status_dict(existing, healthy=True)
+                # Refuse to keep serving a fake instance when fake is disallowed.
+                if self.is_fake_version(existing.version) and not self.fake_allowed(
+                    allow_fake=allow_fake
+                ):
+                    await self._kill_instance(existing)
+                    self._instances.pop(name, None)
+                else:
+                    health = await self.health_check(existing.port)
+                    alive = True
+                    if isinstance(existing.process, subprocess.Popen):
+                        alive = existing.process.poll() is None
+                    if health is not None and alive:
+                        existing.version = str(
+                            health.get("version") or existing.version or ""
+                        )
+                        if self.is_fake_version(existing.version) and not self.fake_allowed(
+                            allow_fake=allow_fake
+                        ):
+                            await self._kill_instance(existing)
+                            self._instances.pop(name, None)
+                        else:
+                            return self._status_dict(existing, healthy=True)
 
-            if existing:
+            if existing and name in self._instances:
                 await self._kill_instance(existing)
                 self._instances.pop(name, None)
 
             binary = self.resolve_opencode_bin(workspace)
             if not binary:
-                if allow_fake and os.environ.get("OPENCODE_ALLOW_FAKE", "true").lower() in (
-                    "1",
-                    "true",
-                    "yes",
-                ):
+                if self.fake_allowed(allow_fake=allow_fake):
                     return await self._start_fake(name, workspace)
                 raise RuntimeError(
-                    "OpenCode CLI is not installed in this sandbox. "
-                    "Re-run bootstrap (agent-opencode) or set OPENCODE_BIN."
+                    "OpenCode harness is unavailable: CLI is not installed. "
+                    "For microVMs, OpenCode runs inside the guest image "
+                    "(rebuild guest with OPENCODE_PACKAGE). "
+                    "Background chat will not use demo/fake models. "
+                    "Tests may set OPENCODE_ALLOW_FAKE=true."
                 )
 
             # Detect stub via --version if possible
@@ -303,8 +343,13 @@ class OpenCodeManager:
             raise RuntimeError(f"opencode serve did not become healthy: {last_err}")
 
     async def _start_fake(self, name: str, workspace: str) -> dict[str, Any]:
-        """Dev/test fallback when real OpenCode CLI is missing."""
+        """Test-only fallback when real OpenCode CLI is missing (OPENCODE_ALLOW_FAKE)."""
         from app.opencode_fake import start_fake_opencode
+
+        if not self.fake_allowed():
+            raise RuntimeError(
+                "OpenCode fake server is disabled. Set OPENCODE_ALLOW_FAKE=true only for tests."
+            )
 
         server, port, _thread = start_fake_opencode(0)
         # Keep server alive by retaining reference on instance via process=None
@@ -319,7 +364,7 @@ class OpenCodeManager:
         inst.process = server  # type: ignore[assignment]
         self._instances[name] = inst
         logger.warning(
-            "OpenCode CLI missing — started fake server for sandbox=%s port=%s",
+            "OPENCODE_ALLOW_FAKE: started fake OpenCode for sandbox=%s port=%s (tests only)",
             name,
             port,
         )
@@ -386,19 +431,47 @@ class OpenCodeManager:
         )
 
     def _status_dict(self, inst: OpenCodeInstance, *, healthy: bool) -> dict[str, Any]:
-        host_url = (
-            f"http://{OPENCODE_HOSTNAME}:{inst.port}" if inst.mode == "host" else None
-        )
+        if inst.mode == "host":
+            host_url = f"http://{OPENCODE_HOSTNAME}:{inst.port}"
+        elif inst.host_port:
+            host_url = f"http://{OPENCODE_HOSTNAME}:{inst.host_port}"
+        else:
+            host_url = None
         return {
             "sandbox_name": inst.sandbox_name,
             "healthy": healthy,
             "port": inst.port,
+            "host_port": inst.host_port,
             "base_url": host_url,
             "version": inst.version,
             "mode": inst.mode,
             "pid": inst.pid,
             "workspace": inst.workspace,
         }
+
+    async def attach_guest_tunnel(self, name: str, *, guest_port: int | None = None) -> int | None:
+        """Open (or reuse) host→guest TCP mux to opencode serve. Returns host port."""
+        inst = self._instances.get(name)
+        if not inst or inst.mode != "guest":
+            return None
+        port = int(guest_port or inst.port or 4096)
+        if inst.host_port:
+            return inst.host_port
+        try:
+            from app.guest_tunnel import get_tunnel_manager
+
+            host_port = await get_tunnel_manager().ensure_local_port(name, port)
+            inst.host_port = int(host_port)
+            logger.info(
+                "guest opencode tunnel name=%s guest_port=%s host_port=%s",
+                name,
+                port,
+                inst.host_port,
+            )
+            return inst.host_port
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("guest opencode tunnel failed name=%s: %s", name, exc)
+            return None
 
     async def ensure_guest_via_exec(
         self,
@@ -447,6 +520,7 @@ class OpenCodeManager:
                 version=str(health.get("version") or ""),
             )
             self._instances[name] = inst
+            await self.attach_guest_tunnel(name, guest_port=port)
             logger.info("guest opencode already healthy name=%s port=%s", name, port)
             return self._status_dict(inst, healthy=True)
 
@@ -498,11 +572,13 @@ class OpenCodeManager:
                     version=str(health.get("version") or ""),
                 )
                 self._instances[name] = inst
+                await self.attach_guest_tunnel(name, guest_port=port)
                 logger.info(
-                    "guest opencode ready name=%s port=%s version=%s",
+                    "guest opencode ready name=%s port=%s version=%s host_port=%s",
                     name,
                     port,
                     inst.version,
+                    inst.host_port,
                 )
                 return self._status_dict(inst, healthy=True)
             await asyncio.sleep(0.75)

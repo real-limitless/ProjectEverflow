@@ -70,12 +70,20 @@ import {
 } from '@/lib/workspaceGit'
 import { ChatComposer } from './ChatComposer'
 import { ChatEmptyState } from './ChatEmptyState'
+import { ChatHarnessUnavailable } from './ChatHarnessUnavailable'
 import { ChatHeader } from './ChatHeader'
 import { ChatMessageRow } from './ChatMessageRow'
 import { ConnectProviderModal } from './ConnectProviderModal'
 import { ModelBrowseModal } from './ModelBrowseModal'
 import { loadPinnedModels, togglePinnedModel } from '@/lib/pinnedModels'
 import { ConvRail } from './ConvRail'
+
+/** Reject ensure payloads that are the internal fake harness (never use in product UI). */
+function isFakeOpenCodeEnsure(result: { version?: string; healthy?: boolean } | null | undefined): boolean {
+  if (!result) return false
+  const v = String(result.version || '').toLowerCase()
+  return v.startsWith('fake') || v === 'mock'
+}
 
 interface ChatPanelProps {
   panelKey: PanelKey
@@ -702,15 +710,32 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
 
     ;(async () => {
       try {
-        await withTimeout(ensureOpenCode(currentProjectId), 25_000, 'OpenCode ensure')
+        const ensured = await withTimeout(
+          ensureOpenCode(currentProjectId),
+          25_000,
+          'OpenCode ensure',
+        )
         if (!stillActive()) return
+        if (!ensured?.healthy || isFakeOpenCodeEnsure(ensured)) {
+          throw new Error(
+            isFakeOpenCodeEnsure(ensured)
+              ? 'OpenCode fake harness is disabled. Real sandbox harness is required for chat.'
+              : ensured?.error ||
+                  'OpenCode harness did not become healthy. Background chat is unavailable.',
+          )
+        }
 
         let cat = { connected: [] as string[], modelItems: [] as CatalogItem[] }
         try {
           cat = await withTimeout(loadCatalogs(currentProjectId), 20_000, 'Provider catalog')
         } catch (catErr) {
-          // Non-fatal: chat can still open; user may connect provider later
+          // Harness was ensured but catalog unreachable — treat as unavailable (no demo models).
           console.warn('OpenCode catalog load failed', catErr)
+          throw new Error(
+            catErr instanceof Error
+              ? catErr.message
+              : 'Could not load models from the OpenCode harness.',
+          )
         }
         if (!stillActive()) return
 
@@ -721,9 +746,8 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           await withTimeout(refreshSessions(currentProjectId, prefer), 25_000, 'Session list')
           if (stillActive()) setLiveError(null)
         } catch (sessErr) {
-          // Soft-fail: create a local empty slot so user can still try send
+          // Try one create; if that fails too, harness is not usable for chat.
           console.warn('OpenCode session refresh failed', sessErr)
-          setLiveError((sessErr as Error).message)
           try {
             const created = await withTimeout(
               createSession(currentProjectId, 'New chat'),
@@ -736,9 +760,15 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
                 title: created.title || 'New chat',
                 messages: [],
               })
+              setLiveError(null)
             }
-          } catch {
-            /* ignore — send path can create later */
+          } catch (createErr) {
+            throw new Error(
+              createErr instanceof Error
+                ? createErr.message
+                : (sessErr as Error).message ||
+                    'Could not open a chat session on the OpenCode harness.',
+            )
           }
         }
         if (!stillActive()) return
@@ -1174,41 +1204,51 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         body.system = worktreeSystemPrompt(wt.path, wt.parentPath)
       }
 
-      // prompt_async should return quickly, but guest FS storms can stall the proxy.
-      // Bound the wait so the UI never sits on "Generating…" forever.
+      // prompt_async should return quickly, but guest proxy congestion can stall it.
+      // Soft-bound the wait: if accept is slow, keep polling SSE/messages rather than
+      // hard-failing the turn (generation may already be running in the guest).
       const PROMPT_ACCEPT_MS = 45_000
       let promptTimer: number | undefined
+      const acceptPromise = (async () => {
+        try {
+          await promptAsync(projectId, convId, body)
+        } catch (asyncErr) {
+          try {
+            await promptSync(projectId, convId, body)
+          } catch (syncErr) {
+            const cur =
+              usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
+              []
+            const kept = cur.filter((m) => !m.id.startsWith('pending-'))
+            ensureInstanceState(panelKey, { messages: kept })
+            updateConversationMessages(projectId, convId, kept)
+            throw syncErr || asyncErr
+          }
+        }
+      })()
+      let acceptOutcome: 'ok' | 'timeout' = 'ok'
       try {
-        await Promise.race([
-          (async () => {
-            try {
-              await promptAsync(projectId, convId, body)
-            } catch (asyncErr) {
-              try {
-                await promptSync(projectId, convId, body)
-              } catch (syncErr) {
-                const cur =
-                  usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
-                  []
-                const kept = cur.filter((m) => !m.id.startsWith('pending-'))
-                ensureInstanceState(panelKey, { messages: kept })
-                updateConversationMessages(projectId, convId, kept)
-                throw syncErr || asyncErr
-              }
-            }
-          })(),
-          new Promise<never>((_, reject) => {
-            promptTimer = window.setTimeout(() => {
-              reject(
-                new Error(
-                  'Chat request timed out waiting for OpenCode. The sandbox may be busy — try again in a moment.',
-                ),
-              )
-            }, PROMPT_ACCEPT_MS)
+        acceptOutcome = await Promise.race([
+          acceptPromise.then(() => 'ok' as const),
+          new Promise<'timeout'>((resolve) => {
+            promptTimer = window.setTimeout(() => resolve('timeout'), PROMPT_ACCEPT_MS)
           }),
         ])
       } finally {
         if (promptTimer !== undefined) window.clearTimeout(promptTimer)
+      }
+      if (acceptOutcome === 'timeout') {
+        // Swallow late accept errors so they do not become unhandled rejections;
+        // continue poll/SSE below in case the guest already started the turn.
+        void acceptPromise.catch(() => {
+          /* ignore late failure while polling */
+        })
+        setLiveError(
+          'OpenCode is slow to accept the prompt — still waiting for a reply…',
+        )
+      } else {
+        // Re-await so a real accept failure still throws into the outer catch.
+        await acceptPromise
       }
 
       // SSE is primary (guest stream_exec → /event). Poll is a slow backup only.
@@ -1819,83 +1859,79 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           }}
         />
 
+        {useLive && liveStatus === 'connecting' ? (
+          <ChatHarnessUnavailable connecting />
+        ) : null}
+
         {useLive && liveStatus === 'error' ? (
-          <div className="chat-empty" style={{ minHeight: 100 }}>
-            <h2 className="chat-empty-title">OpenCode unavailable</h2>
-            {(() => {
+          <ChatHarnessUnavailable
+            detail={(() => {
               const down = liveError ? sandboxDownFromError(new Error(liveError)) : null
-              const statusLine = down
-                ? `Sandbox is not running (status=${down.status})`
-                : null
-              const reason = down?.reason || (!down ? liveError : null)
-              return (
-                <>
-                  <p className="chat-empty-desc">
-                    {statusLine || liveError || 'Unknown error'}
-                  </p>
-                  {reason && reason !== statusLine ? (
-                    <p
-                      className="chat-empty-desc"
-                      style={{ opacity: 0.85, fontSize: '0.9em', marginTop: 4 }}
-                    >
-                      Reason: {reason}
-                    </p>
-                  ) : null}
-                </>
-              )
+              if (down) {
+                const statusLine = `Sandbox is not running (status=${down.status})`
+                return down.reason && down.reason !== statusLine
+                  ? `${statusLine} — ${down.reason}`
+                  : statusLine
+              }
+              return liveError
             })()}
-            <button
-              type="button"
-              className="chat-empty-chip"
-              onClick={() => {
-                // Force effect re-run by bumping generation and toggling status
-                bootGenRef.current += 1
-                setLiveError(null)
-                setLiveStatus('connecting')
-                const projectId = currentProjectId!
-                const gen = bootGenRef.current
-                ;(async () => {
-                  try {
-                    await withTimeout(ensureOpenCode(projectId, true), 25_000, 'OpenCode ensure')
-                    if (gen !== bootGenRef.current) return
-                    const cat = await withTimeout(
-                      loadCatalogs(projectId),
-                      20_000,
-                      'Provider catalog',
-                    ).catch(() => ({ connected: [] as string[], modelItems: [] as CatalogItem[] }))
-                    if (gen !== bootGenRef.current) return
-                    await withTimeout(refreshSessions(projectId), 25_000, 'Session list').catch(
-                      () => undefined,
+            onRetry={() => {
+              // Force effect re-run by bumping generation and toggling status
+              bootGenRef.current += 1
+              setLiveError(null)
+              setLiveStatus('connecting')
+              const projectId = currentProjectId!
+              const gen = bootGenRef.current
+              ;(async () => {
+                try {
+                  const ensured = await withTimeout(
+                    ensureOpenCode(projectId, true),
+                    25_000,
+                    'OpenCode ensure',
+                  )
+                  if (gen !== bootGenRef.current) return
+                  if (!ensured?.healthy || isFakeOpenCodeEnsure(ensured)) {
+                    throw new Error(
+                      isFakeOpenCodeEnsure(ensured)
+                        ? 'OpenCode fake harness is disabled. Real sandbox harness is required for chat.'
+                        : ensured?.error ||
+                            'OpenCode harness did not become healthy. Background chat is unavailable.',
                     )
-                    if (gen !== bootGenRef.current) return
-                    setLiveStatus(
-                      cat.connected.length > 0 || cat.modelItems.length > 0 || providerSkipped
-                        ? 'ready'
-                        : 'needs_provider',
-                    )
-                  } catch (e) {
-                    if (gen !== bootGenRef.current) return
-                    const down = sandboxDownFromError(e)
-                    if (down && isHardSandboxDown(down)) {
-                      const store = usePlaygroundStore.getState()
-                      store.patchProjectSandbox(projectId, {
-                        sandboxStatus: isSandboxDeadStatus(down.status)
-                          ? down.status
-                          : 'error',
-                        sandboxError: down.message,
-                      })
-                      store.setSandboxReady(projectId, false)
-                      return
-                    }
-                    setLiveError((e as Error).message)
-                    setLiveStatus('error')
                   }
-                })()
-              }}
-            >
-              Retry
-            </button>
-          </div>
+                  const cat = await withTimeout(
+                    loadCatalogs(projectId),
+                    20_000,
+                    'Provider catalog',
+                  )
+                  if (gen !== bootGenRef.current) return
+                  await withTimeout(refreshSessions(projectId), 25_000, 'Session list')
+                  if (gen !== bootGenRef.current) return
+                  setLiveError(null)
+                  setLiveStatus(
+                    cat.connected.length > 0 || cat.modelItems.length > 0 || providerSkipped
+                      ? 'ready'
+                      : 'needs_provider',
+                  )
+                } catch (e) {
+                  if (gen !== bootGenRef.current) return
+                  const down = sandboxDownFromError(e)
+                  if (down && isHardSandboxDown(down)) {
+                    const store = usePlaygroundStore.getState()
+                    store.patchProjectSandbox(projectId, {
+                      sandboxStatus: isSandboxDeadStatus(down.status)
+                        ? down.status
+                        : 'error',
+                      sandboxError: down.message,
+                    })
+                    store.setSandboxReady(projectId, false)
+                    return
+                  }
+                  setLiveError((e as Error).message)
+                  setLiveStatus('error')
+                }
+              })()
+            }}
+          />
         ) : null}
 
         {useLive && liveStatus === 'needs_provider' && !providerSkipped ? (
@@ -1925,7 +1961,10 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         ) : null}
 
         <div className={`messages${isEmpty && !sending ? ' messages--empty' : ''}`}>
-          {isEmpty && !sending && liveStatus !== 'error' ? (
+          {isEmpty &&
+          !sending &&
+          liveStatus !== 'error' &&
+          liveStatus !== 'connecting' ? (
             <ChatEmptyState
               onSuggestion={(text) => {
                 setDraft(text)
@@ -1986,13 +2025,17 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           onAgentChange={(id) => setConversationAgent(panelKey, id)}
           modelOptions={composerModels || undefined}
           allModelOptions={models || undefined}
+          allowDemoModelFallback={!useLive}
           pinnedModelIds={pinnedModelIds}
           onBrowseModels={() => setModelBrowseOpen(true)}
           mcpOptions={mcpsLive || undefined}
           agentOptions={composerAgentOptions}
           sendDisabled={
             sending ||
-            (useLive && (liveStatus === 'connecting' || liveStatus === 'error'))
+            (useLive &&
+              (liveStatus === 'connecting' ||
+                liveStatus === 'error' ||
+                liveStatus === 'idle'))
           }
           isRunning={sending}
           onStop={stopRunning}

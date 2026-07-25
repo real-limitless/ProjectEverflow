@@ -147,8 +147,11 @@ class _ApiTunnel:
     sink: Any
     created_at: float = field(default_factory=time.time)
     conns: dict[int, asyncio.StreamWriter] = field(default_factory=dict)
+    # DATA frames that arrive before OPEN dial finishes (HTTP clients send immediately)
+    pending_data: dict[int, list[bytes]] = field(default_factory=dict)
     write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     alive: bool = True
+    listener_ready: asyncio.Event = field(default_factory=asyncio.Event)
     reader_task: asyncio.Task | None = None
 
 
@@ -222,7 +225,15 @@ class ApiTunnelManager:
         async with self._lock:
             self._tunnels[sandbox_name] = tunnel
 
-        await asyncio.sleep(0.5)
+        # Wait for guest mux to report listen (stderr), else brief settle delay.
+        try:
+            await asyncio.wait_for(tunnel.listener_ready.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            await asyncio.sleep(0.5)
+            logger.warning(
+                "api tunnel listen ack timed out name=%s (continuing; may race)",
+                sandbox_name,
+            )
         return {
             "ok": True,
             "listen_port": listen_port,
@@ -290,6 +301,8 @@ class ApiTunnelManager:
                 elif et == "stderr" and data:
                     msg = data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data)
                     logger.info("api tunnel stderr name=%s: %s", tunnel.sandbox_name, msg[:400])
+                    if "api-tunnel listening" in msg:
+                        tunnel.listener_ready.set()
                 elif et in ("exited", "error"):
                     logger.warning(
                         "api tunnel stream ended name=%s et=%s",
@@ -303,28 +316,39 @@ class ApiTunnelManager:
             logger.warning("api tunnel reader failed name=%s: %s", tunnel.sandbox_name, exc)
         finally:
             tunnel.alive = False
+            tunnel.pending_data.clear()
             for cid in list(tunnel.conns.keys()):
                 await self._close_conn(tunnel, cid)
             async with self._lock:
                 if self._tunnels.get(tunnel.sandbox_name) is tunnel:
                     self._tunnels.pop(tunnel.sandbox_name, None)
+            logger.warning(
+                "api tunnel removed name=%s — re-run opencode/ensure to restore Everflow MCP API access",
+                tunnel.sandbox_name,
+            )
 
     async def _handle_line(self, tunnel: _ApiTunnel, line: str) -> None:
         parts = line.split(" ", 2)
         kind = parts[0]
         if kind == "OPEN" and len(parts) >= 2:
             conn_id = int(parts[1])
-            asyncio.create_task(self._handle_open(tunnel, conn_id))
+            # Await dial so early HTTP DATA is not dropped (create_task raced).
+            await self._handle_open(tunnel, conn_id)
         elif kind == "DATA" and len(parts) == 3:
             conn_id = int(parts[1])
             payload = base64.b64decode(parts[2].encode("ascii"))
+            if not payload:
+                return
             writer = tunnel.conns.get(conn_id)
-            if writer is not None and payload:
+            if writer is not None:
                 try:
                     writer.write(payload)
                     await writer.drain()
                 except Exception:  # noqa: BLE001
                     await self._close_conn(tunnel, conn_id)
+            else:
+                # Buffer until OPEN dial finishes (belt-and-suspenders).
+                tunnel.pending_data.setdefault(conn_id, []).append(payload)
         elif kind == "CLOSE" and len(parts) >= 2:
             conn_id = int(parts[1])
             await self._close_conn(tunnel, conn_id)
@@ -350,6 +374,7 @@ class ApiTunnelManager:
                 tunnel.target_port,
                 exc,
             )
+            tunnel.pending_data.pop(conn_id, None)
             try:
                 await self._send_line(tunnel, f"CLOSE {conn_id}")
             except Exception:  # noqa: BLE001
@@ -357,6 +382,16 @@ class ApiTunnelManager:
             return
 
         tunnel.conns[conn_id] = writer
+        # Flush any DATA that arrived while dial was in progress.
+        pending = tunnel.pending_data.pop(conn_id, [])
+        if pending:
+            try:
+                for chunk in pending:
+                    writer.write(chunk)
+                await writer.drain()
+            except Exception:  # noqa: BLE001
+                await self._close_conn(tunnel, conn_id)
+                return
 
         async def pump_host_to_guest() -> None:
             try:
@@ -378,6 +413,7 @@ class ApiTunnelManager:
         asyncio.create_task(pump_host_to_guest())
 
     async def _close_conn(self, tunnel: _ApiTunnel, conn_id: int) -> None:
+        tunnel.pending_data.pop(conn_id, None)
         writer = tunnel.conns.pop(conn_id, None)
         if writer is None:
             return

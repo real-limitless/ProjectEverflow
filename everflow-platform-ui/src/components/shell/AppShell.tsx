@@ -31,13 +31,24 @@ export function AppShell({ detached = false }: AppShellProps) {
   const ready = useAuthStore((s) => s.ready)
   const bootstrap = useAuthStore((s) => s.bootstrap)
   const user = useAuthStore((s) => s.user)
+  const org = useAuthStore((s) => s.org)
   const demoMode = useAuthStore((s) => s.demoMode)
   const setupOpen = useAuthStore((s) => s.setupOpen)
+  const syncProjectsFromApi = usePlaygroundStore((s) => s.syncProjectsFromApi)
+  const projectsSyncedKey = usePlaygroundStore((s) => s.projectsSyncedKey)
   void catalogVersion
 
   useEffect(() => {
     void bootstrap()
   }, [bootstrap])
+
+  // Reconcile localStorage / open tabs with the org's API project list.
+  useEffect(() => {
+    if (!ready || demoMode || !user?.id || !org?.id) return
+    const key = `${user.id}:${org.id}`
+    if (projectsSyncedKey === key) return
+    void syncProjectsFromApi(org.id)
+  }, [ready, demoMode, user?.id, org?.id, projectsSyncedKey, syncProjectsFromApi])
 
   const isPlayground =
     location.pathname === '/' || location.pathname === ''

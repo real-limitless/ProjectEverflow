@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -16,11 +17,14 @@ logger = logging.getLogger(__name__)
 # Bare "everflow-mcp" fails with: Executable not found in $PATH: "everflow-mcp"
 DEFAULT_MCP_COMMAND: list[str] = ["python3", "-m", "everflow_mcp"]
 MCP_ENV_REL = ".everflow/mcp.env"
+# Written after a successful install from the agent bundle; compared on ensure.
+MCP_PACKAGE_STAMP_REL = ".everflow/mcp.package.sha"
 # Local listener inside guest for API reverse tunnel
 DEFAULT_GUEST_API_PORT = 18765
 # Agent image ships the package here (deploy/sandbox-agent.Dockerfile).
+# Dev compose should bind-mount ./everflow-mcp → this path so upgrades land without rebuild.
 AGENT_MCP_ROOT = Path(os.environ.get("EVERFLOW_MCP_SRC", "/opt/everflow-mcp"))
-# Copied into guest when the microVM image was built without everflow-mcp.
+# Copied into guest when the microVM image was built without everflow-mcp or is stale.
 GUEST_MCP_VENDOR_REL = ".everflow/vendor/everflow-mcp"
 # Files required for a pip-installable tree (tests/docs optional).
 _VENDOR_FILES = (
@@ -67,18 +71,46 @@ def build_everflow_mcp_config(
     }
 
 
-async def ensure_everflow_mcp_package(backend: Any, sandbox_name: str) -> dict[str, Any]:
-    """Ensure ``everflow_mcp`` is importable inside the guest.
+def agent_mcp_fingerprint(root: Path | None = None) -> str | None:
+    """Stable content hash of the agent-bundled everflow-mcp sources.
 
-    Prebaked guest images include it; older/stale images do not. When missing,
-    copy the agent-bundled source into the workspace and ``pip install`` it so
-    OpenCode's ``python3 -m everflow_mcp`` MCP entry can start.
+    Returns None if the package tree is missing or incomplete.
     """
+    base = Path(root) if root is not None else AGENT_MCP_ROOT
+    if not base.is_dir():
+        return None
+    missing = [rel for rel in _VENDOR_FILES if not (base / rel).is_file()]
+    if missing:
+        return None
+    digest = hashlib.sha256()
+    for rel in _VENDOR_FILES:
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((base / rel).read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+async def ensure_everflow_mcp_package(backend: Any, sandbox_name: str) -> dict[str, Any]:
+    """Ensure guest ``everflow_mcp`` matches the agent-bundled package.
+
+    Prebaked guest images and previous ensures may leave a *stale* install.
+    We only skip reinstall when:
+
+    1. ``import everflow_mcp`` works, **and**
+    2. workspace stamp (``.everflow/mcp.package.sha``) equals the agent source fingerprint.
+
+    Otherwise copy agent sources into the workspace and ``pip install --force-reinstall``
+    so OpenCode picks up new MCP tools after ensure restarts it.
+    """
+    fingerprint = agent_mcp_fingerprint()
+    stamp = (await _guest_read_text(backend, sandbox_name, MCP_PACKAGE_STAMP_REL) or "").strip()
+
     try:
         code, _stdout, _stderr = await backend.exec(
             sandbox_name,
             "python3",
-            ["-c", "import everflow_mcp; print('ok')"],
+            ["-c", "import everflow_mcp; print(getattr(everflow_mcp, '__version__', 'unknown'))"],
             cwd="/workspace",
             timeout_seconds=20,
         )
@@ -86,21 +118,34 @@ async def ensure_everflow_mcp_package(backend: Any, sandbox_name: str) -> dict[s
         logger.warning("everflow_mcp probe failed name=%s: %s", sandbox_name, exc)
         return {"installed": False, "error": f"probe failed: {exc}"}
 
-    if code == 0:
-        return {"installed": True, "source": "existing"}
+    importable = code == 0
+    if importable and fingerprint and stamp == fingerprint:
+        return {
+            "installed": True,
+            "source": "existing",
+            "fingerprint": fingerprint,
+            "upgraded": False,
+        }
 
-    if not AGENT_MCP_ROOT.is_dir():
+    # No agent bundle: keep whatever is already importable (cannot upgrade).
+    if fingerprint is None:
+        if importable:
+            return {
+                "installed": True,
+                "source": "existing",
+                "upgraded": False,
+                "warning": f"agent package missing at {AGENT_MCP_ROOT}; cannot upgrade",
+            }
         return {
             "installed": False,
             "error": f"agent package missing at {AGENT_MCP_ROOT}",
             "source": "vendor",
         }
 
-    missing = [rel for rel in _VENDOR_FILES if not (AGENT_MCP_ROOT / rel).is_file()]
-    if missing:
+    if not AGENT_MCP_ROOT.is_dir():
         return {
             "installed": False,
-            "error": f"incomplete agent package (missing {missing[0]})",
+            "error": f"agent package missing at {AGENT_MCP_ROOT}",
             "source": "vendor",
         }
 
@@ -117,11 +162,13 @@ async def ensure_everflow_mcp_package(backend: Any, sandbox_name: str) -> dict[s
         logger.warning("everflow_mcp vendor copy failed name=%s: %s", sandbox_name, exc)
         return {"installed": False, "error": f"vendor copy failed: {exc}", "source": "vendor"}
 
+    # force-reinstall so site-packages picks up tool changes even when version is unchanged
     install_sh = (
         "set -eu; "
         "export PIP_BREAK_SYSTEM_PACKAGES=1 PIP_DISABLE_PIP_VERSION_CHECK=1; "
-        f"pip3 install --no-cache-dir /workspace/{GUEST_MCP_VENDOR_REL}; "
-        "python3 -c 'import everflow_mcp; print(everflow_mcp.__file__)'"
+        f"pip3 install --no-cache-dir --force-reinstall /workspace/{GUEST_MCP_VENDOR_REL}; "
+        "python3 -c 'import everflow_mcp; print(everflow_mcp.__file__); "
+        "print(getattr(everflow_mcp, \"__version__\", \"unknown\"))'"
     )
     try:
         code, stdout, stderr = await backend.exec(
@@ -145,15 +192,30 @@ async def ensure_everflow_mcp_package(backend: Any, sandbox_name: str) -> dict[s
         )
         return {"installed": False, "error": detail, "source": "vendor"}
 
+    try:
+        await _guest_write_text(backend, sandbox_name, MCP_PACKAGE_STAMP_REL, fingerprint + "\n")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("everflow_mcp stamp write failed name=%s: %s", sandbox_name, exc)
+
+    out_lines = [ln.strip() for ln in (stdout or "").strip().splitlines() if ln.strip()]
+    installed_path = out_lines[-2] if len(out_lines) >= 2 else (out_lines[-1] if out_lines else None)
+    installed_version = out_lines[-1] if out_lines else None
+    source = "upgraded" if importable else "vendor"
     logger.info(
-        "everflow_mcp installed into guest name=%s path=%s",
+        "everflow_mcp %s into guest name=%s path=%s version=%s fingerprint=%s",
+        source,
         sandbox_name,
-        (stdout or "").strip().splitlines()[-1] if stdout else "",
+        installed_path,
+        installed_version,
+        fingerprint[:12],
     )
     return {
         "installed": True,
-        "source": "vendor",
-        "path": (stdout or "").strip().splitlines()[-1] if stdout else None,
+        "source": source,
+        "path": installed_path,
+        "version": installed_version,
+        "fingerprint": fingerprint,
+        "upgraded": source == "upgraded" or (not importable),
     }
 
 

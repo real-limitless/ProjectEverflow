@@ -142,6 +142,19 @@ async def ensure_opencode(
             ) from exc
         raise _agent_http_error(exc) from exc
 
+    # Product never accepts the internal fake OpenCode server (demo models).
+    if isinstance(result, dict):
+        ver = str(result.get("version") or "").lower()
+        if ver.startswith("fake") or ver == "mock" or result.get("healthy") is False:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    result.get("error")
+                    or "OpenCode harness is unavailable. "
+                    "Background chat requires a real sandbox harness (fake/demo is disabled)."
+                ),
+            )
+
     # Best-effort: inject vault keys into guest + OpenCode auth after ensure
     try:
         inject = await inject_project_provider_secrets(

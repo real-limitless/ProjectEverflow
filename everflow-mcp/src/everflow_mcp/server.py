@@ -17,8 +17,12 @@ mcp = FastMCP(
     instructions=(
         "Everflow product control plane for this project. "
         "Use these tools to create knowledge canvases, Everflow agent definitions "
-        "(not OpenCode built-in modes), test suites/cases, and registered HTTP tools. "
-        "All mutations apply only to the bound project."
+        "(not OpenCode built-in modes), test suites/cases, registered HTTP tools, "
+        "and background jobs (detached long-lived sandbox processes). "
+        "To spin up a website or dev server, prefer create_job (e.g. npm run dev) "
+        "over a blocking shell so the process survives and appears in the Jobs panel. "
+        "Use get_job_logs to verify startup; stop_job/kill_job to shut down. "
+        "Requires a running project sandbox. All mutations apply only to the bound project."
     ),
 )
 
@@ -379,6 +383,119 @@ async def call_http_tool(
                 body=body,
             )
         )
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def list_jobs() -> str:
+    """List background jobs for this project (title, command, status, pid).
+
+    Jobs are detached sandbox processes managed by Everflow (Jobs panel).
+    Requires a running sandbox.
+    """
+    try:
+        return _ok(await _client().list_jobs())
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def create_job(title: str, command: str, cwd: str = "") -> str:
+    """Start a detached background job in the project sandbox (Jobs panel).
+
+    Use this to spin up websites or long-lived services (e.g. ``npm run dev``,
+    ``pnpm dev``, ``python -m http.server``). Prefer this over a blocking shell
+    so the process keeps running and is visible in Everflow.
+
+    ``cwd`` is optional (guest path relative to workspace, default sandbox cwd).
+    Returns job id, status, and pid. Follow up with ``get_job_logs`` if needed.
+    """
+    try:
+        return _ok(
+            await _client().create_job(
+                title=title,
+                command=command,
+                cwd=cwd or None,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def get_job_logs(job_id: str, tail: int = 200) -> str:
+    """Tail stdout/stderr logs for a background job (default last 200 lines)."""
+    try:
+        return _ok(await _client().get_job_logs(job_id, tail=tail))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def update_job(
+    job_id: str,
+    title: str | None = None,
+    command: str | None = None,
+    cwd: str | None = None,
+) -> str:
+    """Update a job's title, command, or cwd. Command/cwd only when the job is not running."""
+    try:
+        fields: dict[str, Any] = {}
+        if title is not None:
+            fields["title"] = title
+        if command is not None:
+            fields["command"] = command
+        if cwd is not None:
+            fields["cwd"] = cwd
+        if not fields:
+            return _err(ValueError("Provide at least one of title, command, cwd"))
+        return _ok(await _client().update_job(job_id, **fields))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def start_job(job_id: str) -> str:
+    """Start a previously stopped background job using its stored command/cwd."""
+    try:
+        return _ok(await _client().start_job(job_id))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def stop_job(job_id: str) -> str:
+    """Gracefully stop a running background job."""
+    try:
+        return _ok(await _client().stop_job(job_id))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def kill_job(job_id: str) -> str:
+    """Force-kill a running background job."""
+    try:
+        return _ok(await _client().kill_job(job_id))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def restart_job(job_id: str) -> str:
+    """Restart a background job (stop if needed, then start with stored command)."""
+    try:
+        return _ok(await _client().restart_job(job_id))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def delete_job(job_id: str) -> str:
+    """Delete a background job (stops if running) and remove its metadata."""
+    try:
+        return _ok(await _client().delete_job(job_id))
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 

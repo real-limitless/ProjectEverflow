@@ -1,7 +1,7 @@
 [project]
 name = "everflow-mcp"
-version = "0.1.0"
-description = "In-sandbox Everflow MCP server — knowledge, agents, and project tools for OpenCode"
+version = "0.2.0"
+description = "In-sandbox Everflow MCP server — knowledge, agents, jobs, and project tools for OpenCode"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

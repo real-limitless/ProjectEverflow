@@ -19,6 +19,7 @@ DEFAULT_SCOPES = [
     "tests:rw",
     "http_tools:rw",
     "deploy:rw",
+    "jobs:rw",
     "project:read",
 ]
 

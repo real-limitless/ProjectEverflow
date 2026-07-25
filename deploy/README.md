@@ -2,25 +2,108 @@
 
 | File | Purpose |
 |------|---------|
+| `local-registry.sh` | **Embedded registry** lifecycle: up, seed, mirror, export/import |
 | `build-images.sh` | Build/push **all** Everflow images (frontend, backend, sandbox-agent, guest) |
 | `build-sandbox-guest.sh` | Thin wrapper: guest image only (`ONLY=guest`) |
 | `sandbox-agent.Dockerfile` | **Host** control plane: microsandbox runtime + Everflow sandbox-agent API |
 | `sandbox-guest.Dockerfile` | **Guest** microVM image for projects (Node + agent harnesses prebaked) |
 | `backend.Dockerfile` / `frontend*.Dockerfile` | Platform API and UI |
 
-## Build all images (recommended for publishers)
+## Embedded local registry (product default)
+
+Compose always runs a private Distribution registry (`registry:2`) on
+`127.0.0.1:5000` (host) / `registry:5000` (compose network).
+
+| Who pulls | Image host in the ref |
+|-----------|------------------------|
+| Host Docker/Podman (`compose image:`) | `localhost:5000/everflow/...` |
+| microsandbox inside `sandbox-agent` | `registry:5000/everflow/...` |
+
+Same repository path after one push — no dual-push required.
+
+### First-time seed (online)
+
+```bash
+# Mirror upstream (microsandbox, searxng) + build/push all Everflow images
+./deploy/local-registry.sh seed
+
+# Or mirror published GHCR images without a local compile:
+SEED_FROM_GHCR=1 ./deploy/local-registry.sh seed
+# equivalent: ./deploy/local-registry.sh mirror-upstream && ./deploy/local-registry.sh mirror-ghcr
+```
+
+### HTTP / insecure registry
+
+Local registry speaks plain HTTP. Two layers need insecure access:
+
+| Who | Hostname | Config |
+|-----|----------|--------|
+| Host Docker/Podman (compose `image:`, seed push) | `localhost:5000` | Podman registries.conf / Docker `insecure-registries` |
+| microsandbox inside `sandbox-agent` (guest pull) | `registry:5000` | Agent seeds `$MSB_HOME/config.json` `registries.hosts.*.insecure` |
+
+**Seed/install auto-configures Podman** by writing:
+
+`~/.config/containers/registries.conf.d/everflow-local-registry.conf`
+
+and uses `podman push --tls-verify=false` for local tags. No manual Podman setup is required.
+
+**Docker Engine** (not podman-docker) still needs a one-time daemon change:
+
+```json
+{
+  "insecure-registries": ["localhost:5000", "127.0.0.1:5000"]
+}
+```
+
+Then `sudo systemctl restart docker`.
+
+**msb (guest microVM image):** if provision fails with `https://registry:5000/... registry error`,
+the agent should already mark that host insecure on startup. Ensure the guest
+image exists (`./deploy/local-registry.sh status` / `ONLY=guest … build-push`)
+and restart `sandbox-agent`. Manual: `msb pull --insecure registry:5000/everflow/everflow-sandbox-guest:latest`.
+
+### Airgap export / import
+
+On an online builder:
+
+```bash
+./deploy/local-registry.sh seed
+./deploy/local-registry.sh export /media/usb/everflow-images.tar
+```
+
+On the offline host (engine must already have `registry:2` or load it from the tarball):
+
+```bash
+./deploy/local-registry.sh import /media/usb/everflow-images.tar
+./scripts/everflow install
+```
+
+### Commands
+
+```bash
+./deploy/local-registry.sh up
+./deploy/local-registry.sh status
+./deploy/local-registry.sh mirror-upstream
+./deploy/local-registry.sh build-push          # ONLY=guest for guest only
+./deploy/local-registry.sh mirror-ghcr
+./deploy/local-registry.sh env-snippet
+```
+
+## Build images (maintainers)
 
 From repo root:
 
 ```bash
-# Local tags (ghcr.io/limitless-rh/everflow-*:latest)
+# Local registry tags (default): localhost:5000/everflow/*:latest
 ./deploy/build-images.sh
-
-# Push to GHCR (login first: docker login ghcr.io / podman login ghcr.io)
 PUSH=true ./deploy/build-images.sh
 
+# Publish to GHCR
+docker login ghcr.io
+EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
+
 # Versioned release
-EVERFLOW_IMAGE_TAG=v0.1.0 PUSH=true ./deploy/build-images.sh
+EVERFLOW_IMAGE_TAG=v0.1.0 EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
 
 # Subset
 ONLY=backend,frontend ./deploy/build-images.sh
@@ -30,36 +113,31 @@ ONLY=guest ./deploy/build-images.sh
 CONTAINER_ENGINE=podman ./deploy/build-images.sh
 ```
 
-| Image | Default ref |
-|-------|-------------|
-| Frontend | `ghcr.io/limitless-rh/everflow-frontend:latest` |
-| Backend | `ghcr.io/limitless-rh/everflow-backend:latest` |
-| Sandbox agent | `ghcr.io/limitless-rh/everflow-sandbox-agent:latest` |
-| Sandbox guest | `ghcr.io/limitless-rh/everflow-sandbox-guest:latest` (+ `:dev` alias) |
+| Image | Local ref (host) | msb / internal ref |
+|-------|------------------|--------------------|
+| Frontend | `localhost:5000/everflow/everflow-frontend:latest` | — |
+| Backend | `localhost:5000/everflow/everflow-backend:latest` | — |
+| Sandbox agent | `localhost:5000/everflow/everflow-sandbox-agent:latest` | — |
+| Sandbox guest | `localhost:5000/everflow/everflow-sandbox-guest:latest` | `registry:5000/everflow/everflow-sandbox-guest:latest` |
+| Upstream microsandbox | `localhost:5000/everflow/upstream-microsandbox:latest` | agent Dockerfile `MICRO_SANDBOX_BASE` |
+| Upstream searxng | `localhost:5000/everflow/upstream-searxng:latest` | compose `searxng` |
 
-Frontend is built with **empty** `VITE_API_URL` so the UI uses same-origin `/api` (nginx → backend). One prebuilt frontend works on any host.
+Frontend is built with **empty** `VITE_API_URL` so the UI uses same-origin `/api` (nginx → backend).
 
-After publishing, end users install with:
+After seeding, install with:
 
 ```bash
-./scripts/everflow-install.sh   # pulls GHCR images, no local compile
+./scripts/everflow install
 ```
 
-## Guest image only (legacy)
+## Guest image only (legacy wrapper)
 
 ```bash
 ./deploy/build-sandbox-guest.sh
-
-SANDBOX_GUEST_IMAGE=ghcr.io/limitless-rh/everflow-sandbox-guest:v1 PUSH=true ./deploy/build-sandbox-guest.sh
+ONLY=guest PUSH=true ./deploy/local-registry.sh build-push
 ```
 
-Then set:
-
-```bash
-SANDBOX_DEFAULT_IMAGE=ghcr.io/limitless-rh/everflow-sandbox-guest:latest
-```
-
-Microsandbox pulls OCI images into its cache (`MSB_HOME`). First provision may download once; later creates reuse the cache.
+Microsandbox pulls OCI images into its cache (`MSB_HOME`). First provision may download once from the **local** registry; later creates reuse the cache.
 
 Upgrade harness versions by rebuilding the guest image (optional build-args on the Dockerfile: `CLAUDE_CODE_VERSION`, `OPENCODE_PACKAGE`).
 

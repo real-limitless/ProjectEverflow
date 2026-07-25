@@ -83,7 +83,13 @@ class EverflowClient:
                     json=json_body,
                 )
         except httpx.HTTPError as exc:
-            raise EverflowApiError(f"HTTP error talking to Everflow API: {exc}") from exc
+            # Connect/read timeouts often surface with empty str(exc).
+            detail = str(exc).strip() or type(exc).__name__
+            raise EverflowApiError(
+                f"HTTP error talking to Everflow API: {detail} "
+                f"(url={self.base_url!r}; guest MCP expects reverse tunnel on "
+                f"127.0.0.1 — re-open Chat / opencode ensure if tunnel is down)"
+            ) from exc
 
         if res.status_code >= 400:
             detail: Any
@@ -304,6 +310,71 @@ class EverflowClient:
             "POST",
             f"/api/v1/projects/{self.project_id}/http-tools/{tool_id}/execute",
             json_body=payload,
+        )
+
+    # --- background jobs (detached sandbox processes) ---
+
+    async def list_jobs(self) -> list[dict[str, Any]]:
+        data = await self.request("GET", f"/api/v1/projects/{self.project_id}/jobs")
+        return data if isinstance(data, list) else []
+
+    async def create_job(
+        self,
+        *,
+        title: str,
+        command: str,
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"title": title, "command": command}
+        if cwd is not None:
+            body["cwd"] = cwd
+        return await self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/jobs",
+            json_body=body,
+        )
+
+    async def get_job_logs(self, job_id: str, *, tail: int = 200) -> dict[str, Any]:
+        return await self.request(
+            "GET",
+            f"/api/v1/projects/{self.project_id}/jobs/{job_id}/logs?tail={int(tail)}",
+        )
+
+    async def update_job(self, job_id: str, **fields: Any) -> dict[str, Any]:
+        return await self.request(
+            "PATCH",
+            f"/api/v1/projects/{self.project_id}/jobs/{job_id}",
+            json_body={k: v for k, v in fields.items() if v is not None},
+        )
+
+    async def start_job(self, job_id: str) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/jobs/{job_id}/start",
+        )
+
+    async def stop_job(self, job_id: str) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/jobs/{job_id}/stop",
+        )
+
+    async def kill_job(self, job_id: str) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/jobs/{job_id}/kill",
+        )
+
+    async def restart_job(self, job_id: str) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/jobs/{job_id}/restart",
+        )
+
+    async def delete_job(self, job_id: str) -> dict[str, Any]:
+        return await self.request(
+            "DELETE",
+            f"/api/v1/projects/{self.project_id}/jobs/{job_id}",
         )
 
 

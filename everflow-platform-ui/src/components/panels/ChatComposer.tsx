@@ -45,6 +45,11 @@ interface ChatComposerProps {
   modelOptions?: CatalogItem[]
   /** Full OpenCode catalog for browse (defaults to modelOptions) */
   allModelOptions?: CatalogItem[]
+  /**
+   * When false (live OpenCode path), never fall back to hardcoded demo models
+   * (Grok / GPT-4.1 / Claude). Empty catalog stays empty; harness splash handles failure.
+   */
+  allowDemoModelFallback?: boolean
   /** Pinned model ids shown first in the quick menu */
   pinnedModelIds?: string[]
   onBrowseModels?: () => void
@@ -59,6 +64,8 @@ interface ChatComposerProps {
 function toggle(list: string[], id: string) {
   return list.includes(id) ? list.filter((x) => x !== id) : [...list, id]
 }
+
+const EMPTY_MODEL_CATALOG: CatalogItem[] = []
 
 export function ChatComposer({
   draft,
@@ -77,6 +84,7 @@ export function ChatComposer({
   onAgentChange,
   modelOptions,
   allModelOptions,
+  allowDemoModelFallback = true,
   pinnedModelIds,
   onBrowseModels,
   mcpOptions,
@@ -96,11 +104,13 @@ export function ChatComposer({
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`
   }, [draft])
 
+  const demoFallback = allowDemoModelFallback ? CHAT_MODELS : EMPTY_MODEL_CATALOG
+
   const fullModels = allModelOptions?.length
     ? allModelOptions
     : modelOptions?.length
       ? modelOptions
-      : CHAT_MODELS
+      : demoFallback
 
   const modelList = useMemo(() => {
     const pin = pinnedModelIds || []
@@ -112,7 +122,7 @@ export function ChatComposer({
       model && !pinned.some((m) => m.id === model) && !rest.some((m) => m.id === model)
         ? byId.get(model) || { id: model, label: model, description: 'Selected' }
         : null
-    const base = modelOptions?.length ? modelOptions : CHAT_MODELS
+    const base = modelOptions?.length ? modelOptions : demoFallback
     if (!pin.length && !current) return base
     const merged: CatalogItem[] = []
     const seen = new Set<string>()
@@ -122,7 +132,7 @@ export function ChatComposer({
       merged.push(m)
     }
     return merged
-  }, [fullModels, model, modelOptions, pinnedModelIds])
+  }, [fullModels, model, modelOptions, pinnedModelIds, demoFallback])
 
   const mcpList = mcpOptions?.length ? mcpOptions : CHAT_MCPS
   const agentList = agentOptions?.length ? agentOptions : OPENCODE_AGENT_FALLBACKS

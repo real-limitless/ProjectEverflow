@@ -14,20 +14,28 @@
 #   ONLY=backend,frontend ./deploy/build-images.sh
 #   CONTAINER_ENGINE=podman ./deploy/build-images.sh
 #
-# Defaults match docker-compose.yml pull tags:
-#   ghcr.io/limitless-rh/everflow-*:latest
+# Defaults: local embedded registry (compose service `registry`).
+# Maintainers publishing to GHCR:
+#   EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
+#
+# Local seed (preferred for product):
+#   ./deploy/local-registry.sh seed
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
-REGISTRY="${EVERFLOW_REGISTRY:-ghcr.io/limitless-rh}"
+# Host-facing registry for docker push (compose publishes 127.0.0.1:5000)
+_DEFAULT_LOCAL_REG="localhost:${REGISTRY_HOST_PORT:-5000}/everflow"
+REGISTRY="${EVERFLOW_REGISTRY:-${_DEFAULT_LOCAL_REG}}"
 TAG="${EVERFLOW_IMAGE_TAG:-latest}"
 # Also tag guest as :dev for older docs / local defaults (set EXTRA_GUEST_TAG= to disable)
 EXTRA_GUEST_TAG="${EXTRA_GUEST_TAG:-dev}"
 PUSH="${PUSH:-false}"
 ONLY="${ONLY:-}"
 ENGINE="${CONTAINER_ENGINE:-}"
+# Agent host base (override after ./deploy/local-registry.sh mirror-upstream)
+MICRO_SANDBOX_BASE="${MICRO_SANDBOX_BASE:-ghcr.io/superradcompany/microsandbox:latest}"
 
 # Frontend: empty VITE_API_URL → same-origin /api (nginx proxy) for portable prebuilt images
 VITE_API_URL="${VITE_API_URL:-}"
@@ -99,11 +107,19 @@ build_one() {
   done
 
   if [[ "${PUSH}" == "true" || "${PUSH}" == "1" ]]; then
+    # Local HTTP registry (localhost:5000): Podman needs --tls-verify=false
+    local push_tls=()
+    if [[ "${EVERFLOW_PUSH_TLS_VERIFY:-}" == "false" || "${EVERFLOW_PUSH_TLS_VERIFY:-}" == "0" ]] \
+      || [[ "${image}" == localhost:* || "${image}" == 127.0.0.1:* ]]; then
+      if "${ENGINE}" push --help 2>&1 | grep -q -- '--tls-verify'; then
+        push_tls=(--tls-verify=false)
+      fi
+    fi
     echo "    Pushing ${image} …"
-    "${ENGINE}" push "${image}"
+    "${ENGINE}" push "${push_tls[@]+"${push_tls[@]}"}" "${image}"
     for t in "${extra_tags[@]+"${extra_tags[@]}"}"; do
       echo "    Pushing ${t} …"
-      "${ENGINE}" push "${t}"
+      "${ENGINE}" push "${push_tls[@]+"${push_tls[@]}"}" "${t}"
     done
     echo "    Pushed"
   fi
@@ -130,7 +146,8 @@ if want backend; then
 fi
 
 if want sandbox-agent; then
-  build_one everflow-sandbox-agent "${ROOT}/deploy/sandbox-agent.Dockerfile"
+  build_one everflow-sandbox-agent "${ROOT}/deploy/sandbox-agent.Dockerfile" \
+    --build-arg "MICRO_SANDBOX_BASE=${MICRO_SANDBOX_BASE}"
   BUILT+=("${REGISTRY}/everflow-sandbox-agent:${TAG}")
 fi
 
@@ -164,18 +181,35 @@ for img in "${BUILT[@]}"; do
   echo "  ${img}"
 done
 
+# msb inside sandbox-agent must use compose DNS hostname, not localhost
+_INT_GUEST="registry:${REGISTRY_HOST_PORT:-5000}/everflow/everflow-sandbox-guest:${TAG}"
+if [[ "${REGISTRY}" == localhost:* || "${REGISTRY}" == 127.0.0.1:* ]]; then
+  _INT_GUEST="registry:${REGISTRY_HOST_PORT:-5000}/everflow/everflow-sandbox-guest:${TAG}"
+elif [[ "${REGISTRY}" == registry:* ]]; then
+  _INT_GUEST="${REGISTRY}/everflow-sandbox-guest:${TAG}"
+else
+  _INT_GUEST="${REGISTRY}/everflow-sandbox-guest:${TAG}"
+fi
+
 cat <<EOF
 
-Install with prebuilt images:
-  ./scripts/everflow-install.sh
+Local registry (default):
+  ./deploy/local-registry.sh up
+  PUSH=true ./deploy/build-images.sh
+  # or all-in-one: ./deploy/local-registry.sh seed
 
-Or point compose at a custom registry/tag:
+Compose image refs (host engine):
   EVERFLOW_BACKEND_IMAGE=${REGISTRY}/everflow-backend:${TAG}
   EVERFLOW_FRONTEND_IMAGE=${REGISTRY}/everflow-frontend:${TAG}
   EVERFLOW_SANDBOX_AGENT_IMAGE=${REGISTRY}/everflow-sandbox-agent:${TAG}
-  SANDBOX_DEFAULT_IMAGE=${REGISTRY}/everflow-sandbox-guest:${TAG}
 
-Push to GHCR (requires registry login):
+Guest image for msb (inside agent — compose DNS):
+  SANDBOX_DEFAULT_IMAGE=${_INT_GUEST}
+
+Install stack:
+  ./scripts/everflow-install.sh
+
+Publish to GHCR (maintainers):
   ${ENGINE} login ghcr.io
-  PUSH=true ./deploy/build-images.sh
+  EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
 EOF

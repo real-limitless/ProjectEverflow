@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+# Everflow control plane — install, lifecycle, and first-run admin setup.
+#
+# Interactive menu (TTY):
+#   ./scripts/everflow
+#
+# Subcommands (scriptable):
+#   ./scripts/everflow install
+#   ./scripts/everflow status
+#   ./scripts/everflow setup-admin
+#   ./scripts/everflow uninstall [--volumes] [--env] [--yes]
+#   …
+#
+# Host: Docker or Podman + Compose. No host Python/Node required.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/everflow-common.sh
+source "${SCRIPT_DIR}/lib/everflow-common.sh"
+# shellcheck source=lib/everflow-env.sh
+source "${SCRIPT_DIR}/lib/everflow-env.sh"
+# shellcheck source=lib/everflow-setup.sh
+source "${SCRIPT_DIR}/lib/everflow-setup.sh"
+# shellcheck source=lib/everflow-stack.sh
+source "${SCRIPT_DIR}/lib/everflow-stack.sh"
+# shellcheck source=lib/everflow-tui.sh
+source "${SCRIPT_DIR}/lib/everflow-tui.sh"
+
+cd "${ROOT}"
+everflow_init_engine
+
+# Load URLs from existing .env without requiring install
+if [[ -f "${ROOT}/.env" ]]; then
+  _u="$(env_get FRONTEND_URL || true)"
+  _a="$(env_get PUBLIC_API_URL || true)"
+  [[ -n "${_u}" ]] && UI_URL="${_u}" && FRONTEND_URL="${_u}"
+  [[ -n "${_a}" ]] && API_URL="${_a}" && PUBLIC_API_URL="${_a}"
+  unset _u _a
+fi
+
+usage() {
+  cat <<'EOF'
+Everflow control plane
+
+Usage:
+  everflow                 Interactive menu (TTY) or this help (non-TTY)
+  everflow menu            Force interactive menu
+  everflow install         Ask → install registry → full stack
+  everflow registry …      Registry only (up|seed|status|export|import)
+  everflow status          Health, containers, registry, setup flag
+  everflow setup-admin     Create first platform admin + organization
+  everflow reset-password  Reset a user password (host operator recovery)
+  everflow start           Start containers
+  everflow stop            Stop containers
+  everflow restart         Restart containers
+  everflow upgrade         Full: reseed registry + recreate stack
+  everflow upgrade --stack-only
+                           Recreate stack only (keep registry images)
+  everflow logs [service]  Follow logs (all|registry|backend|frontend|sandbox-agent|searxng)
+  everflow uninstall [opts]
+  everflow reinstall [opts]
+  everflow help            Show this help
+
+Install is always phased:
+  1) ask (wizard or env)  2) install local registry + seed  3) full stack
+
+Install options (env):
+  BUILD_FROM_SOURCE=1      Seed registry from source, then start stack
+  INSTALL_MODE=ghcr        Seed registry by mirroring GHCR, then start
+  INSTALL_MODE=pull        Start stack (auto-seed registry if empty)
+  REGISTRY_SEED_MODE=…     build | ghcr | skip | auto (default auto)
+  VERBOSE=1                Stream compose output
+  CONTAINER_ENGINE=podman  Force engine
+  SKIP_BOOTSTRAP=1         Do not prompt for first admin after install
+  SKIP_REGISTRY_SEED=1     Skip seed (registry up only)
+  EVERFLOW_ADMIN_EMAIL / EVERFLOW_ADMIN_PASSWORD
+  EVERFLOW_ORG_NAME / EVERFLOW_ORG_SLUG
+  COMPOSE_FILE / COMPOSE_UP_TIMEOUT_SEC
+
+Registry CLI:
+  everflow registry up
+  everflow registry seed [build|ghcr]
+  everflow registry status
+  everflow registry export /path/images.tar
+  everflow registry import /path/images.tar
+
+
+setup-admin (non-interactive):
+  EVERFLOW_ADMIN_EMAIL=admin@example.com
+  EVERFLOW_ADMIN_PASSWORD='…'
+  # or: --password-env VAR_NAME
+  EVERFLOW_ORG_NAME='My Organization'
+  EVERFLOW_ORG_SLUG=my-organization
+
+reset-password (non-interactive):
+  EVERFLOW_RESET_EMAIL=admin@example.com
+  EVERFLOW_RESET_PASSWORD='…'
+  # or: --email … --password-env VAR_NAME
+
+uninstall / reinstall options:
+  --volumes   Also delete data volumes (DB, sandboxes, workspaces)
+  --env       Also delete .env
+  --yes       Skip confirmation prompts (still requires --volumes/--env flags)
+
+Examples:
+  ./scripts/everflow
+  ./scripts/everflow install
+  BUILD_FROM_SOURCE=1 VERBOSE=1 ./scripts/everflow install
+  INSTALL_MODE=ghcr ./scripts/everflow install
+  REGISTRY_SEED_MODE=skip ./scripts/everflow install   # registry already seeded
+  ./scripts/everflow registry seed build
+  ./scripts/everflow upgrade                 # reseed registry + recreate stack
+  ./scripts/everflow upgrade full build      # reseed from source, then stack
+  ./scripts/everflow upgrade --stack-only    # stack only (no registry reseed)
+  EVERFLOW_ADMIN_EMAIL=a@b.co EVERFLOW_ADMIN_PASSWORD=secretpass \
+    ./scripts/everflow setup-admin
+  ./scripts/everflow uninstall --volumes
+EOF
+}
+
+parse_uninstall_flags() {
+  UNINSTALL_VOLUMES=0
+  UNINSTALL_ENV=0
+  UNINSTALL_YES=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --volumes | -v) UNINSTALL_VOLUMES=1 ;;
+      --env) UNINSTALL_ENV=1 ;;
+      --yes | -y) UNINSTALL_YES=1 ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "  unknown option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+    shift
+  done
+}
+
+parse_setup_admin_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --email)
+        EVERFLOW_ADMIN_EMAIL="${2:-}"
+        shift
+        ;;
+      --password)
+        # Discouraged (visible in ps); prefer env or --password-env
+        EVERFLOW_ADMIN_PASSWORD="${2:-}"
+        shift
+        ;;
+      --password-env)
+        EVERFLOW_ADMIN_PASSWORD_ENV="${2:-}"
+        shift
+        ;;
+      --org-name)
+        EVERFLOW_ORG_NAME="${2:-}"
+        shift
+        ;;
+      --org-slug)
+        EVERFLOW_ORG_SLUG="${2:-}"
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "  unknown option: $1" >&2
+        exit 1
+        ;;
+    esac
+    shift
+  done
+}
+
+parse_reset_password_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --email)
+        EVERFLOW_RESET_EMAIL="${2:-}"
+        shift
+        ;;
+      --password)
+        EVERFLOW_RESET_PASSWORD="${2:-}"
+        shift
+        ;;
+      --password-env)
+        EVERFLOW_RESET_PASSWORD_ENV="${2:-}"
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "  unknown option: $1" >&2
+        exit 1
+        ;;
+    esac
+    shift
+  done
+}
+
+main() {
+  local cmd="${1:-}"
+  if [[ $# -gt 0 ]]; then
+    shift
+  fi
+
+  case "${cmd}" in
+    "" | menu)
+      if ! is_tty; then
+        if [[ "${cmd}" == "menu" ]]; then
+          echo "  menu requires an interactive TTY" >&2
+          exit 1
+        fi
+        usage
+        exit 0
+      fi
+      tui_main_menu
+      ;;
+    install)
+      # Optional flags: --no-admin --yes-admin
+      local offer=auto
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --no-admin) offer=no ;;
+          --yes-admin) offer=yes ;;
+          -h | --help) usage; exit 0 ;;
+          *) echo "  unknown option: $1" >&2; exit 1 ;;
+        esac
+        shift
+      done
+      # Interactive TTY without explicit seed/mode: run ask wizard first
+      if is_tty \
+        && [[ "${EVERFLOW_NONINTERACTIVE:-0}" != "1" ]] \
+        && [[ -z "${REGISTRY_SEED_MODE:-}" ]] \
+        && [[ "${BUILD_FROM_SOURCE:-0}" != "1" && "${BUILD_FROM_SOURCE:-}" != "true" ]] \
+        && [[ "${INSTALL_MODE:-pull}" != "ghcr" && "${INSTALL_MODE:-pull}" != "build" ]]; then
+        tui_install_wizard
+      else
+        cmd_install "${offer}"
+      fi
+      ;;
+    registry | reg)
+      cmd_registry "$@"
+      ;;
+    status) cmd_status ;;
+    setup-admin | bootstrap | setup)
+      parse_setup_admin_args "$@"
+      cmd_setup_admin
+      ;;
+    reset-password | reset-pass | passwd)
+      parse_reset_password_args "$@"
+      cmd_reset_password
+      ;;
+    start) cmd_start ;;
+    stop) cmd_stop ;;
+    restart) cmd_restart ;;
+    upgrade | update) cmd_upgrade "$@" ;;
+    logs)
+      local svc="${1:-all}"
+      cmd_logs "${svc}"
+      ;;
+    uninstall | down)
+      parse_uninstall_flags "$@"
+      cmd_uninstall "${UNINSTALL_VOLUMES}" "${UNINSTALL_ENV}" "${UNINSTALL_YES}"
+      ;;
+    reinstall)
+      parse_uninstall_flags "$@"
+      cmd_reinstall "${UNINSTALL_VOLUMES}" "${UNINSTALL_ENV}" "${UNINSTALL_YES}"
+      ;;
+    help | -h | --help) usage ;;
+    *)
+      echo "  unknown command: ${cmd}" >&2
+      echo "" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

@@ -878,6 +878,13 @@ export async function readWorktreeIndex(projectId: string): Promise<WorktreeInde
     const { ApiError } = await import('@/lib/api')
     if (e instanceof ApiError && shouldBackoffWorktreeIndex(e.status)) {
       worktreeIndexMissUntil.set(projectId, Date.now() + WORKTREE_INDEX_MISS_BACKOFF_MS)
+      // Seed empty index on first 404 so DevTools and later polls stop 404-spamming.
+      // Best-effort; concurrent seeds are fine (same JSON).
+      if (e.status === 404) {
+        void writeWorktreeIndex(projectId, { entries: [] }).catch(() => {
+          /* sandbox may be transitional */
+        })
+      }
     }
     return { entries: [] }
   }

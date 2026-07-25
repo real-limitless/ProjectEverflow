@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.core.deps import get_project_for_member
+from app.core.principal import Principal, get_principal, get_project_for_principal
 from app.db.session import get_async_session
 from app.models.project import Project
 from app.services.sandbox import mark_sandbox_missing
@@ -94,10 +94,12 @@ def _job_read(data: dict[str, Any]) -> JobRead:
 
 @router.get("/projects/{project_id}/jobs", response_model=list[JobRead])
 async def list_project_jobs(
-    project: Project = Depends(get_project_for_member),
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_settings),
 ) -> list[JobRead]:
+    principal.require_scope("jobs:read")
     name = _require_running_sandbox(project)
     client = SandboxAgentClient(settings)
     try:
@@ -120,10 +122,12 @@ async def list_project_jobs(
 )
 async def create_project_job(
     body: JobCreateBody,
-    project: Project = Depends(get_project_for_member),
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_settings),
 ) -> JobRead:
+    principal.require_scope("jobs:rw")
     name = _require_running_sandbox(project)
     client = SandboxAgentClient(settings)
     try:
@@ -151,10 +155,12 @@ async def create_project_job(
 async def get_project_job_logs(
     job_id: str,
     tail: int = Query(default=200, ge=1, le=5000),
-    project: Project = Depends(get_project_for_member),
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_settings),
 ) -> JobLogsRead:
+    principal.require_scope("jobs:read")
     name = _require_running_sandbox(project)
     client = SandboxAgentClient(settings)
     try:
@@ -225,10 +231,12 @@ async def _job_action(
 )
 async def kill_project_job(
     job_id: str,
-    project: Project = Depends(get_project_for_member),
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_settings),
 ) -> JobRead:
+    principal.require_scope("jobs:rw")
     return await _job_action(
         project=project,
         session=session,
@@ -244,10 +252,12 @@ async def kill_project_job(
 )
 async def stop_project_job(
     job_id: str,
-    project: Project = Depends(get_project_for_member),
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_settings),
 ) -> JobRead:
+    principal.require_scope("jobs:rw")
     return await _job_action(
         project=project,
         session=session,
@@ -263,10 +273,12 @@ async def stop_project_job(
 )
 async def start_project_job(
     job_id: str,
-    project: Project = Depends(get_project_for_member),
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_settings),
 ) -> JobRead:
+    principal.require_scope("jobs:rw")
     return await _job_action(
         project=project,
         session=session,
@@ -282,10 +294,12 @@ async def start_project_job(
 )
 async def restart_project_job(
     job_id: str,
-    project: Project = Depends(get_project_for_member),
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_settings),
 ) -> JobRead:
+    principal.require_scope("jobs:rw")
     return await _job_action(
         project=project,
         session=session,
@@ -302,10 +316,12 @@ async def restart_project_job(
 async def update_project_job(
     job_id: str,
     body: JobUpdateBody,
-    project: Project = Depends(get_project_for_member),
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_settings),
 ) -> JobRead:
+    principal.require_scope("jobs:rw")
     if body.title is None and body.command is None and body.cwd is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -341,10 +357,12 @@ async def update_project_job(
 )
 async def delete_project_job(
     job_id: str,
-    project: Project = Depends(get_project_for_member),
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
     settings: Settings = Depends(get_settings),
 ) -> JobRead:
+    principal.require_scope("jobs:rw")
     return await _job_action(
         project=project,
         session=session,

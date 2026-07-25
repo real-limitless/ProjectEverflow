@@ -12,16 +12,24 @@ import {
 import { getTemplate } from '@/data/projectTemplates'
 import {
   PROJECTS,
+  SEED_PROJECT_IDS,
   addProjectToCatalog,
   createBlankProject,
   getProject,
   isSeedProjectId,
+  listCatalogProjectRefs,
   listUserCreatedProjects,
   mergeUserProjects,
   removeProjectFromCatalog,
   slugifyProjectName,
   updateProjectInCatalog,
 } from '@/data/projects'
+import {
+  filterOpenIdsAfterPurge,
+  resolveCurrentAfterPurge,
+  selectStaleProjectIds,
+} from '@/lib/projectCatalogSync'
+import { clearPinnedModels } from '@/lib/pinnedModels'
 import type { Project } from '@/types/project'
 import type { WorkspaceLayoutMode } from '@/types/project'
 import {
@@ -85,6 +93,7 @@ import {
   createProject as apiCreateProject,
   deleteProject as apiDeleteProject,
   isDemoMode,
+  listProjects as apiListProjects,
   type ApiProject,
 } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
@@ -170,15 +179,38 @@ interface PlaygroundState {
   closeProjectTab: (id: string) => void
   /** Permanently delete a project (API + local catalog). Returns false if blocked/failed. */
   deleteProject: (id: string) => Promise<boolean>
+  /**
+   * Drop a project from local catalog + UI state without calling the API.
+   * Used after successful API delete and when reconciling stale localStorage.
+   */
+  purgeLocalProject: (id: string) => void
+  /**
+   * After a successful org project list: ingest API rows and purge catalog/open
+   * tabs that are not in that list. Does not prune on network failure (caller).
+   */
+  reconcileWithApiProjects: (apiProjects: ApiProject[]) => { removedIds: string[] }
+  /**
+   * Fetch org projects and reconcile. No-op in demo mode. On fetch failure,
+   * leaves local cache intact and returns ok: false.
+   */
+  syncProjectsFromApi: (
+    orgId: string,
+  ) => Promise<{ ok: boolean; removedIds: string[]; error?: string }>
+  /**
+   * Self-heal: drop a single project missing from the API (e.g. hard 404).
+   * Does not call the API.
+   */
+  discardMissingProject: (id: string) => void
   setTerminalPrefill: (cmd: string | null) => void
   clearTerminalPrefill: () => void
   createProject: (
     draft: import('@/data/createProjectDraft').CreateProjectDraft | string,
   ) => Promise<string | null>
-  /** Hydrate an API project into the local catalog and open it */
+  /** Hydrate an API project into the local catalog (does not auto-open) */
   ingestApiProject: (
     apiProject: ApiProject,
     seed?: Partial<Project>,
+    opts?: { persist?: boolean },
   ) => void
   patchProjectSandbox: (
     projectId: string,
@@ -192,6 +224,12 @@ interface PlaygroundState {
   ) => void
   /** Mark sandbox as session-verified (or clear) for workbench gating. */
   setSandboxReady: (projectId: string, ready: boolean) => void
+  /**
+   * Last successful reconcile key `userId:orgId` (session memory, not persisted).
+   * Prevents re-fetch spam; clears when user/org changes.
+   */
+  projectsSyncedKey: string | null
+  projectsSyncError: string | null
   resetLayout: () => void
 
   activateTab: (groupId: string, panelId: PanelKey) => void
@@ -411,12 +449,17 @@ function buildDefaultLayout(
   }
 }
 
-/** Drop pure offline demo seeds from restored open tabs when not in demo mode. */
+/**
+ * Drop pure offline demo seeds (and non-API leftovers) from restored open tabs
+ * when not in demo mode. Full stale purge still happens via syncProjectsFromApi.
+ */
 function filterOpenProjectIds(ids: string[]): string[] {
   return ids.filter((id) => {
     if (!PROJECTS[id]) return false
     if (isDemoMode()) return true
     if (isSeedProjectId(id) && !PROJECTS[id].fromApi) return false
+    // Soft gate: only restore tabs for API-backed projects until reconcile runs
+    if (!PROJECTS[id].fromApi) return false
     return true
   })
 }
@@ -543,6 +586,12 @@ function createInitial() {
 
 const initial = createInitial()
 
+/** Coalesce concurrent syncProjectsFromApi calls for the same org. */
+let projectsSyncInflight: {
+  orgId: string
+  promise: Promise<{ ok: boolean; removedIds: string[]; error?: string }>
+} | null = null
+
 export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   ...initial,
   projectChats: initial.projectChats || {},
@@ -562,6 +611,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   activeRepoByProject: initial.activeRepoByProject || {},
   repoViewPathByProject: initial.repoViewPathByProject || {},
   sandboxReadyByProject: initial.sandboxReadyByProject || {},
+  projectsSyncedKey: null,
+  projectsSyncError: null,
 
   setTerminalPrefill: (cmd) => set({ terminalPrefill: cmd }),
   clearTerminalPrefill: () => set({ terminalPrefill: null }),
@@ -841,7 +892,16 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       }
     }
 
+    const name = project.name
+    get().purgeLocalProject(id)
+    pushToast('Project deleted', { description: name, kind: 'success' })
+    return true
+  },
+
+  purgeLocalProject: (id) => {
+    if (!id) return
     removeProjectFromCatalog(id)
+    clearPinnedModels(id)
 
     const s = get()
     const projectLayouts = { ...s.projectLayouts }
@@ -856,6 +916,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     delete sandboxReadyByProject[id]
 
     const closeSettings = s.projectSettingsProjectId === id
+    const wasOpen = s.openProjectIds.includes(id)
+
     set({
       projectLayouts,
       projectChats,
@@ -868,17 +930,153 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         : {}),
     })
 
-    if (get().openProjectIds.includes(id)) {
+    if (wasOpen) {
       get().closeProjectTab(id)
     } else {
       get().persist()
     }
-
-    pushToast('Project deleted', { description: project.name, kind: 'success' })
-    return true
   },
 
-  ingestApiProject: (apiProject, seed) => {
+  reconcileWithApiProjects: (apiProjects) => {
+    if (isDemoMode()) return { removedIds: [] }
+
+    const validIds = new Set(apiProjects.map((p) => p.id))
+
+    // Ingest without per-row persist; one write after purge.
+    for (const ap of apiProjects) {
+      get().ingestApiProject(ap, undefined, { persist: false })
+    }
+
+    const stale = selectStaleProjectIds(listCatalogProjectRefs(), validIds, {
+      seedIds: SEED_PROJECT_IDS,
+      demoMode: false,
+    })
+
+    // Also drop layout-only ghosts not present in API
+    const s0 = get()
+    const layoutOnlyStale = Object.keys(s0.projectLayouts).filter(
+      (id) => !validIds.has(id) && !isSeedProjectId(id),
+    )
+    const toRemove = [...new Set([...stale, ...layoutOnlyStale])]
+
+    if (toRemove.length === 0) {
+      get().persist()
+      return { removedIds: [] }
+    }
+
+    for (const id of toRemove) {
+      removeProjectFromCatalog(id)
+      clearPinnedModels(id)
+    }
+
+    const s = get()
+    const removedSet = new Set(toRemove)
+    const projectLayouts = { ...s.projectLayouts }
+    const projectChats = { ...s.projectChats }
+    const activeRepoByProject = { ...s.activeRepoByProject }
+    const repoViewPathByProject = { ...s.repoViewPathByProject }
+    const sandboxReadyByProject = { ...s.sandboxReadyByProject }
+    for (const id of toRemove) {
+      delete projectLayouts[id]
+      delete projectChats[id]
+      delete activeRepoByProject[id]
+      delete repoViewPathByProject[id]
+      delete sandboxReadyByProject[id]
+    }
+
+    const openProjectIds = filterOpenIdsAfterPurge(
+      s.openProjectIds,
+      removedSet,
+      (id) => Boolean(PROJECTS[id]),
+    )
+    const prevCurrent = s.currentProjectId
+    const nextCurrent = resolveCurrentAfterPurge(prevCurrent, openProjectIds)
+    const closeSettings =
+      s.projectSettingsProjectId != null && removedSet.has(s.projectSettingsProjectId)
+    const currentWasRemoved = Boolean(prevCurrent && removedSet.has(prevCurrent))
+
+    // Clear current before switchProject so it does not re-save a purged layout.
+    set({
+      projectLayouts,
+      projectChats,
+      activeRepoByProject,
+      repoViewPathByProject,
+      sandboxReadyByProject,
+      openProjectIds,
+      catalogVersion: s.catalogVersion + 1,
+      ...(currentWasRemoved || !nextCurrent
+        ? { currentProjectId: null, layout: emptyGroup('g-empty') }
+        : {}),
+      ...(closeSettings
+        ? { projectSettingsOpen: false, projectSettingsProjectId: null }
+        : {}),
+    })
+
+    if (nextCurrent && (currentWasRemoved || get().currentProjectId !== nextCurrent)) {
+      get().switchProject(nextCurrent)
+    } else {
+      get().persist()
+    }
+
+    if (toRemove.length > 0) {
+      pushToast(
+        toRemove.length === 1
+          ? 'Removed a project that is no longer available'
+          : `Removed ${toRemove.length} projects that are no longer available`,
+        { kind: 'info' },
+      )
+    }
+
+    return { removedIds: toRemove }
+  },
+
+  syncProjectsFromApi: async (orgId) => {
+    if (isDemoMode() || !orgId) {
+      return { ok: true, removedIds: [] }
+    }
+    if (projectsSyncInflight?.orgId === orgId) {
+      return projectsSyncInflight.promise
+    }
+    const promise = (async () => {
+      try {
+        const projects = await apiListProjects(orgId)
+        const { removedIds } = get().reconcileWithApiProjects(projects)
+        const userId = useAuthStore.getState().user?.id || ''
+        set({
+          projectsSyncedKey: userId ? `${userId}:${orgId}` : orgId,
+          projectsSyncError: null,
+        })
+        return { ok: true, removedIds }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Failed to load projects'
+        set({ projectsSyncError: msg })
+        // Do not prune on failure — keep local cache
+        return { ok: false, removedIds: [], error: msg }
+      } finally {
+        if (projectsSyncInflight?.orgId === orgId) {
+          projectsSyncInflight = null
+        }
+      }
+    })()
+    projectsSyncInflight = { orgId, promise }
+    return promise
+  },
+
+  discardMissingProject: (id) => {
+    if (!id || isDemoMode()) return
+    if (isSeedProjectId(id) && !getProject(id)?.fromApi) return
+    const p = getProject(id)
+    if (!p && !get().projectLayouts[id] && !get().openProjectIds.includes(id)) {
+      return
+    }
+    get().purgeLocalProject(id)
+    pushToast('Project is no longer available', {
+      description: p?.name || id,
+      kind: 'warning',
+    })
+  },
+
+  ingestApiProject: (apiProject, seed, opts) => {
     const existing = getProject(apiProject.id)
     const project: Project = {
       id: apiProject.id,
@@ -982,7 +1180,9 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       sandboxReadyByProject[project.id] = false
     }
     set({ catalogVersion: get().catalogVersion + 1, sandboxReadyByProject })
-    get().persist()
+    if (opts?.persist !== false) {
+      get().persist()
+    }
   },
 
   patchProjectSandbox: (projectId, patch) => {
