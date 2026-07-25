@@ -33,7 +33,7 @@ Agent harness install runs **in the background** only when tools are missing fro
 export SANDBOX_DEFAULT_IMAGE=registry:5000/everflow/everflow-sandbox-guest:latest
 ```
 
-The guest image includes Node 22, `@anthropic-ai/claude-code`, and OpenCode CLI, plus `/etc/everflow/prebaked`. Bootstrap then only writes workspace markers.
+The guest image is **Fedora 44** with Node 22, `@anthropic-ai/claude-code`, OpenCode CLI, Playwright/Chromium, and `/etc/everflow/prebaked`. Bootstrap then only writes workspace markers.
 
 ### HTTP local registry (msb insecure)
 

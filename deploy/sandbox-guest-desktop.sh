@@ -23,7 +23,15 @@ LOG_DIR="${EF_DESKTOP_LOG_DIR:-/tmp/everflow-desktop}"
 XSOCK="/tmp/.X11-unix/X${DISPLAY_NUM}"
 # XFCE / apps need a writable HOME (microsandbox guests are often root).
 export HOME="${HOME:-/root}"
-mkdir -p "$LOG_DIR" "$HOME"
+# Modern GTK/XFCE components expect XDG runtime + config dirs (missing on bare microVMs).
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/runtime-everflow}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
+export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-XFCE}"
+export DESKTOP_SESSION="${DESKTOP_SESSION:-xfce}"
+mkdir -p "$LOG_DIR" "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
+mkdir -p -m 700 "$XDG_RUNTIME_DIR"
 
 _parse_wh() {
   # "1280x800x24" or "1280x800" -> sets _W _H
@@ -107,6 +115,58 @@ _wm_alive() {
   _alive xfce4-session || _alive xfwm4 || _alive openbox || _alive fluxbox
 }
 
+_desktop_core_alive() {
+  # Full XFCE chrome: window manager + panel + desktop background.
+  _alive xfwm4 && _alive xfce4-panel && _alive xfdesktop
+}
+
+_ensure_dbus_session() {
+  # startxfce4 via dbus-launch sets this for its tree; when we launch clients
+  # ourselves we still need a session bus for xfconf / panel / settings.
+  if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    return 0
+  fi
+  if command -v dbus-launch >/dev/null 2>&1; then
+    # shellcheck disable=SC2046
+    eval $(dbus-launch --sh-syntax)
+    export DBUS_SESSION_BUS_ADDRESS DBUS_SESSION_BUS_PID
+  fi
+}
+
+_reset_bad_display_config() {
+  # xfsettingsd aborts with "Stored Xfconf properties disable all outputs" when a
+  # previous session saved Xvfb/RANDR state that marks every output inactive.
+  # Safe to drop; settings re-probe the live display.
+  local displays_xml="${XDG_CONFIG_HOME}/xfce4/xfconf/xfce-perchannel-xml/displays.xml"
+  if [[ -f "$displays_xml" ]]; then
+    rm -f "$displays_xml" 2>/dev/null || true
+  fi
+}
+
+_start_xfce_clients() {
+  # Failsafe session on Fedora/microVMs often only brings up xfwm4 (missing
+  # xfsettingsd package, polkit noise, or session restore). Always ensure the
+  # core chrome is running so background + panel buttons appear.
+  _ensure_dbus_session
+  _reset_bad_display_config
+  if ! _alive xfwm4 && command -v xfwm4 >/dev/null 2>&1; then
+    _daemon "$LOG_DIR/xfwm4.log" xfwm4
+  fi
+  if ! _alive xfsettingsd && command -v xfsettingsd >/dev/null 2>&1; then
+    _daemon "$LOG_DIR/xfsettingsd.log" xfsettingsd
+    sleep 0.2
+  fi
+  if ! _alive xfce4-panel && command -v xfce4-panel >/dev/null 2>&1; then
+    _daemon "$LOG_DIR/panel.log" xfce4-panel
+  fi
+  if ! _alive xfdesktop && command -v xfdesktop >/dev/null 2>&1; then
+    _daemon "$LOG_DIR/xfdesktop.log" xfdesktop
+  fi
+  if ! _alive Thunar && command -v Thunar >/dev/null 2>&1; then
+    _daemon "$LOG_DIR/thunar.log" Thunar --daemon
+  fi
+}
+
 _stack_healthy() {
   [[ -S "$XSOCK" ]] && _port_open "$VNC_PORT" && _port_open "$NOVNC_PORT"
 }
@@ -164,15 +224,69 @@ _stop_stack() {
   _clean_x_files
 }
 
+_disable_polkit_agent() {
+  # MicroVMs have no systemd polkitd. xfce-polkit then only shows an error dialog.
+  # Must work for *stale* guests too: the agent reinstalls this script on ensure,
+  # but cannot rebuild the rootfs — so disable every common autostart path and
+  # kill a running agent. Prefer full Hidden=true desktop entries (XFCE ignores
+  # stubs that lack Type=Application on some versions).
+  local stub
+  stub=$(printf '%s\n' \
+    '[Desktop Entry]' \
+    'Type=Application' \
+    'Name=XFCE PolKit' \
+    'Exec=/bin/true' \
+    'Hidden=true' \
+    'NoDisplay=true' \
+    'X-GNOME-Autostart-enabled=false')
+  mkdir -p /etc/xdg/autostart "${XDG_CONFIG_HOME}/autostart" 2>/dev/null || true
+  local d f
+  for d in /etc/xdg/autostart /usr/etc/xdg/autostart /usr/share/xdg/autostart \
+           "${XDG_CONFIG_HOME}/autostart"; do
+    [[ -d "$d" ]] || continue
+    for f in "$d"/xfce-polkit.desktop "$d"/*polkit*.desktop; do
+      [[ -e "$f" ]] || continue
+      printf '%s\n' "$stub" >"$f" 2>/dev/null || true
+    done
+  done
+  # Neutralize binary if present (best-effort; may be on read-only layer).
+  if [[ -x /usr/libexec/xfce-polkit ]]; then
+    if ! mount | grep -q ' on /usr '; then
+      printf '%s\n' '#!/bin/sh' 'exit 0' >/usr/libexec/xfce-polkit 2>/dev/null \
+        && chmod +x /usr/libexec/xfce-polkit 2>/dev/null || true
+    fi
+  fi
+  # Kill by exact comm only (avoid pkill -f matching this script's argv).
+  pkill -x xfce-polkit 2>/dev/null || true
+}
+
 _start_session() {
   # Prefer a real XFCE desktop; fall back to a minimal WM if packages are missing
   # (e.g. stale guest image that only received this script via agent install).
+  _disable_polkit_agent
+
+  _ensure_dbus_session
+
   if command -v startxfce4 >/dev/null 2>&1; then
-    if command -v dbus-launch >/dev/null 2>&1; then
+    if command -v dbus-launch >/dev/null 2>&1 && [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
       _daemon "$LOG_DIR/wm.log" dbus-launch --exit-with-session startxfce4
     else
+      # Reuse existing session bus so we can start missing clients in the same env.
       _daemon "$LOG_DIR/wm.log" startxfce4
     fi
+    # Give xfce4-session a moment, then ensure panel/desktop/settings are up.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      if _alive xfce4-session || _alive xfwm4; then
+        break
+      fi
+      sleep 0.15
+    done
+    _start_xfce_clients
+    return
+  fi
+  # No startxfce4 — launch core clients directly.
+  if command -v xfwm4 >/dev/null 2>&1; then
+    _start_xfce_clients
     return
   fi
   if command -v openbox >/dev/null 2>&1; then
@@ -246,10 +360,21 @@ if [[ ! -S "$XSOCK" ]] || ! _alive Xvfb; then
   _set_fb_size "$_W" "$_H" || true
 fi
 
-if ! _wm_alive; then
-  _start_session
+if ! _wm_alive || ! _desktop_core_alive; then
+  if ! _wm_alive; then
+    _start_session
+  else
+    # Session partially up (e.g. only xfwm4) — finish chrome without restart.
+    _start_xfce_clients
+  fi
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     _wm_alive && break
+    sleep 0.2
+  done
+  # Panel/desktop can lag a beat behind the WM.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    _desktop_core_alive && break
+    _start_xfce_clients
     sleep 0.2
   done
   if ! _wm_alive; then
@@ -257,6 +382,10 @@ if ! _wm_alive; then
     tail -n 40 "$LOG_DIR/wm.log" >&2 || true
     # Continue — VNC may still be useful for debugging a blank display
   else
+    if ! _desktop_core_alive; then
+      echo "everflow-desktop: panel/desktop incomplete (check $LOG_DIR/panel.log $LOG_DIR/xfdesktop.log)" >&2
+      tail -n 20 "$LOG_DIR/panel.log" "$LOG_DIR/xfdesktop.log" "$LOG_DIR/xfsettingsd.log" >&2 || true
+    fi
     _launch_terminal
   fi
 fi

@@ -60,6 +60,40 @@ if [ -f /etc/everflow/prebaked ]; then
   echo "prebaked marker present but some harnesses missing; installing remainder"
 fi
 
+install_node_tarball() {
+  # Official Node linux binary — works on Fedora/RHEL and as a generic fallback.
+  # Prefers major 22 to match the prebaked guest image.
+  if ! command -v curl >/dev/null 2>&1; then
+    return 1
+  fi
+  arch="$(uname -m 2>/dev/null || echo x86_64)"
+  case "$arch" in
+    x86_64) node_arch=x64 ;;
+    aarch64|arm64) node_arch=arm64 ;;
+    *) return 1 ;;
+  esac
+  ver="$(curl -fsSL https://nodejs.org/dist/index.json 2>/dev/null \
+    | python3 -c "import json,sys
+try:
+  data=json.load(sys.stdin)
+  v=next(x['version'] for x in data if x['version'].startswith('v22.'))
+  print(v.lstrip('v'))
+except Exception:
+  raise SystemExit(1)
+" 2>/dev/null || true)"
+  if [ -z "$ver" ]; then
+    return 1
+  fi
+  tmp="/tmp/node-v${ver}-linux-${node_arch}.tar.xz"
+  curl -fsSL "https://nodejs.org/dist/v${ver}/node-v${ver}-linux-${node_arch}.tar.xz" -o "$tmp" \
+    || return 1
+  tar -xJf "$tmp" -C /usr/local --strip-components=1 \
+    || tar -xJf "$tmp" -C "$BIN_DIR" --strip-components=1 \
+    || return 1
+  rm -f "$tmp"
+  command -v node >/dev/null 2>&1
+}
+
 install_node_if_needed() {
   if command -v node >/dev/null 2>&1; then
     return 0
@@ -70,6 +104,16 @@ install_node_if_needed() {
     apt-get install -y -qq curl ca-certificates gnupg
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y -qq nodejs
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y -q curl ca-certificates tar xz 2>/dev/null || true
+    # Prefer official tarball (matches guest image); fall back to distro nodejs.
+    install_node_tarball \
+      || dnf install -y -q nodejs npm 2>/dev/null \
+      || true
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache nodejs npm curl 2>/dev/null || true
+  else
+    install_node_tarball || true
   fi
 }
 
@@ -150,6 +194,10 @@ install_db_postgres() {
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -qq
       apt-get install -y -qq postgresql-client || true
+    elif command -v dnf >/dev/null 2>&1; then
+      dnf install -y -q postgresql 2>/dev/null || true
+    elif command -v apk >/dev/null 2>&1; then
+      apk add --no-cache postgresql-client 2>/dev/null || true
     fi
   fi
   if [ ! -f "$MARKER_DIR/database.json" ]; then

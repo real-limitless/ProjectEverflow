@@ -6,7 +6,7 @@
 | `build-images.sh` | Build/push **all** Everflow images (frontend, backend, sandbox-agent, guest) |
 | `build-sandbox-guest.sh` | Thin wrapper: guest image only (`ONLY=guest`) |
 | `sandbox-agent.Dockerfile` | **Host** control plane: microsandbox runtime + Everflow sandbox-agent API |
-| `sandbox-guest.Dockerfile` | **Guest** microVM image for projects (Node + agent harnesses prebaked) |
+| `sandbox-guest.Dockerfile` | **Guest** microVM image for projects (Fedora 44 + Node + agent harnesses prebaked) |
 | `backend.Dockerfile` / `frontend*.Dockerfile` | Platform API and UI |
 
 ## Embedded local registry (product default)
@@ -141,7 +141,7 @@ Microsandbox pulls OCI images into its cache (`MSB_HOME`). First provision may d
 
 Upgrade harness versions by rebuilding the guest image (optional build-args on the Dockerfile: `CLAUDE_CODE_VERSION`, `OPENCODE_PACKAGE`, `PLAYWRIGHT_MCP_VERSION`).
 
-The guest image prebakes **Chromium + `@playwright/mcp`** and the `everflow-playwright-mcp` wrapper (`PLAYWRIGHT_BROWSERS_PATH=/opt/everflow-browsers`). Marketplace **Browser (Playwright)** is opt-in for OpenCode; headless is default, headed uses the Desktop/noVNC stack. Rebuild the guest after changing browser tooling.
+The guest image is **Fedora 44** (`fedora:44`) with Node 22 (official linux tarball), Python 3 venv for `everflow-mcp`, and prebaked **Chromium + `@playwright/mcp`** plus the `everflow-playwright-mcp` wrapper (`PLAYWRIGHT_BROWSERS_PATH=/opt/everflow-browsers`). Playwright system libraries are installed via `dnf` (upstream `install-deps` is Debian/Ubuntu-only). Marketplace **Browser (Playwright)** is opt-in for OpenCode; headless is default, headed uses the Desktop/noVNC stack. Rebuild the guest after changing browser tooling.
 
 ## Live Preview (wildcard subdomains)
 
