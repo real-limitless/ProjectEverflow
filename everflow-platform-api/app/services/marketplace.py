@@ -113,6 +113,50 @@ async def resolve_skill_content(spec: dict[str, Any]) -> str:
     raise MarketplaceError("Skill install missing content/contentFile/contentUrl")
 
 
+# Process-local content cache (kind/id → text). Avoids re-fetching ECC raw URLs on every detail open.
+_CONTENT_CACHE: dict[tuple[str, str], str] = {}
+
+
+def public_item_fields(item: dict[str, Any]) -> dict[str, Any]:
+    """Catalog row fields safe to return from the item detail API."""
+    out: dict[str, Any] = {
+        "id": item.get("id"),
+        "kind": item.get("kind"),
+        "name": item.get("name"),
+        "description": item.get("description"),
+        "origin": item.get("origin"),
+        "source": item.get("source"),
+        "tags": item.get("tags") or [],
+    }
+    for key in ("contentUrl", "contentFile", "mcpConfig", "httpTool", "install"):
+        if key in item:
+            out[key] = item[key]
+    return out
+
+
+async def get_item_content(kind: str, item_id: str) -> dict[str, Any]:
+    """Resolve skill/command markdown for detail preview (cached)."""
+    if kind not in ("skill", "command"):
+        raise MarketplaceError(
+            f"Content preview is only available for skills and commands (got {kind})",
+            status_code=400,
+        )
+    item = find_item(kind, item_id)
+    cache_key = (kind, item_id)
+    if cache_key in _CONTENT_CACHE:
+        content = _CONTENT_CACHE[cache_key]
+    else:
+        content = await resolve_skill_content(item)
+        _CONTENT_CACHE[cache_key] = content
+    return {
+        "kind": kind,
+        "id": item_id,
+        "name": item.get("name") or item_id,
+        "content": content,
+        "content_type": "text/markdown",
+    }
+
+
 def _slugify(value: str) -> str:
     import re
 

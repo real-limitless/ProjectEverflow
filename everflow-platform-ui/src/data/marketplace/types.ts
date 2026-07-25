@@ -54,6 +54,15 @@ export interface MarketplaceInstalledResponse {
   manifest: Record<string, unknown>
 }
 
+/** Resolved skill/command body for detail preview. */
+export interface MarketplaceItemContent {
+  kind: MarketplaceKind
+  id: string
+  name: string
+  content: string
+  content_type: string
+}
+
 export const MARKETPLACE_TABS: { id: MarketplaceTab; kind: MarketplaceKind; label: string }[] = [
   { id: 'skills', kind: 'skill', label: 'Skills' },
   { id: 'commands', kind: 'command', label: 'Commands' },

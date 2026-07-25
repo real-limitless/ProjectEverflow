@@ -1471,6 +1471,24 @@ export async function getMarketplaceCatalog(): Promise<import('@/data/marketplac
   return apiFetch('/api/v1/marketplace/catalog')
 }
 
+export async function getMarketplaceItem(
+  kind: MarketplaceKindApi,
+  itemId: string,
+): Promise<import('@/data/marketplace').MarketplaceItem> {
+  return apiFetch(
+    `/api/v1/marketplace/items/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`,
+  )
+}
+
+export async function getMarketplaceItemContent(
+  kind: MarketplaceKindApi,
+  itemId: string,
+): Promise<import('@/data/marketplace/types').MarketplaceItemContent> {
+  return apiFetch(
+    `/api/v1/marketplace/items/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}/content`,
+  )
+}
+
 export async function getMarketplaceInstalled(
   projectId: string,
 ): Promise<import('@/data/marketplace').MarketplaceInstalledResponse> {

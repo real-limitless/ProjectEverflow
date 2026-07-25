@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes, useSearchParams } from 'react-r
 import { AppShell } from '@/components/shell/AppShell'
 import { PlaygroundPage } from '@/pages/PlaygroundPage'
 import { MarketplacePage } from '@/pages/MarketplacePage'
+import { MarketplaceDetailPage } from '@/pages/MarketplaceDetailPage'
 import { UsagePage } from '@/pages/UsagePage'
 import { PlaceholderPage } from '@/pages/PlaceholderPage'
 import { DetachedPanelPage } from '@/pages/DetachedPanelPage'
@@ -36,6 +37,7 @@ function AppRoutes() {
         />
         <Route path="usage" element={<UsagePage />} />
         <Route path="marketplace" element={<MarketplacePage />} />
+        <Route path="marketplace/:kind/:itemId" element={<MarketplaceDetailPage />} />
         <Route path="plans" element={<PlaceholderPage title="Plans & Billing" />} />
         <Route path="harnesses" element={<PlaceholderPage title="Harnesses" />} />
         <Route path="*" element={<Navigate to="/" replace />} />

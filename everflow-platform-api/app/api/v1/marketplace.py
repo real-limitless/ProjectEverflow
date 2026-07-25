@@ -22,6 +22,8 @@ from app.services.marketplace import (
     build_uninstall_pack,
     catalog_summary,
     find_item,
+    get_item_content,
+    public_item_fields,
 )
 from app.services.sandbox import mark_sandbox_missing
 from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
@@ -77,6 +79,25 @@ async def get_marketplace_catalog() -> dict[str, Any]:
     """Return the vendored marketplace catalog (ECC + curated)."""
     try:
         return catalog_summary()
+    except MarketplaceError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get("/marketplace/items/{kind}/{item_id}")
+async def get_marketplace_item(kind: MarketplaceKind, item_id: str) -> dict[str, Any]:
+    """Return a single catalog item (metadata only; no resolved body)."""
+    try:
+        item = find_item(kind, item_id)
+        return public_item_fields(item)
+    except MarketplaceError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get("/marketplace/items/{kind}/{item_id}/content")
+async def get_marketplace_item_content(kind: MarketplaceKind, item_id: str) -> dict[str, Any]:
+    """Resolve skill/command markdown for App Store detail preview."""
+    try:
+        return await get_item_content(kind, item_id)
     except MarketplaceError as exc:
         raise _http_error(exc) from exc
 
@@ -229,11 +250,20 @@ async def install_marketplace_item(
             ) from exc
         raise _agent_http_error(exc) from exc
 
+    # Playwright MCP: force OpenCode restart so the new MCP server spawns.
+    opencode: dict | None = None
+    if body.kind == "mcp" and body.item_id == "playwright":
+        try:
+            opencode = await client.opencode_ensure(name, force_restart=True)
+        except SandboxAgentError as exc:
+            opencode = {"ok": False, "error": str(exc)}
+
     return {
         "ok": True,
         "kind": body.kind,
         "item_id": body.item_id,
         "harness": result,
+        "opencode": opencode,
     }
 
 
