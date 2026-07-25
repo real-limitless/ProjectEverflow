@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -744,6 +746,9 @@ async def opencode_ensure(
         guest_api_url = ""
         tunnel_info: dict[str, Any] | None = None
         package_status: dict[str, Any] | None = None
+        # Only rewrite MCP credentials (and restart OpenCode for that reason) on
+        # explicit force_restart — not on every Chat bootstrap ensure.
+        force_credentials = bool(force)
 
         if guest:
             # Install or upgrade everflow_mcp from agent bundle (fingerprint stamp).
@@ -757,7 +762,8 @@ async def opencode_ensure(
                     "mode": "guest",
                 }
                 return
-            # Package content changed → OpenCode must restart to re-spawn MCP.
+            # Package content changed → OpenCode must restart to re-spawn MCP
+            # (env/token can stay; only the python package changed).
             if package_status.get("upgraded") or package_status.get("source") in (
                 "vendor",
                 "upgraded",
@@ -783,11 +789,13 @@ async def opencode_ensure(
                 )
 
             try:
+                # Reuse healthy tunnel; only force-rebuild on explicit restart.
+                # Dead tunnels are still recreated (ensure checks alive).
                 tunnel_info = await get_api_tunnel_manager().ensure(
                     name,
                     target_url=agent_platform_url,
                     listen_port=int(cfg.everflow_mcp_tunnel_port),
-                    force=True,
+                    force=force_credentials,
                     kill_guest_port=_kill_guest_port,
                 )
                 if tunnel_info.get("ok") and tunnel_info.get("api_url"):
@@ -819,6 +827,7 @@ async def opencode_ensure(
                 token=body.everflow_token,
                 project_id=body.everflow_project_id,
                 command=command,
+                force_credentials=force_credentials,
             )
         elif host_ws is not None:
             mcp_status = write_everflow_mcp_host(
@@ -827,13 +836,19 @@ async def opencode_ensure(
                 token=body.everflow_token,
                 project_id=body.everflow_project_id,
                 command=command,
+                force_credentials=force_credentials,
             )
         if mcp_status is not None and tunnel_info is not None:
             mcp_status = {**mcp_status, "tunnel": tunnel_info}
         if mcp_status is not None and package_status is not None:
             mcp_status = {**mcp_status, "package": package_status}
-        # Config changed — force OpenCode restart so it reloads MCP servers.
-        if mcp_status and mcp_status.get("configured"):
+        # Restart OpenCode only when credentials were actually rewritten (or
+        # force_restart / package upgrade already set force above).
+        if (
+            mcp_status
+            and mcp_status.get("configured")
+            and mcp_status.get("credentials_written")
+        ):
             force = True
 
     try:
@@ -877,7 +892,9 @@ async def opencode_ensure(
                 logger.info("playwright mcp normalize name=%s %s", name, browser_norm)
         except Exception as exc:  # noqa: BLE001
             logger.debug("playwright mcp normalize skipped name=%s: %s", name, exc)
-        # Also mirror to host path if present (best-effort)
+        # Also mirror to host path if present (best-effort). Do not force
+        # credentials on mirror unless ensure is force_restart — avoid thrashing
+        # a host-side OpenCode that reuses the same identity.
         host_ws = _host_workspace_path(rec)
         if host_ws is not None and host_ws.is_dir() and body and body.everflow_token:
             try:
@@ -887,6 +904,7 @@ async def opencode_ensure(
                     token=body.everflow_token,
                     project_id=body.everflow_project_id or "",
                     command=body.everflow_mcp_command,
+                    force_credentials=bool(body.force_restart) if body else False,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.debug("host mirror mcp write ignored: %s", exc)
@@ -1060,21 +1078,49 @@ async def opencode_proxy(
         if base:
             return await proxy_to_opencode(request, base_url=base, path=path or "")
 
-        # Fallback: REST via exec; SSE via stream_exec (token streaming)
-        logger.warning(
-            "opencode guest proxy falling back to exec name=%s path=%s",
+        # Product path: fail fast. Guest exec urllib/curl fallback hangs Chat
+        # (180s timeouts + sandbox lock contention). Opt-in for tests only.
+        allow_exec = os.environ.get("OPENCODE_ALLOW_EXEC_PROXY", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if allow_exec:
+            logger.warning(
+                "opencode guest proxy falling back to exec name=%s path=%s",
+                name,
+                path or "",
+            )
+            stream_fn = getattr(backend, "stream_exec", None)
+            return await proxy_to_opencode_guest(
+                request,
+                exec_fn=backend.exec,
+                sandbox_name=name,
+                path=path or "",
+                port=inst.port or 4096,
+                cwd="/workspace",
+                stream_exec_fn=stream_fn,
+            )
+
+        logger.error(
+            "opencode guest tunnel unavailable name=%s path=%s — refuse exec fallback",
             name,
             path or "",
         )
-        stream_fn = getattr(backend, "stream_exec", None)
-        return await proxy_to_opencode_guest(
-            request,
-            exec_fn=backend.exec,
-            sandbox_name=name,
-            path=path or "",
-            port=inst.port or 4096,
-            cwd="/workspace",
-            stream_exec_fn=stream_fn,
+        return Response(
+            content=json.dumps(
+                {
+                    "detail": (
+                        "OpenCode guest TCP tunnel is unavailable. "
+                        "Re-open Chat or POST opencode/ensure (force_restart if needed). "
+                        "Exec fallback is disabled to avoid multi-minute hangs."
+                    ),
+                    "mode": "guest",
+                    "tunnel": False,
+                }
+            ),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json",
         )
 
     base = mgr.base_url(name)

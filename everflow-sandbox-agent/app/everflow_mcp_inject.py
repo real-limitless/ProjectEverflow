@@ -71,6 +71,47 @@ def build_everflow_mcp_config(
     }
 
 
+def parse_mcp_env(body: str | None) -> dict[str, str]:
+    """Parse KEY=VALUE or KEY="VALUE" lines from ``.everflow/mcp.env``."""
+    out: dict[str, str] = {}
+    if not body:
+        return out
+    for raw in body.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+            val = val[1:-1]
+        if key:
+            out[key] = val
+    return out
+
+
+def mcp_identity_matches(
+    existing_env: dict[str, str],
+    *,
+    api_url: str,
+    project_id: str,
+) -> bool:
+    """True when guest MCP is already bound to this project + tunnel URL.
+
+    Token is intentionally ignored: rotating the bearer without force_restart
+    would thrash OpenCode; the existing token stays valid until revoke/expiry.
+    """
+    if not existing_env:
+        return False
+    cur_url = (existing_env.get("EVERFLOW_API_URL") or "").rstrip("/")
+    want_url = (api_url or "").rstrip("/")
+    cur_proj = (existing_env.get("EVERFLOW_PROJECT_ID") or "").strip()
+    want_proj = (project_id or "").strip()
+    if not cur_url or not want_url or not cur_proj or not want_proj:
+        return False
+    return cur_url == want_url and cur_proj == want_proj
+
+
 def agent_mcp_fingerprint(root: Path | None = None) -> str | None:
     """Stable content hash of the agent-bundled everflow-mcp sources.
 
@@ -333,12 +374,50 @@ def write_everflow_mcp_host(
     token: str,
     project_id: str,
     command: str | list[str] | None = None,
+    force_credentials: bool = False,
 ) -> dict[str, Any]:
-    """Write MCP env + opencode.json on a host-accessible workspace path."""
+    """Write MCP env + opencode.json on a host-accessible workspace path.
+
+    When ``force_credentials`` is False and identity (api_url + project_id)
+    already matches, skip credential rewrite so OpenCode need not restart.
+    """
     ws = Path(workspace)
     ef = ws / ".everflow"
     ef.mkdir(parents=True, exist_ok=True)
     env_path = ef / "mcp.env"
+    existing_env: dict[str, str] = {}
+    if env_path.is_file():
+        try:
+            existing_env = parse_mcp_env(env_path.read_text(encoding="utf-8"))
+        except OSError:
+            existing_env = {}
+    identity_ok = mcp_identity_matches(
+        existing_env, api_url=api_url, project_id=project_id
+    )
+    if identity_ok and not force_credentials:
+        platform_seed: dict[str, Any] | None = None
+        try:
+            from app.everflow_platform_seed import seed_platform_pack_host
+
+            platform_seed = seed_platform_pack_host(ws)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("host platform seed failed: %s", exc)
+            platform_seed = {"seeded": False, "mode": "host", "error": str(exc)}
+        cmd = _normalize_command(command)
+        out: dict[str, Any] = {
+            "configured": True,
+            "mode": "host",
+            "reused": True,
+            "credentials_written": False,
+            "command": cmd,
+            "env_path": str(env_path),
+            "project_id": project_id,
+            "api_url": api_url,
+        }
+        if platform_seed is not None:
+            out["platform_seed"] = platform_seed
+        return out
+
     try:
         env_path.write_text(
             f'EVERFLOW_API_URL="{api_url}"\n'
@@ -380,7 +459,7 @@ def write_everflow_mcp_host(
         logger.debug("host AGENTS.md knowledge policy write failed: %s", exc)
 
     # First-party skills + everflow agent (platform ops primary).
-    platform_seed: dict[str, Any] | None = None
+    platform_seed = None
     try:
         from app.everflow_platform_seed import seed_platform_pack_host
 
@@ -390,9 +469,11 @@ def write_everflow_mcp_host(
         platform_seed = {"seeded": False, "mode": "host", "error": str(exc)}
 
     cmd = _normalize_command(command)
-    out: dict[str, Any] = {
+    out = {
         "configured": True,
         "mode": "host",
+        "reused": False,
+        "credentials_written": True,
         "command": cmd,
         "env_path": str(env_path),
         "project_id": project_id,
@@ -411,8 +492,44 @@ async def write_everflow_mcp_guest(
     token: str,
     project_id: str,
     command: str | list[str] | None = None,
+    force_credentials: bool = False,
 ) -> dict[str, Any]:
-    """Write MCP env + opencode.json into the guest workspace via write_fs."""
+    """Write MCP env + opencode.json into the guest workspace via write_fs.
+
+    When ``force_credentials`` is False and the guest already has the same
+    project_id + api_url, skip rewriting token/env/opencode.json so OpenCode
+    does not need a restart (Chat ensure churn).
+    """
+    existing_env_raw = await _guest_read_text(backend, sandbox_name, MCP_ENV_REL)
+    existing_env = parse_mcp_env(existing_env_raw)
+    identity_ok = mcp_identity_matches(
+        existing_env, api_url=api_url, project_id=project_id
+    )
+    if identity_ok and not force_credentials:
+        # Still ensure platform playbook/skills exist (cheap, no OpenCode restart).
+        platform_seed: dict[str, Any] | None = None
+        try:
+            from app.everflow_platform_seed import seed_platform_pack_guest
+
+            platform_seed = await seed_platform_pack_guest(backend, sandbox_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("guest platform seed failed name=%s: %s", sandbox_name, exc)
+            platform_seed = {"seeded": False, "mode": "guest", "error": str(exc)}
+        cmd = _normalize_command(command)
+        out: dict[str, Any] = {
+            "configured": True,
+            "mode": "guest",
+            "reused": True,
+            "credentials_written": False,
+            "command": cmd,
+            "env_path": f"/workspace/{MCP_ENV_REL}",
+            "project_id": project_id,
+            "api_url": api_url,
+        }
+        if platform_seed is not None:
+            out["platform_seed"] = platform_seed
+        return out
+
     mcp_cfg = build_everflow_mcp_config(
         api_url=api_url, token=token, project_id=project_id, command=command
     )
@@ -463,7 +580,7 @@ async def write_everflow_mcp_guest(
     except Exception as exc:  # noqa: BLE001
         logger.debug("guest AGENTS.md knowledge policy write failed name=%s: %s", sandbox_name, exc)
 
-    platform_seed: dict[str, Any] | None = None
+    platform_seed = None
     try:
         from app.everflow_platform_seed import seed_platform_pack_guest
 
@@ -473,9 +590,11 @@ async def write_everflow_mcp_guest(
         platform_seed = {"seeded": False, "mode": "guest", "error": str(exc)}
 
     cmd = _normalize_command(command)
-    out: dict[str, Any] = {
+    out = {
         "configured": True,
         "mode": "guest",
+        "reused": False,
+        "credentials_written": True,
         "command": cmd,
         "env_path": f"/workspace/{MCP_ENV_REL}",
         "project_id": project_id,

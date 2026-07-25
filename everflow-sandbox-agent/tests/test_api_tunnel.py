@@ -13,6 +13,35 @@ import pytest
 from app.api_tunnel import ApiTunnelManager, _ApiTunnel
 
 
+@pytest.mark.asyncio
+async def test_ensure_reuses_alive_tunnel_without_force() -> None:
+    mgr = ApiTunnelManager()
+    sink = MagicMock()
+    sink.write = AsyncMock()
+    tunnel = _ApiTunnel(
+        sandbox_name="ef-reuse",
+        listen_port=18765,
+        target_host="backend",
+        target_port=8000,
+        handle=None,
+        sink=sink,
+    )
+    tunnel.alive = True
+    mgr._tunnels["ef-reuse"] = tunnel
+
+    first = await mgr.ensure(
+        "ef-reuse",
+        target_url="http://backend:8000",
+        listen_port=18765,
+        force=False,
+    )
+    assert first["ok"] is True
+    assert first.get("reused") is True
+    assert mgr.is_alive("ef-reuse") is True
+    st = mgr.status("ef-reuse")
+    assert st is not None and st["ok"] is True
+
+
 @dataclass
 class _FakeWriter:
     chunks: list[bytes] = field(default_factory=list)

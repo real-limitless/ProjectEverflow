@@ -13,8 +13,10 @@ from app.everflow_mcp_inject import (
     agent_mcp_fingerprint,
     build_everflow_mcp_config,
     ensure_everflow_mcp_package,
+    mcp_identity_matches,
     merge_knowledge_policy_markdown,
     merge_opencode_mcp,
+    parse_mcp_env,
     write_everflow_mcp_host,
 )
 
@@ -72,6 +74,8 @@ def test_write_host_creates_files(tmp_path: Path) -> None:
         project_id="22222222-2222-2222-2222-222222222222",
     )
     assert status["configured"] is True
+    assert status.get("credentials_written") is True
+    assert status.get("reused") is False
     assert status["command"] == ["python3", "-m", "everflow_mcp"]
     env = (tmp_path / ".everflow" / "mcp.env").read_text(encoding="utf-8")
     assert "EVERFLOW_TOKEN" in env
@@ -83,6 +87,64 @@ def test_write_host_creates_files(tmp_path: Path) -> None:
     assert "knowledge_search" in agents
     assert "create_job" in agents
     assert "Tool routing" in agents
+
+
+def test_parse_mcp_env_and_identity() -> None:
+    parsed = parse_mcp_env(
+        'EVERFLOW_API_URL="http://127.0.0.1:18765"\n'
+        'EVERFLOW_TOKEN="ef_sbox_x"\n'
+        'EVERFLOW_PROJECT_ID="22222222-2222-2222-2222-222222222222"\n'
+    )
+    assert parsed["EVERFLOW_API_URL"] == "http://127.0.0.1:18765"
+    assert mcp_identity_matches(
+        parsed,
+        api_url="http://127.0.0.1:18765/",
+        project_id="22222222-2222-2222-2222-222222222222",
+    )
+    assert not mcp_identity_matches(
+        parsed,
+        api_url="http://127.0.0.1:18765",
+        project_id="33333333-3333-3333-3333-333333333333",
+    )
+
+
+def test_write_host_reuses_identity_without_token_churn(tmp_path: Path) -> None:
+    pid = "22222222-2222-2222-2222-222222222222"
+    first = write_everflow_mcp_host(
+        tmp_path,
+        api_url="http://127.0.0.1:18765",
+        token="ef_sbox_first",
+        project_id=pid,
+    )
+    assert first["credentials_written"] is True
+    env1 = (tmp_path / ".everflow" / "mcp.env").read_text(encoding="utf-8")
+
+    second = write_everflow_mcp_host(
+        tmp_path,
+        api_url="http://127.0.0.1:18765",
+        token="ef_sbox_second_unused",
+        project_id=pid,
+        force_credentials=False,
+    )
+    assert second["configured"] is True
+    assert second["reused"] is True
+    assert second["credentials_written"] is False
+    env2 = (tmp_path / ".everflow" / "mcp.env").read_text(encoding="utf-8")
+    assert env2 == env1
+    assert "ef_sbox_first" in env2
+    assert "ef_sbox_second_unused" not in env2
+
+    forced = write_everflow_mcp_host(
+        tmp_path,
+        api_url="http://127.0.0.1:18765",
+        token="ef_sbox_forced",
+        project_id=pid,
+        force_credentials=True,
+    )
+    assert forced["credentials_written"] is True
+    assert forced["reused"] is False
+    env3 = (tmp_path / ".everflow" / "mcp.env").read_text(encoding="utf-8")
+    assert "ef_sbox_forced" in env3
 
 
 def test_merge_knowledge_policy_idempotent() -> None:

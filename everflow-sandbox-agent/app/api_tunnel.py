@@ -170,6 +170,24 @@ class ApiTunnelManager:
         for name in names:
             await self._teardown(name)
 
+    def status(self, sandbox_name: str) -> dict[str, Any] | None:
+        """In-memory tunnel status (no guest probe)."""
+        tunnel = self._tunnels.get(sandbox_name)
+        if tunnel is None:
+            return None
+        return {
+            "ok": bool(tunnel.alive),
+            "alive": bool(tunnel.alive),
+            "listen_port": tunnel.listen_port,
+            "target": f"{tunnel.target_host}:{tunnel.target_port}",
+            "api_url": f"http://127.0.0.1:{tunnel.listen_port}",
+            "reused": True,
+        }
+
+    def is_alive(self, sandbox_name: str) -> bool:
+        tunnel = self._tunnels.get(sandbox_name)
+        return bool(tunnel is not None and tunnel.alive)
+
     async def ensure(
         self,
         sandbox_name: str,
@@ -192,6 +210,7 @@ class ApiTunnelManager:
             ):
                 return {
                     "ok": True,
+                    "reused": True,
                     "listen_port": existing.listen_port,
                     "target": f"{host}:{port}",
                     "api_url": f"http://127.0.0.1:{existing.listen_port}",
@@ -217,6 +236,7 @@ class ApiTunnelManager:
             logger.warning("api tunnel start failed name=%s: %s", sandbox_name, exc)
             return {
                 "ok": False,
+                "reused": False,
                 "error": str(exc),
                 "listen_port": listen_port,
                 "target": f"{host}:{port}",
@@ -236,6 +256,7 @@ class ApiTunnelManager:
             )
         return {
             "ok": True,
+            "reused": False,
             "listen_port": listen_port,
             "target": f"{host}:{port}",
             "api_url": f"http://127.0.0.1:{listen_port}",

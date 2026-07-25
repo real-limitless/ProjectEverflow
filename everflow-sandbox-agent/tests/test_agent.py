@@ -309,7 +309,7 @@ async def test_guest_sse_streams_chunks() -> None:
 
 @pytest.mark.asyncio
 async def test_opencode_guest_proxy_via_exec() -> None:
-    """Guest mode has no host base_url — proxy uses in-guest HTTP via exec."""
+    """Low-level guest exec proxy still works when explicitly invoked (tests/opt-in)."""
     import base64
     import json
 
@@ -352,6 +352,57 @@ async def test_opencode_guest_proxy_via_exec() -> None:
     )
     assert res.status_code == 200
     assert b"Guest session" in res.body
+
+
+@pytest.mark.asyncio
+async def test_opencode_guest_proxy_fails_fast_without_tunnel(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Product path must not hang on guest exec when TCP tunnel is missing."""
+    monkeypatch.setenv("SANDBOX_MOCK", "true")
+    monkeypatch.setenv("SANDBOX_AGENT_TOKEN", "test-token")
+    monkeypatch.setenv("WORKSPACE_ROOT", str(tmp_path / "ws"))
+    monkeypatch.delenv("OPENCODE_ALLOW_EXEC_PROXY", raising=False)
+    get_settings.cache_clear()
+
+    application = create_app()
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        async with application.router.lifespan_context(application):
+            create = await ac.post(
+                "/v1/sandboxes",
+                headers=HEADERS,
+                json={"name": "ef-no-tunnel", "harnesses": ["agent-opencode"]},
+            )
+            assert create.status_code == 201, create.text
+
+            from app.opencode_mgr import OpenCodeInstance, get_opencode_manager
+
+            mgr = get_opencode_manager()
+            mgr._instances["ef-no-tunnel"] = OpenCodeInstance(
+                sandbox_name="ef-no-tunnel",
+                port=4096,
+                workspace="/workspace",
+                mode="guest",
+                version="test",
+                host_port=None,
+            )
+
+            async def _no_tunnel(*_a, **_k):
+                return None
+
+            monkeypatch.setattr(mgr, "attach_guest_tunnel", _no_tunnel)
+
+            res = await ac.get(
+                "/v1/sandboxes/ef-no-tunnel/opencode/session",
+                headers=HEADERS,
+            )
+            assert res.status_code == 503, res.text
+            body = res.json()
+            assert body.get("tunnel") is False
+            assert "tunnel" in (body.get("detail") or "").lower()
+
+    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

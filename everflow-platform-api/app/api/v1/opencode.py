@@ -104,6 +104,10 @@ async def ensure_opencode(
     project, name = await _require_running_sandbox(session, project, settings)
     client = SandboxAgentClient(settings)
 
+    # Token lifecycle:
+    # - force_restart: revoke prior tokens and mint a fresh one so guest MCP reloads auth.
+    # - normal ensure: mint without revoke (agent reuses guest mcp.env when project/url
+    #   match and does not restart OpenCode). Avoids killing live MCP mid-session.
     mcp_token: str | None = None
     try:
         from app.services.sandbox_tokens import mint_sandbox_token
@@ -114,7 +118,7 @@ async def ensure_opencode(
             user_id=user.id,
             label="opencode-mcp",
             settings=settings,
-            revoke_existing=True,
+            revoke_existing=bool(body.force_restart),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("sandbox token mint failed project=%s: %s", project.id, exc)
