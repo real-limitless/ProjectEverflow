@@ -40,6 +40,7 @@ from app.schemas.knowledge import (
     KnowledgeEvalRunResult,
     KnowledgeEvalSetCreate,
     KnowledgeEvalSetRead,
+    KnowledgeEvalSetUpdate,
     KnowledgeLinkCreate,
     KnowledgeLinkRead,
     KnowledgeMindMapCreate,
@@ -585,6 +586,9 @@ async def index_repo(
         updated=int(result["updated"]),
         skipped=int(result["skipped"]),
         canvas_ids=list(result["canvas_ids"]),  # type: ignore[arg-type]
+        matched_paths=list(result.get("matched_paths") or []),  # type: ignore[arg-type]
+        matched_count=int(result.get("matched_count") or 0),
+        message=result.get("message"),  # type: ignore[arg-type]
     )
 
 
@@ -665,6 +669,30 @@ async def update_collection(
     await session.commit()
     await session.refresh(col)
     return col
+
+
+@router.delete(
+    "/projects/{project_id}/knowledge/collections/{collection_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_collection(
+    collection_id: UUID,
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_async_session),
+) -> None:
+    principal.require_scope("knowledge:rw")
+    result = await session.execute(
+        select(KnowledgeCollection).where(
+            KnowledgeCollection.id == collection_id,
+            KnowledgeCollection.project_id == project.id,
+        )
+    )
+    col = result.scalar_one_or_none()
+    if col is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    await session.delete(col)
+    await session.commit()
 
 
 @router.put(
@@ -933,6 +961,81 @@ async def create_eval_set(
     return result.scalar_one()
 
 
+@router.patch(
+    "/projects/{project_id}/knowledge/eval-sets/{eval_set_id}",
+    response_model=KnowledgeEvalSetRead,
+)
+async def update_eval_set(
+    eval_set_id: UUID,
+    body: KnowledgeEvalSetUpdate,
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_async_session),
+) -> KnowledgeEvalSet:
+    principal.require_scope("knowledge:rw")
+    result = await session.execute(
+        select(KnowledgeEvalSet)
+        .where(
+            KnowledgeEvalSet.id == eval_set_id,
+            KnowledgeEvalSet.project_id == project.id,
+        )
+        .options(selectinload(KnowledgeEvalSet.questions))
+    )
+    eset = result.scalar_one_or_none()
+    if eset is None:
+        raise HTTPException(status_code=404, detail="Eval set not found")
+
+    data = body.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None:
+        eset.name = str(data["name"]).strip()
+    if "collection_id" in data:
+        eset.collection_id = data["collection_id"]
+    if "questions" in data and data["questions"] is not None:
+        for old in list(eset.questions):
+            await session.delete(old)
+        await session.flush()
+        for q in body.questions or []:
+            session.add(
+                KnowledgeEvalQuestion(
+                    eval_set_id=eset.id,
+                    question=q.question,
+                    expected_canvas_ids=q.expected_canvas_ids,
+                    expected_notes=q.expected_notes,
+                )
+            )
+    await session.commit()
+    result = await session.execute(
+        select(KnowledgeEvalSet)
+        .where(KnowledgeEvalSet.id == eset.id)
+        .options(selectinload(KnowledgeEvalSet.questions))
+    )
+    return result.scalar_one()
+
+
+@router.delete(
+    "/projects/{project_id}/knowledge/eval-sets/{eval_set_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_eval_set(
+    eval_set_id: UUID,
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_async_session),
+) -> None:
+    principal.require_scope("knowledge:rw")
+    result = await session.execute(
+        select(KnowledgeEvalSet).where(
+            KnowledgeEvalSet.id == eval_set_id,
+            KnowledgeEvalSet.project_id == project.id,
+        )
+    )
+    eset = result.scalar_one_or_none()
+    if eset is None:
+        raise HTTPException(status_code=404, detail="Eval set not found")
+    await session.delete(eset)
+    await session.commit()
+
+
 @router.post(
     "/projects/{project_id}/knowledge/eval-sets/{eval_set_id}/run",
     response_model=KnowledgeEvalRunResult,
@@ -956,6 +1059,22 @@ async def run_eval_set(
     if eset is None:
         raise HTTPException(status_code=404, detail="Eval set not found")
 
+    # Resolve canvas id → name for readable results
+    canvases = await session.execute(
+        select(KnowledgeCanvas).where(KnowledgeCanvas.project_id == project.id)
+    )
+    name_by_id = {str(c.id): c.name for c in canvases.scalars().all()}
+
+    def _names(ids: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for i in ids:
+            if i in seen:
+                continue
+            seen.add(i)
+            out.append(name_by_id.get(i) or i[:8] + "…")
+        return out
+
     results: list[KnowledgeEvalQuestionResult] = []
     hits_n = 0
     for q in eset.questions:
@@ -970,7 +1089,14 @@ async def run_eval_set(
             agent_id=None,
             user_id=principal.user.id,
         )
-        retrieved = [str(h.canvas_id) for h in hits]
+        # Preserve order, drop duplicate canvas ids from chunk-level hits
+        retrieved: list[str] = []
+        seen_r: set[str] = set()
+        for h in hits:
+            cid = str(h.canvas_id)
+            if cid not in seen_r:
+                seen_r.add(cid)
+                retrieved.append(cid)
         hit = bool(expected) and any(e in retrieved for e in expected)
         if hit or (not expected and hits):
             # If no expected ids, count as hit when anything retrieved
@@ -986,6 +1112,8 @@ async def run_eval_set(
                 hit=hit,
                 expected_canvas_ids=expected,
                 retrieved_canvas_ids=retrieved,
+                expected_names=_names(expected),
+                retrieved_names=_names(retrieved),
                 top_score=hits[0].score if hits else None,
             )
         )

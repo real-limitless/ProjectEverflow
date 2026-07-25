@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import re
+from collections import deque
 from uuid import UUID
 
 from sqlalchemy import select
@@ -16,11 +18,15 @@ from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentEr
 
 logger = logging.getLogger(__name__)
 
+# Patterns are matched with path-aware rules (see matches_doc_path), not raw fnmatch **.
 DEFAULT_GLOBS = (
     "README*",
     "readme*",
+    "AGENTS.md",
+    "CLAUDE.md",
     "**/docs/**/*.md",
     "**/docs/**/*.mdx",
+    "**/doc/**/*.md",
     "**/adr/**/*.md",
     "**/ADR/**/*.md",
     "**/openapi*.yaml",
@@ -28,18 +34,148 @@ DEFAULT_GLOBS = (
     "**/openapi*.json",
     "**/runbook*",
     "**/RUNBOOK*",
+    "**/.github/**/*.md",
+    "**/runbooks/**/*",
 )
 
+SKIP_DIR_NAMES = frozenset(
+    {
+        ".git",
+        "node_modules",
+        ".venv",
+        "venv",
+        "__pycache__",
+        "dist",
+        "build",
+        ".next",
+        ".turbo",
+        "coverage",
+        "vendor",
+        ".cache",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        "target",
+        "bin",
+        "obj",
+        ".everflow",
+    }
+)
 
-def _matches(path: str, globs: tuple[str, ...] | list[str]) -> bool:
-    name = path.rsplit("/", 1)[-1]
-    for g in globs:
-        if fnmatch.fnmatch(path, g) or fnmatch.fnmatch(name, g):
-            return True
-        # Also match basename-style globs against full path segments
-        if "**" in g and fnmatch.fnmatch(path, g):
+DOC_DIR_SEGMENTS = frozenset(
+    {"docs", "doc", "adr", "runbook", "runbooks", ".github"}
+)
+
+MAX_WALK_DIRS = 300
+MAX_WALK_DEPTH = 8
+
+
+def _normalize_path(path: str) -> str:
+    p = (path or "").replace("\\", "/").strip()
+    while p.startswith("./"):
+        p = p[2:]
+    return p.lstrip("/")
+
+
+def _basename(path: str) -> str:
+    return _normalize_path(path).rsplit("/", 1)[-1]
+
+
+def _path_segments(path: str) -> list[str]:
+    return [s for s in _normalize_path(path).split("/") if s and s != "."]
+
+
+def _is_skipped_dir(path: str) -> bool:
+    return any(seg in SKIP_DIR_NAMES for seg in _path_segments(path))
+
+
+def _under_doc_dir(path: str) -> bool:
+    segs = _path_segments(path)
+    if not segs:
+        return False
+    # Directory itself or any parent segment (exclude filename for files)
+    dir_segs = segs[:-1] if len(segs) > 1 else segs
+    return any(s.lower() in DOC_DIR_SEGMENTS or s in DOC_DIR_SEGMENTS for s in dir_segs)
+
+
+def _fnmatch_path(path: str, pattern: str) -> bool:
+    """Match path against a glob that may include ** (segment-aware)."""
+    path = _normalize_path(path)
+    pattern = pattern.replace("\\", "/").strip()
+    if not pattern:
+        return False
+
+    # Basename-only patterns (no slash): match name only
+    if "/" not in pattern:
+        return fnmatch.fnmatch(_basename(path), pattern)
+
+    # Convert ** / * to regex
+    # Escape then restore glob tokens
+    i = 0
+    out: list[str] = ["^"]
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    out.append("$")
+    try:
+        return re.match("".join(out), path) is not None
+    except re.error:
+        return fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(_basename(path), pattern)
+
+
+def matches_doc_path(path: str, globs: tuple[str, ...] | list[str] | None = None) -> bool:
+    """Return True if path should be indexed as project documentation."""
+    path = _normalize_path(path)
+    if not path or path.endswith("/"):
+        return False
+    name = _basename(path)
+    if not name or name.startswith("."):
+        # Allow .github markdown via explicit patterns / doc-dir rule below
+        if not name.endswith((".md", ".mdx")):
+            return False
+
+    patterns = tuple(globs) if globs else DEFAULT_GLOBS
+
+    # Always-useful root / basename docs
+    lower = name.lower()
+    if fnmatch.fnmatch(name, "README*") or fnmatch.fnmatch(name, "readme*"):
+        return True
+    if lower in ("agents.md", "claude.md", "contributing.md", "changelog.md", "license.md"):
+        return True
+    if fnmatch.fnmatch(lower, "openapi*.yaml") or fnmatch.fnmatch(lower, "openapi*.yml"):
+        return True
+    if fnmatch.fnmatch(lower, "openapi*.json"):
+        return True
+    if "runbook" in lower:
+        return True
+
+    # Markdown under known doc directories
+    if lower.endswith((".md", ".mdx")) and _under_doc_dir(path):
+        return True
+
+    # Explicit user/default globs
+    for g in patterns:
+        if _fnmatch_path(path, g) or _fnmatch_path(name, g):
             return True
     return False
+
+
+# Back-compat alias used by older callers/tests
+def _matches(path: str, globs: tuple[str, ...] | list[str]) -> bool:
+    return matches_doc_path(path, globs)
 
 
 async def ensure_collection(
@@ -68,6 +204,70 @@ async def ensure_collection(
     return col
 
 
+def _entry_path(e: dict) -> str:
+    return _normalize_path(str(e.get("path") or e.get("name") or ""))
+
+
+def _dir_depth(path: str) -> int:
+    return len(_path_segments(path))
+
+
+async def collect_doc_paths(
+    agent: SandboxAgentClient,
+    sandbox_name: str,
+    *,
+    globs: tuple[str, ...] | list[str] | None = None,
+) -> list[str]:
+    """BFS walk workspace via list_fs; return matching relative paths."""
+    patterns = tuple(globs) if globs else DEFAULT_GLOBS
+    paths: list[str] = []
+
+    try:
+        listing = await agent.list_fs(sandbox_name, path=".")
+    except SandboxAgentError:
+        listing = await agent.list_fs(sandbox_name, path="")
+
+    queue: deque[str] = deque()
+    visited: set[str] = set()
+
+    for e in listing:
+        p = _entry_path(e)
+        if not p:
+            continue
+        if e.get("is_dir"):
+            if not _is_skipped_dir(p):
+                queue.append(p)
+        elif matches_doc_path(p, patterns):
+            paths.append(p)
+
+    while queue and len(visited) < MAX_WALK_DIRS:
+        dp = queue.popleft()
+        if not dp or dp in visited or _is_skipped_dir(dp):
+            continue
+        if _dir_depth(dp) > MAX_WALK_DEPTH:
+            continue
+        visited.add(dp)
+        try:
+            children = await agent.list_fs(sandbox_name, path=dp)
+        except SandboxAgentError:
+            continue
+        for c in children:
+            cp = _entry_path(c)
+            if not cp:
+                # Reconstruct relative path from parent + name
+                name = str(c.get("name") or "")
+                if not name:
+                    continue
+                cp = _normalize_path(f"{dp}/{name}")
+            if c.get("is_dir"):
+                if not _is_skipped_dir(cp) and cp not in visited:
+                    queue.append(cp)
+            elif matches_doc_path(cp, patterns):
+                paths.append(cp)
+
+    return sorted(set(paths))
+
+
 async def index_sandbox_docs(
     session: AsyncSession,
     *,
@@ -85,48 +285,8 @@ async def index_sandbox_docs(
         session, project_id=project.id, name=collection_name
     )
 
-    # Walk from workspace root via recursive listing heuristic
-    try:
-        listing = await agent.list_fs(project.sandbox_name, path=".")
-    except SandboxAgentError:
-        listing = await agent.list_fs(project.sandbox_name, path="")
+    paths = await collect_doc_paths(agent, project.sandbox_name, globs=globs)
 
-    def entry_path(e: dict) -> str:
-        return str(e.get("path") or e.get("name") or "")
-
-    paths: list[str] = []
-    stack = [e for e in listing if e.get("is_dir")]
-    for e in listing:
-        if not e.get("is_dir"):
-            p = entry_path(e)
-            if p and _matches(p, globs):
-                paths.append(p)
-
-    visited: set[str] = set()
-    while stack and len(visited) < 80:
-        d = stack.pop()
-        dp = entry_path(d)
-        if not dp or dp in visited:
-            continue
-        visited.add(dp)
-        interesting = any(
-            seg in dp.lower() for seg in ("docs", "adr", "doc", ".github", "runbook")
-        )
-        if not interesting and dp not in (".", ""):
-            continue
-        try:
-            children = await agent.list_fs(project.sandbox_name, path=dp)
-        except SandboxAgentError:
-            continue
-        for c in children:
-            cp = entry_path(c)
-            if c.get("is_dir"):
-                stack.append(c)
-            elif cp and _matches(cp, globs):
-                paths.append(cp)
-
-    # Deduplicate
-    paths = sorted(set(paths))
     created = updated = skipped = 0
     canvas_ids: list[UUID] = []
 
@@ -138,7 +298,15 @@ async def index_sandbox_docs(
             skipped += 1
             continue
         if not isinstance(content, str):
-            content = str(content)
+            # Sandbox client may return str; agent backends sometimes return bytes
+            if isinstance(content, (bytes, bytearray)):
+                try:
+                    content = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    skipped += 1
+                    continue
+            else:
+                content = str(content)
         if not content.strip():
             skipped += 1
             continue
@@ -198,9 +366,25 @@ async def index_sandbox_docs(
             logger.exception("reindex failed for %s", path)
         canvas_ids.append(canvas.id)
 
+    message: str | None = None
+    if not paths:
+        message = (
+            "No documentation files matched (README*, AGENTS.md, docs/**, ADR, "
+            "openapi*, runbooks, .github/**/*.md). Add docs under those paths or "
+            "ensure the sandbox workspace is populated."
+        )
+    elif created == 0 and updated == 0:
+        message = (
+            f"Found {len(paths)} doc file(s) but none needed updates "
+            f"({skipped} unchanged/skipped)."
+        )
+
     return {
         "created": created,
         "updated": updated,
         "skipped": skipped,
         "canvas_ids": canvas_ids,
+        "matched_paths": paths[:40],
+        "matched_count": len(paths),
+        "message": message,
     }

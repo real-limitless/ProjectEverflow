@@ -1280,13 +1280,9 @@ export const useStudioDemoStore = create<StudioDemoState>((set, get) => ({
 
   createMindMap: (projectId, name, mermaid) => {
     const id = uid('mm')
-    const source =
-      mermaid ??
-      `mindmap
-  root((${name.replace(/[()]/g, '')}))
-    Topic A
-      Detail
-    Topic B`
+    // Empty by default so users aren't stuck with sample Topic A/B data.
+    // Optional starter outline can be passed explicitly via mermaid.
+    const source = mermaid ?? ''
     get().update(projectId, (s) => ({
       ...s,
       mindMaps: [

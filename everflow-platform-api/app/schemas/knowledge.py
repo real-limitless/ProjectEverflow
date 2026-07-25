@@ -241,6 +241,12 @@ class KnowledgeEvalSetCreate(BaseModel):
     questions: list[KnowledgeEvalQuestionCreate] = Field(default_factory=list)
 
 
+class KnowledgeEvalSetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    collection_id: UUID | None = None
+    questions: list[KnowledgeEvalQuestionCreate] | None = None
+
+
 class KnowledgeEvalQuestionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -270,6 +276,8 @@ class KnowledgeEvalQuestionResult(BaseModel):
     hit: bool
     expected_canvas_ids: list[str]
     retrieved_canvas_ids: list[str]
+    expected_names: list[str] = Field(default_factory=list)
+    retrieved_names: list[str] = Field(default_factory=list)
     top_score: float | None = None
 
 
@@ -298,6 +306,9 @@ class RepoIndexResult(BaseModel):
     updated: int
     skipped: int
     canvas_ids: list[UUID]
+    matched_paths: list[str] = Field(default_factory=list)
+    matched_count: int = 0
+    message: str | None = None
 
 
 class ResearchPromoteRequest(BaseModel):

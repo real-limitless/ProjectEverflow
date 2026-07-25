@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Tabs, Tab, TabTitleText } from '@patternfly/react-core'
+import { Button, Tabs, Tab, TabTitleText } from '@patternfly/react-core'
+import SyncAltIcon from '@patternfly/react-icons/dist/esm/icons/sync-alt-icon'
 import { getProject } from '@/data/projects'
 import {
   createKnowledgeCanvas,
@@ -84,6 +85,32 @@ export function KnowledgePanel() {
   useEffect(() => {
     void refreshApi()
   }, [refreshApi])
+
+  // Re-fetch when tab regains focus / becomes visible (chat/MCP may have created canvases)
+  useEffect(() => {
+    if (!useApi) return
+    let t: number | null = null
+    const debounced = () => {
+      if (t != null) window.clearTimeout(t)
+      t = window.setTimeout(() => {
+        void refreshApi()
+      }, 400)
+    }
+    const onVis = () => {
+      if (document.visibilityState === 'visible') debounced()
+    }
+    window.addEventListener('focus', debounced)
+    document.addEventListener('visibilitychange', onVis)
+    const poll = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshApi()
+    }, 20_000)
+    return () => {
+      if (t != null) window.clearTimeout(t)
+      window.removeEventListener('focus', debounced)
+      document.removeEventListener('visibilitychange', onVis)
+      window.clearInterval(poll)
+    }
+  }, [refreshApi, useApi])
 
   useEffect(() => {
     if (!useApi) return
@@ -228,12 +255,22 @@ export function KnowledgePanel() {
         }
         void (async () => {
           try {
-            await updateKnowledgeCanvas(pid, id, {
+            const body: {
+              name?: string
+              content_md?: string
+              description?: string | null
+              status?: string
+              collection_id?: string | null
+            } = {
               name: patch.name,
               content_md: patch.contentMd,
               description: patch.desc,
               status: patch.status,
-            })
+            }
+            if ('collectionId' in patch) {
+              body.collection_id = patch.collectionId ?? null
+            }
+            await updateKnowledgeCanvas(pid, id, body)
           } catch (e) {
             pushToast(e instanceof Error ? e.message : 'Save canvas failed', { kind: 'danger' })
             await refreshApi()
@@ -276,12 +313,13 @@ export function KnowledgePanel() {
 
   return (
     <div className="knowledge-panel-root">
-      <div className="panel-toolbar">
+      <div className="panel-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Tabs
           activeKey={sub}
           onSelect={(_e, k) => setSub(k as typeof sub)}
           variant="secondary"
           className="panel-pf-tabs"
+          style={{ flex: 1, minWidth: 0 }}
         >
           <Tab
             eventKey="canvas"
@@ -296,10 +334,23 @@ export function KnowledgePanel() {
           <Tab eventKey="graph" title={<TabTitleText>Graph</TabTitleText>} />
           <Tab eventKey="eval" title={<TabTitleText>Eval</TabTitleText>} />
         </Tabs>
+        {useApi ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<SyncAltIcon />}
+            isLoading={loading}
+            onClick={() => void refreshApi()}
+            title="Refresh knowledge from server (use after chat creates canvases)"
+            aria-label="Refresh knowledge"
+          >
+            Refresh
+          </Button>
+        ) : null}
       </div>
       <div
         className={
-          sub === 'canvas' || sub === 'mind'
+          sub === 'canvas' || sub === 'mind' || sub === 'web' || sub === 'graph'
             ? 'knowledge-panel-body knowledge-panel-body--fill'
             : 'panel-scroll knowledge-panel-body'
         }

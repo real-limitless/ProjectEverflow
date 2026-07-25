@@ -23,7 +23,8 @@ export function MindMapsTab({ projectId, mindMaps }: MindMapsTabProps) {
   const [activeId, setActiveId] = useState(mindMaps[0]?.id ?? '')
   const [mapOpen, setMapOpen] = useState(false)
   const [mapName, setMapName] = useState('')
-  const [mode, setMode] = useState<ViewMode>('preview')
+  const [useStarter, setUseStarter] = useState(false)
+  const [mode, setMode] = useState<ViewMode>('edit')
   const [draftName, setDraftName] = useState('')
   const [draftMermaid, setDraftMermaid] = useState('')
   const [baselineName, setBaselineName] = useState('')
@@ -64,7 +65,7 @@ export function MindMapsTab({ projectId, mindMaps }: MindMapsTabProps) {
     setBaselineMermaid(src)
     setSaveState('idle')
     setRenaming(false)
-    setMode('preview')
+    setMode(src.trim() ? 'preview' : 'edit')
   }, [])
 
   const saveMap = useCallback(
@@ -183,21 +184,46 @@ export function MindMapsTab({ projectId, mindMaps }: MindMapsTabProps) {
     <CreateResourceModal
       isOpen={mapOpen}
       title="Create mind map"
-      onClose={() => setMapOpen(false)}
+      onClose={() => {
+        setMapOpen(false)
+        setUseStarter(false)
+      }}
       onSubmit={() => {
         if (!mapName.trim()) return
         if (dirty && mind) saveMap(mind, { silent: true })
-        const id = createMindMap(projectId, mapName.trim())
+        const safe = mapName.trim().replace(/[()]/g, '')
+        const starter = useStarter
+          ? `mindmap\n  root((${safe}))\n    Branch A\n    Branch B`
+          : ''
+        const id = createMindMap(projectId, mapName.trim(), starter)
         setMapName('')
+        setUseStarter(false)
         setMapOpen(false)
         setActiveId(id)
-        setMode('preview')
-        pushToast('Mind map created', { kind: 'success' })
+        setMode(starter ? 'preview' : 'edit')
+        pushToast('Mind map created', {
+          description: starter ? 'Starter outline applied' : 'Blank diagram — add Mermaid in Edit',
+          kind: 'success',
+        })
       }}
       isSubmitDisabled={!mapName.trim()}
     >
       <FormGroup label="Name" isRequired fieldId="mm-name">
         <TextInput id="mm-name" value={mapName} onChange={(_e, v) => setMapName(v)} />
+      </FormGroup>
+      <FormGroup label="Starting point" fieldId="mm-starter" style={{ marginTop: 12 }}>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
+          <input
+            id="mm-starter"
+            type="checkbox"
+            checked={useStarter}
+            onChange={(e) => setUseStarter(e.target.checked)}
+          />
+          <span className="lc-meta">
+            Include a simple starter outline (optional). Leave unchecked for a blank map you fill
+            in yourself.
+          </span>
+        </label>
       </FormGroup>
     </CreateResourceModal>
   )
@@ -392,7 +418,22 @@ export function MindMapsTab({ projectId, mindMaps }: MindMapsTabProps) {
                 />
               ) : (
                 <div className="mm-diagram-pane">
-                  <MermaidView source={draftMermaid} />
+                  {draftMermaid.trim() ? (
+                    <MermaidView source={draftMermaid} />
+                  ) : (
+                    <div className="reader-mode-iframe-fallback" style={{ margin: 16 }}>
+                      <p>This mind map is empty.</p>
+                      <p className="lc-meta">
+                        Switch to Edit and add Mermaid, for example:
+                      </p>
+                      <pre className="lc-meta" style={{ whiteSpace: 'pre-wrap' }}>
+                        {`mindmap\n  root((${(draftName || 'Topic').replace(/[()]/g, '')}))\n    Idea A\n    Idea B`}
+                      </pre>
+                      <Button size="sm" variant="primary" onClick={() => setMode('edit')}>
+                        Edit diagram
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

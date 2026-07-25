@@ -5,11 +5,14 @@ import {
   DropdownItem,
   DropdownList,
   FormGroup,
+  FormSelect,
+  FormSelectOption,
   Label,
   TextInput,
   ToggleGroup,
   ToggleGroupItem,
 } from '@patternfly/react-core'
+import TimesIcon from '@patternfly/react-icons/dist/esm/icons/times-icon'
 import EllipsisVIcon from '@patternfly/react-icons/dist/esm/icons/ellipsis-v-icon'
 import PencilAltIcon from '@patternfly/react-icons/dist/esm/icons/pencil-alt-icon'
 import { CreateResourceModal } from '@/components/studio/CreateResourceModal'
@@ -17,6 +20,7 @@ import { EmptySplash } from '@/components/studio/EmptySplash'
 import { getProject } from '@/data/projects'
 import {
   createKnowledgeCollection,
+  deleteKnowledgeCollection,
   indexKnowledgeRepo,
   isDemoMode,
   listKnowledgeCanvasVersions,
@@ -81,16 +85,53 @@ export function CanvasTab({ projectId, canvases, onRefresh }: CanvasTabProps) {
   const [versions, setVersions] = useState<ApiKnowledgeVersion[]>([])
   const [indexingRepo, setIndexingRepo] = useState(false)
   const [collections, setCollections] = useState<ApiKnowledgeCollection[]>([])
+  const [collectionOpen, setCollectionOpen] = useState(false)
+  const [collectionName, setCollectionName] = useState('')
+  const [collectionVisibility, setCollectionVisibility] = useState<'team' | 'personal' | 'agent'>(
+    'team',
+  )
+  const [collectionSaving, setCollectionSaving] = useState(false)
+  /** null = all canvases; string id filters sidebar list */
+  const [filterCollectionId, setFilterCollectionId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const savedTimer = useRef<number | null>(null)
   const draftRef = useRef({ name: '', md: '', baselineName: '', baselineMd: '' })
   const skipRenameBlur = useRef(false)
 
-  const canvas = canvases.find((c) => c.id === activeId) ?? canvases[0] ?? null
+  const collectionById = useCallback(
+    (id: string | undefined | null) =>
+      id ? collections.find((c) => c.id === id) : undefined,
+    [collections],
+  )
+
+  const visibleCanvases =
+    filterCollectionId == null
+      ? canvases
+      : filterCollectionId === '__none__'
+        ? canvases.filter((c) => !c.collectionId)
+        : canvases.filter((c) => c.collectionId === filterCollectionId)
+
+  const canvas =
+    visibleCanvases.find((c) => c.id === activeId) ??
+    canvases.find((c) => c.id === activeId) ??
+    visibleCanvases[0] ??
+    canvases[0] ??
+    null
 
   const bodyDirty = !!canvas && draftMd !== baselineMd
   const nameDirty = !!canvas && draftName.trim() !== baselineName
   const dirty = bodyDirty || nameDirty
+
+  const assignCollection = (collectionId: string | null) => {
+    if (!canvas) return
+    const next = collectionId || undefined
+    if ((canvas.collectionId || undefined) === next) return
+    updateCanvas(projectId, canvas.id, { collectionId: next })
+    const col = collectionById(collectionId)
+    pushToast(col ? `Assigned to “${col.name}”` : 'Removed from collection', {
+      kind: 'success',
+    })
+  }
 
   draftRef.current = {
     name: draftName,
@@ -375,11 +416,34 @@ export function CanvasTab({ projectId, canvases, onRefresh }: CanvasTabProps) {
     setIndexingRepo(true)
     try {
       const result = await indexKnowledgeRepo(projectId)
-      pushToast('Repo indexed', {
-        description: `${result.created} created · ${result.updated} updated · ${result.skipped} skipped`,
-        kind: 'success',
-      })
+      const changed = result.created + result.updated
+      const matched = result.matched_count ?? result.canvas_ids?.length ?? 0
+      if (changed === 0 && matched === 0) {
+        pushToast('No docs found to index', {
+          description:
+            result.message ||
+            'Looking for README, AGENTS.md, docs/**, ADR, openapi*, runbooks under the sandbox workspace.',
+          kind: 'warning',
+        })
+      } else if (changed === 0) {
+        pushToast('Repo already up to date', {
+          description:
+            result.message ||
+            `${matched} file(s) matched · ${result.skipped} unchanged`,
+          kind: 'info',
+        })
+      } else {
+        pushToast('Repo indexed', {
+          description: `${result.created} created · ${result.updated} updated · ${result.skipped} skipped`,
+          kind: 'success',
+        })
+      }
       onRefresh?.()
+      if (useApi) {
+        void listKnowledgeCollections(projectId)
+          .then(setCollections)
+          .catch(() => undefined)
+      }
     } catch (e) {
       pushToast(e instanceof Error ? e.message : 'Repo index failed', { kind: 'danger' })
     } finally {
@@ -436,6 +500,92 @@ export function CanvasTab({ projectId, canvases, onRefresh }: CanvasTabProps) {
     </CreateResourceModal>
   )
 
+  const collectionModal = (
+    <CreateResourceModal
+      isOpen={collectionOpen}
+      title="Create collection"
+      onClose={() => setCollectionOpen(false)}
+      onSubmit={() => {
+        void (async () => {
+          const n = collectionName.trim()
+          if (!n) return
+          setCollectionSaving(true)
+          try {
+            const col = await createKnowledgeCollection(projectId, {
+              name: n,
+              visibility: collectionVisibility,
+            })
+            setCollections((prev) =>
+              prev.some((x) => x.id === col.id) ? prev : [...prev, col],
+            )
+            if (collectionVisibility === 'agent') {
+              const agents = await listProjectAgents(projectId)
+              if (agents[0]) {
+                await upsertCollectionGrant(projectId, col.id, {
+                  agent_id: agents[0].id,
+                  can_retrieve: true,
+                })
+                pushToast('Collection created', {
+                  description: `Agent-only · retrieve granted to ${agents[0].name}`,
+                  kind: 'success',
+                })
+              } else {
+                pushToast('Collection created', {
+                  description: 'Agent-only — create an agent, then grant access from tools',
+                  kind: 'success',
+                })
+              }
+            } else {
+              pushToast('Collection created', {
+                description:
+                  collectionVisibility === 'personal'
+                    ? 'Visible only to you for retrieval'
+                    : 'Shared with the team',
+                kind: 'success',
+              })
+            }
+            setCollectionOpen(false)
+            setCollectionName('')
+          } catch (e) {
+            pushToast(e instanceof Error ? e.message : 'Collection failed', {
+              kind: 'danger',
+            })
+          } finally {
+            setCollectionSaving(false)
+          }
+        })()
+      }}
+      isSubmitDisabled={!collectionName.trim() || collectionSaving}
+    >
+      <FormGroup label="Name" isRequired fieldId="col-name">
+        <TextInput
+          id="col-name"
+          value={collectionName}
+          onChange={(_e, v) => setCollectionName(v)}
+          placeholder="e.g. Onboarding docs"
+        />
+      </FormGroup>
+      <FormGroup label="Visibility" fieldId="col-vis" style={{ marginTop: 12 }}>
+        <FormSelect
+          id="col-vis"
+          value={collectionVisibility}
+          onChange={(_e, v) =>
+            setCollectionVisibility(v as 'team' | 'personal' | 'agent')
+          }
+          aria-label="Collection visibility"
+        >
+          <FormSelectOption value="team" label="Team — shared with project members" />
+          <FormSelectOption value="personal" label="Personal — only you" />
+          <FormSelectOption value="agent" label="Agent-only — granted agents can retrieve" />
+        </FormSelect>
+        <p className="lc-meta" style={{ marginTop: 6 }}>
+          Collections group canvases for retrieval ACLs. “Repo docs” is created automatically by
+          Index repo.
+        </p>
+      </FormGroup>
+    </CreateResourceModal>
+  )
+
   if (canvases.length === 0) {
     return (
       <div className="canvas-empty">
@@ -449,6 +599,7 @@ export function CanvasTab({ projectId, canvases, onRefresh }: CanvasTabProps) {
           onSecondary={() => fileRef.current?.click()}
         />
         {createModal}
+        {collectionModal}
       </div>
     )
   }
@@ -490,60 +641,130 @@ export function CanvasTab({ projectId, canvases, onRefresh }: CanvasTabProps) {
           </Button>
         </div>
         {useApi ? (
-          <div style={{ padding: '0 8px 8px', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {collections.map((c) => (
-              <Label key={c.id} color="blue">
-                {c.name}
-                <span className="lc-meta"> · {c.visibility}</span>
-              </Label>
-            ))}
-            <Button
-              size="sm"
-              variant="link"
-              isInline
-              onClick={() => {
-                void (async () => {
-                  try {
-                    const col = await createKnowledgeCollection(projectId, {
-                      name: 'Team docs',
-                      visibility: 'team',
-                    })
-                    setCollections((prev) =>
-                      prev.some((x) => x.id === col.id) ? prev : [...prev, col],
-                    )
-                    const agents = await listProjectAgents(projectId)
-                    if (agents[0]) {
-                      await upsertCollectionGrant(projectId, col.id, {
-                        agent_id: agents[0].id,
-                        can_retrieve: true,
-                      })
-                    }
-                    pushToast('Collection ready', {
-                      description: agents[0]
-                        ? `Granted retrieve to ${agents[0].name}`
-                        : 'Create an agent to grant access',
-                      kind: 'success',
-                    })
-                  } catch (e) {
-                    pushToast(e instanceof Error ? e.message : 'Collection failed', {
-                      kind: 'danger',
-                    })
-                  }
-                })()
-              }}
-            >
-              + Collection
-            </Button>
+          <div className="canvas-collections">
+            <div className="canvas-collections-head">
+              <span className="canvas-collections-label">Collections</span>
+              <Button
+                size="sm"
+                variant="plain"
+                className="canvas-collections-add"
+                onClick={() => {
+                  setCollectionName('')
+                  setCollectionVisibility('team')
+                  setCollectionOpen(true)
+                }}
+                title="Create collection"
+                aria-label="Create collection"
+              >
+                +
+              </Button>
+            </div>
+            {collections.length === 0 ? (
+              <p className="canvas-collections-empty">
+                Optional groups for retrieval access
+              </p>
+            ) : (
+              <ul className="canvas-collections-list">
+                <li>
+                  <button
+                    type="button"
+                    className={`canvas-collection-row is-filter${filterCollectionId == null ? ' is-active' : ''}`}
+                    onClick={() => setFilterCollectionId(null)}
+                  >
+                    <div className="canvas-collection-text">
+                      <span className="canvas-collection-name">All notes</span>
+                      <span className="canvas-collection-meta">
+                        {canvases.length} canvas{canvases.length === 1 ? '' : 'es'}
+                      </span>
+                    </div>
+                  </button>
+                </li>
+                {collections.map((c) => {
+                  const isRepo = c.name === 'Repo docs'
+                  const count = canvases.filter((x) => x.collectionId === c.id).length
+                  const meta = isRepo
+                    ? 'From Index repo'
+                    : c.visibility === 'personal'
+                      ? 'Personal'
+                      : c.visibility === 'agent'
+                        ? 'Agent-only'
+                        : 'Team'
+                  const active = filterCollectionId === c.id
+                  return (
+                    <li key={c.id}>
+                      <div
+                        className={`canvas-collection-row is-filter${active ? ' is-active' : ''}`}
+                      >
+                        <button
+                          type="button"
+                          className="canvas-collection-select"
+                          title={`Filter: ${c.name} · ${meta}`}
+                          onClick={() =>
+                            setFilterCollectionId((prev) => (prev === c.id ? null : c.id))
+                          }
+                        >
+                          <span className="canvas-collection-name">{c.name}</span>
+                          <span className="canvas-collection-meta">
+                            {meta}
+                            {count ? ` · ${count}` : ''}
+                          </span>
+                        </button>
+                        {!isRepo ? (
+                          <Button
+                            size="sm"
+                            variant="plain"
+                            className="canvas-collection-remove"
+                            aria-label={`Delete collection ${c.name}`}
+                            title="Delete collection"
+                            onClick={() => {
+                              void (async () => {
+                                if (!window.confirm(`Delete collection “${c.name}”?`)) return
+                                try {
+                                  await deleteKnowledgeCollection(projectId, c.id)
+                                  setCollections((prev) => prev.filter((x) => x.id !== c.id))
+                                  if (filterCollectionId === c.id) setFilterCollectionId(null)
+                                  // Clear assignment on local canvases for deleted collection
+                                  for (const cv of canvases) {
+                                    if (cv.collectionId === c.id) {
+                                      updateCanvas(projectId, cv.id, { collectionId: undefined })
+                                    }
+                                  }
+                                  pushToast('Collection deleted', { kind: 'info' })
+                                } catch (e) {
+                                  pushToast(
+                                    e instanceof Error ? e.message : 'Delete collection failed',
+                                    { kind: 'danger' },
+                                  )
+                                }
+                              })()
+                            }}
+                            icon={<TimesIcon />}
+                          />
+                        ) : null}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
           </div>
         ) : null}
         <div className="canvas-sidebar-list" role="listbox" aria-label="Canvases">
-          {canvases.map((c) => {
+          {visibleCanvases.length === 0 ? (
+            <p className="canvas-collections-empty" style={{ padding: '0.5rem' }}>
+              {filterCollectionId
+                ? 'No notes in this collection. Open a note and assign it below the title.'
+                : 'No canvases yet.'}
+            </p>
+          ) : null}
+          {visibleCanvases.map((c) => {
             const active = c.id === canvas?.id
             const rowUnsaved = active && dirty
             const rowBodyDirty =
               active && bodyDirty
                 ? true
                 : c.status === 'stale'
+            const colName = collectionById(c.collectionId)?.name
             return (
               <button
                 key={c.id}
@@ -555,6 +776,7 @@ export function CanvasTab({ projectId, canvases, onRefresh }: CanvasTabProps) {
               >
                 <span className="canvas-nav-title">{c.name}</span>
                 <span className="canvas-nav-meta">
+                  {colName ? `${colName} · ` : ''}
                   {sidebarMetaLine(c, {
                     unsaved: rowUnsaved,
                     bodyDirty: rowBodyDirty && c.status === 'indexed',
@@ -756,6 +978,47 @@ export function CanvasTab({ projectId, canvases, onRefresh }: CanvasTabProps) {
                   </Dropdown>
                 </div>
               </div>
+              {useApi ? (
+                <div className="canvas-collection-assign">
+                  <label className="canvas-collection-assign-label" htmlFor="canvas-collection">
+                    Collection
+                  </label>
+                  <FormSelect
+                    id="canvas-collection"
+                    value={canvas.collectionId || ''}
+                    onChange={(_e, v) => assignCollection(v || null)}
+                    aria-label="Assign canvas to collection"
+                    className="canvas-collection-assign-select"
+                  >
+                    <FormSelectOption value="" label="None (project default)" />
+                    {collections.map((col) => (
+                      <FormSelectOption
+                        key={col.id}
+                        value={col.id}
+                        label={
+                          col.name === 'Repo docs'
+                            ? `${col.name} (Index repo)`
+                            : col.name
+                        }
+                      />
+                    ))}
+                  </FormSelect>
+                  {!collections.length ? (
+                    <Button
+                      size="sm"
+                      variant="link"
+                      isInline
+                      onClick={() => {
+                        setCollectionName('')
+                        setCollectionVisibility('team')
+                        setCollectionOpen(true)
+                      }}
+                    >
+                      Create a collection
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
               {canvas.sourceUrl ? (
                 <p className="lc-meta" style={{ margin: '0 0 8px' }}>
                   Source:{' '}
@@ -849,6 +1112,7 @@ export function CanvasTab({ projectId, canvases, onRefresh }: CanvasTabProps) {
       </section>
 
       {createModal}
+      {collectionModal}
     </div>
   )
 }

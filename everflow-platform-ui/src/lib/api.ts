@@ -949,6 +949,8 @@ export type ApiKnowledgeEvalRunResult = {
     hit: boolean
     expected_canvas_ids: string[]
     retrieved_canvas_ids: string[]
+    expected_names?: string[]
+    retrieved_names?: string[]
     top_score?: number | null
   }[]
 }
@@ -1076,7 +1078,15 @@ export async function promoteResearchToCanvas(
 export async function indexKnowledgeRepo(
   projectId: string,
   body?: { collection_name?: string; paths?: string[] },
-): Promise<{ created: number; updated: number; skipped: number; canvas_ids: string[] }> {
+): Promise<{
+  created: number
+  updated: number
+  skipped: number
+  canvas_ids: string[]
+  matched_paths?: string[]
+  matched_count?: number
+  message?: string | null
+}> {
   return apiFetch(`/api/v1/projects/${projectId}/knowledge/index-repo`, {
     method: 'POST',
     body: JSON.stringify(body ?? {}),
@@ -1096,6 +1106,26 @@ export async function createKnowledgeCollection(
   return apiFetch(`/api/v1/projects/${projectId}/knowledge/collections`, {
     method: 'POST',
     body: JSON.stringify(body),
+  })
+}
+
+export async function updateKnowledgeCollection(
+  projectId: string,
+  collectionId: string,
+  body: { name?: string; visibility?: string },
+): Promise<ApiKnowledgeCollection> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/collections/${collectionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteKnowledgeCollection(
+  projectId: string,
+  collectionId: string,
+): Promise<void> {
+  await apiFetch(`/api/v1/projects/${projectId}/knowledge/collections/${collectionId}`, {
+    method: 'DELETE',
   })
 }
 
@@ -1133,6 +1163,34 @@ export async function createKnowledgeEvalSet(
   return apiFetch(`/api/v1/projects/${projectId}/knowledge/eval-sets`, {
     method: 'POST',
     body: JSON.stringify(body),
+  })
+}
+
+export async function updateKnowledgeEvalSet(
+  projectId: string,
+  evalSetId: string,
+  body: {
+    name?: string
+    collection_id?: string | null
+    questions?: {
+      question: string
+      expected_canvas_ids?: string[]
+      expected_notes?: string
+    }[]
+  },
+): Promise<ApiKnowledgeEvalSet> {
+  return apiFetch(`/api/v1/projects/${projectId}/knowledge/eval-sets/${evalSetId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteKnowledgeEvalSet(
+  projectId: string,
+  evalSetId: string,
+): Promise<void> {
+  await apiFetch(`/api/v1/projects/${projectId}/knowledge/eval-sets/${evalSetId}`, {
+    method: 'DELETE',
   })
 }
 
