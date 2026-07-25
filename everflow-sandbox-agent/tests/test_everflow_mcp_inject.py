@@ -7,10 +7,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.everflow_mcp_inject import (
+    KNOWLEDGE_POLICY_MARKER,
     MCP_PACKAGE_STAMP_REL,
     agent_mcp_fingerprint,
     build_everflow_mcp_config,
     ensure_everflow_mcp_package,
+    merge_knowledge_policy_markdown,
     merge_opencode_mcp,
     write_everflow_mcp_host,
 )
@@ -75,6 +77,18 @@ def test_write_host_creates_files(tmp_path: Path) -> None:
     oc = json.loads((tmp_path / "opencode.json").read_text(encoding="utf-8"))
     assert "everflow" in oc["mcp"]
     assert oc["mcp"]["everflow"]["command"] == ["python3", "-m", "everflow_mcp"]
+    agents = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert KNOWLEDGE_POLICY_MARKER in agents
+    assert "knowledge_search" in agents
+
+
+def test_merge_knowledge_policy_idempotent() -> None:
+    once = merge_knowledge_policy_markdown("")
+    twice = merge_knowledge_policy_markdown(once)
+    assert twice.count(KNOWLEDGE_POLICY_MARKER) == 1
+    with_user = merge_knowledge_policy_markdown("# My project\n\nHello.\n")
+    assert with_user.startswith("# My project")
+    assert KNOWLEDGE_POLICY_MARKER in with_user
 
 
 def test_agent_mcp_fingerprint_stable(tmp_path: Path) -> None:

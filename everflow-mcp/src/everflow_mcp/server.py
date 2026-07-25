@@ -19,6 +19,16 @@ mcp = FastMCP(
         "Use these tools to create knowledge canvases, Everflow agent definitions "
         "(not OpenCode built-in modes), test suites/cases, registered HTTP tools, "
         "and background jobs (detached long-lived sandbox processes). "
+        "\n\n"
+        "PROJECT KNOWLEDGE (vector store — CRITICAL):\n"
+        "- Project docs, runbooks, passwords, API keys, and secrets live in Knowledge canvases.\n"
+        "- They are NOT MCP resources. Do not say knowledge is missing from 'MCP resources'.\n"
+        "- ALWAYS call knowledge_search(query) BEFORE answering questions about project "
+        "docs, config, passwords, keys, tokens, credentials, or 'knowledge key'.\n"
+        "- If search returns hits, quote the chunk text and cite canvas_name.\n"
+        "- If search is empty, call list_canvases then get_canvas for likely docs.\n"
+        "- Use reindex_canvas after creating/updating a canvas when retrieval should refresh.\n"
+        "\n"
         "To spin up a website or dev server, prefer create_job (e.g. npm run dev) "
         "over a blocking shell so the process survives and appears in the Jobs panel. "
         "Use get_job_logs to verify startup; stop_job/kill_job to shut down. "
@@ -152,10 +162,12 @@ async def reindex_canvas(canvas_id: str) -> str:
 
 @mcp.tool()
 async def knowledge_search(query: str, top_k: int = 5, agent_id: str = "") -> str:
-    """Search project knowledge canvases and return cite-backed chunks.
+    """Search the project knowledge vector store (indexed canvases) for chunks.
 
-    Prefer this before answering questions about project docs, runbooks, or
-    pinned web sources. Each hit includes canvas_id, canvas_name, text, and score.
+    MUST use this for passwords, API keys, secrets, knowledge keys, credentials,
+    runbooks, architecture notes, and any project documentation Q&A.
+    This is NOT an MCP resource list — call this tool. Empty resources does not
+    mean knowledge is empty. Returns hits with canvas_id, canvas_name, text, score.
     """
     try:
         return _ok(

@@ -43,7 +43,11 @@ Hosts that prefix tools with the server name expose them as `everflow_<tool>` (e
 ### Knowledge
 
 - `list_canvases` / `get_canvas` / `create_canvas` / `update_canvas` / `delete_canvas`
-- `reindex_canvas` / `knowledge_search`
+- `reindex_canvas` / **`knowledge_search`** (vector + lexical retrieve over indexed canvases)
+
+**Important:** Knowledge is **not** MCP resources. OpenCode must call **`knowledge_search`**
+(or Chat auto-injects retrieve hits into the prompt). Index a canvas in the Knowledge panel
+first (`status=indexed`, chunk count &gt; 0). Empty MCP resources does **not** mean the store is empty.
 
 ### Agents (studio Agents panel — not OpenCode modes)
 

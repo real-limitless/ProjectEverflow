@@ -219,6 +219,23 @@ async def ensure_everflow_mcp_package(backend: Any, sandbox_name: str) -> dict[s
     }
 
 
+# Injected into workspace AGENTS.md so OpenCode agents prefer knowledge_search.
+KNOWLEDGE_POLICY_MARKER = "<!-- everflow-knowledge-policy -->"
+KNOWLEDGE_POLICY_MD = """<!-- everflow-knowledge-policy -->
+## Everflow project knowledge
+
+Project documentation, passwords, API keys, and secrets are stored in **Everflow Knowledge canvases**
+and indexed into the platform vector store (chunk embeddings).
+
+- Use the **everflow** MCP tools — especially `knowledge_search` — before answering
+  questions about project docs, config, passwords, keys, tokens, or a "knowledge key".
+- Knowledge is **not** listed under MCP resources. An empty resources list does **not**
+  mean knowledge is empty.
+- If `knowledge_search` returns hits, quote the chunk text and name the canvas.
+- Fallback: `list_canvases` → `get_canvas` when search returns nothing but canvases exist.
+"""
+
+
 def merge_opencode_mcp(existing: dict[str, Any], mcp_entry: dict[str, Any]) -> dict[str, Any]:
     """Merge everflow MCP entry into opencode.json without clobbering other keys."""
     data = dict(existing) if existing else {}
@@ -228,6 +245,24 @@ def merge_opencode_mcp(existing: dict[str, Any], mcp_entry: dict[str, Any]) -> d
     mcp_block["everflow"] = mcp_entry
     data["mcp"] = mcp_block
     return data
+
+
+def merge_knowledge_policy_markdown(existing: str | None) -> str:
+    """Upsert the Everflow knowledge policy block into AGENTS.md body."""
+    body = (existing or "").strip()
+    if KNOWLEDGE_POLICY_MARKER in body:
+        # Replace existing block (marker through next HTML comment or EOF)
+        import re
+
+        pattern = re.compile(
+            re.escape(KNOWLEDGE_POLICY_MARKER) + r".*?(?=\n<!--|\Z)",
+            re.DOTALL,
+        )
+        body = pattern.sub(KNOWLEDGE_POLICY_MD.strip(), body).strip()
+        return body + "\n"
+    if body:
+        return body + "\n\n" + KNOWLEDGE_POLICY_MD.strip() + "\n"
+    return KNOWLEDGE_POLICY_MD.strip() + "\n"
 
 
 def write_everflow_mcp_host(
@@ -274,6 +309,14 @@ def write_everflow_mcp_host(
         cfg_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     except OSError as exc:
         return {"configured": False, "error": f"write opencode.json failed: {exc}", "mode": "host"}
+
+    # Project-level agent instructions so OpenCode prefers knowledge_search.
+    agents_md = ws / "AGENTS.md"
+    try:
+        prev = agents_md.read_text(encoding="utf-8") if agents_md.is_file() else ""
+        agents_md.write_text(merge_knowledge_policy_markdown(prev), encoding="utf-8")
+    except OSError as exc:
+        logger.debug("host AGENTS.md knowledge policy write failed: %s", exc)
 
     cmd = _normalize_command(command)
     return {
@@ -334,6 +377,17 @@ async def write_everflow_mcp_guest(
             "error": f"write opencode.json failed: {exc}",
             "mode": "guest",
         }
+
+    try:
+        prev_agents = await _guest_read_text(backend, sandbox_name, "AGENTS.md")
+        await _guest_write_text(
+            backend,
+            sandbox_name,
+            "AGENTS.md",
+            merge_knowledge_policy_markdown(prev_agents),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("guest AGENTS.md knowledge policy write failed name=%s: %s", sandbox_name, exc)
 
     cmd = _normalize_command(command)
     return {
