@@ -309,6 +309,11 @@ async def create_job(
         )
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found") from None
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Timed out starting job in sandbox",
+        ) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _job_info(meta)
@@ -399,6 +404,11 @@ async def start_sandbox_job(
         meta = await start_existing_job(backend, name, job_id)
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Timed out starting job in sandbox",
+        ) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _job_info(meta)
@@ -419,6 +429,11 @@ async def restart_sandbox_job(
         meta = await restart_job(backend, name, job_id)
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found") from None
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Timed out restarting job in sandbox",
+        ) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _job_info(meta)

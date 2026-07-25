@@ -123,6 +123,59 @@ async def _ensure_jobs_dir(backend: SandboxBackend, name: str) -> None:
         raise RuntimeError(mkdir_err or "Failed to create jobs directory")
 
 
+def _pid_path_for_log(log_path: str) -> str:
+    if log_path.endswith(".log"):
+        return log_path[: -len(".log")] + ".pid"
+    return f"{log_path}.pid"
+
+
+def _build_spawn_script(
+    *,
+    command: str,
+    cwd: str,
+    log_path: str,
+    append_log: bool = False,
+) -> str:
+    """Shell that fully detaches a job and prints its pid on stdout.
+
+    microsandbox guest exec captures stdout/stderr as pipes and waits until every
+    writer closes them. Plain ``nohup ... &`` leaves long-running children in the
+    exec process group and can hold those pipes open (hang until agent timeout).
+    Use ``setsid -f`` (same idea as ``everflow_desktop.sh`` ``_daemon``) so the job
+    is a new session leader with stdio redirected away from the exec pipes.
+    """
+    quoted_cmd = shlex.quote(command)
+    quoted_cwd = shlex.quote(cwd)
+    quoted_log = shlex.quote(log_path)
+    quoted_pid = shlex.quote(_pid_path_for_log(log_path))
+    redirect = ">>" if append_log else ">"
+    # Child records its pid, then replaces itself with the user command.
+    child_body = f"echo $$ > {quoted_pid}; exec sh -c {quoted_cmd}"
+    quoted_child = shlex.quote(child_body)
+    return (
+        f"cd {quoted_cwd} || exit 1; "
+        f"rm -f {quoted_pid}; "
+        f"if command -v setsid >/dev/null 2>&1; then "
+        # -f: fork so setsid returns immediately; child is session leader.
+        f"  if ! setsid -f sh -c {quoted_child} </dev/null {redirect} {quoted_log} 2>&1; then "
+        # BusyBox/old setsid may lack -f — background setsid instead.
+        f"    setsid sh -c {quoted_child} </dev/null {redirect} {quoted_log} 2>&1 & "
+        f"  fi; "
+        f"else "
+        f"  nohup sh -c {quoted_child} </dev/null {redirect} {quoted_log} 2>&1 & "
+        f"fi; "
+        # Poll for pid file written by the child (max ~1s).
+        f"i=0; "
+        f"while [ ! -s {quoted_pid} ] && [ \"$i\" -lt 20 ]; do "
+        f"  i=$((i+1)); sleep 0.05; "
+        f"done; "
+        f"if [ ! -s {quoted_pid} ]; then "
+        f"  echo 'failed to capture job pid' >&2; exit 1; "
+        f"fi; "
+        f"cat {quoted_pid}"
+    )
+
+
 async def _spawn_detached(
     backend: SandboxBackend,
     name: str,
@@ -132,14 +185,12 @@ async def _spawn_detached(
     log_path: str,
     append_log: bool = False,
 ) -> int:
-    """Spawn nohup job; return pid. append_log=True keeps prior log content on restart."""
-    quoted_cmd = shlex.quote(command)
-    quoted_cwd = shlex.quote(cwd)
-    quoted_log = shlex.quote(log_path)
-    redirect = ">>" if append_log else ">"
-    start_script = (
-        f"cd {quoted_cwd} && "
-        f"nohup sh -c {quoted_cmd} {redirect} {quoted_log} 2>&1 & echo $!"
+    """Spawn detached job; return pid. append_log=True keeps prior log on restart."""
+    start_script = _build_spawn_script(
+        command=command,
+        cwd=cwd,
+        log_path=log_path,
+        append_log=append_log,
     )
     code, stdout, stderr = await backend.exec(
         name,
@@ -305,6 +356,7 @@ async def delete_job(
         except Exception:  # noqa: BLE001
             logger.debug("kill before delete failed name=%s id=%s", name, job_id, exc_info=True)
     log_path = str(meta.get("log_path") or _log_guest(job_id))
+    pid_path = _pid_path_for_log(log_path)
     meta_rel = _meta_rel(job_id)
     await backend.exec(
         name,
@@ -313,7 +365,8 @@ async def delete_job(
             "-c",
             (
                 f"rm -f {shlex.quote(meta_rel)} {shlex.quote(log_path)} "
-                f"{shlex.quote(_log_guest(job_id))} 2>/dev/null || true"
+                f"{shlex.quote(pid_path)} {shlex.quote(_log_guest(job_id))} "
+                f"{shlex.quote(_pid_path_for_log(_log_guest(job_id)))} 2>/dev/null || true"
             ),
         ],
         cwd="/workspace",
