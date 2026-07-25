@@ -2178,89 +2178,6 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           }}
         />
 
-        {/* Full-tab modal gate: greys out chat until OpenCode is ready (no demo fallback). */}
-        <ChatHarnessUnavailable
-          isOpen={
-            useLive &&
-            (liveStatus === 'connecting' ||
-              liveStatus === 'idle' ||
-              liveStatus === 'error')
-          }
-          connecting={liveStatus === 'connecting' || liveStatus === 'idle'}
-          detail={(() => {
-            if (liveStatus !== 'error') return null
-            const down = liveError ? sandboxDownFromError(new Error(liveError)) : null
-            if (down) {
-              const statusLine = `Sandbox is not running (status=${down.status})`
-              return down.reason && down.reason !== statusLine
-                ? `${statusLine} — ${down.reason}`
-                : statusLine
-            }
-            return liveError
-          })()}
-          onRetry={
-            liveStatus === 'error'
-              ? () => {
-                  bootGenRef.current += 1
-                  setLiveError(null)
-                  setLiveStatus('connecting')
-                  const projectId = currentProjectId!
-                  const gen = bootGenRef.current
-                  ;(async () => {
-                    try {
-                      const ensured = await withTimeout(
-                        ensureOpenCode(projectId, true),
-                        25_000,
-                        'OpenCode ensure',
-                      )
-                      if (gen !== bootGenRef.current) return
-                      if (!ensured?.healthy || isFakeOpenCodeEnsure(ensured)) {
-                        throw new Error(
-                          isFakeOpenCodeEnsure(ensured)
-                            ? 'OpenCode fake harness is disabled. Real sandbox harness is required for chat.'
-                            : ensured?.error ||
-                                'OpenCode harness did not become healthy. Background chat is unavailable.',
-                        )
-                      }
-                      const cat = await withTimeout(
-                        loadCatalogs(projectId),
-                        20_000,
-                        'Provider catalog',
-                      )
-                      if (gen !== bootGenRef.current) return
-                      await withTimeout(refreshSessions(projectId), 25_000, 'Session list')
-                      if (gen !== bootGenRef.current) return
-                      setLiveError(null)
-                      setLiveStatus(
-                        cat.connected.length > 0 ||
-                          cat.modelItems.length > 0 ||
-                          providerSkipped
-                          ? 'ready'
-                          : 'needs_provider',
-                      )
-                    } catch (e) {
-                      if (gen !== bootGenRef.current) return
-                      const down = sandboxDownFromError(e)
-                      if (down && isHardSandboxDown(down)) {
-                        const store = usePlaygroundStore.getState()
-                        store.patchProjectSandbox(projectId, {
-                          sandboxStatus: isSandboxDeadStatus(down.status)
-                            ? down.status
-                            : 'error',
-                          sandboxError: down.message,
-                        })
-                        store.setSandboxReady(projectId, false)
-                        return
-                      }
-                      setLiveError((e as Error).message)
-                      setLiveStatus('error')
-                    }
-                  })()
-                }
-              : undefined
-          }
-        />
-
         {useLive && liveStatus === 'needs_provider' && !providerSkipped ? (
           <div className="chat-empty" style={{ minHeight: 100 }}>
             <h2 className="chat-empty-title">Connect a provider (optional)</h2>
@@ -2442,6 +2359,89 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           onStop={stopRunning}
         />
       </div>
+
+      {/* Panel-local gate only — covers .chat-layout (chat tab), not the playground shell. */}
+      <ChatHarnessUnavailable
+        isOpen={
+          useLive &&
+          (liveStatus === 'connecting' ||
+            liveStatus === 'idle' ||
+            liveStatus === 'error')
+        }
+        connecting={liveStatus === 'connecting' || liveStatus === 'idle'}
+        detail={(() => {
+          if (liveStatus !== 'error') return null
+          const down = liveError ? sandboxDownFromError(new Error(liveError)) : null
+          if (down) {
+            const statusLine = `Sandbox is not running (status=${down.status})`
+            return down.reason && down.reason !== statusLine
+              ? `${statusLine} — ${down.reason}`
+              : statusLine
+          }
+          return liveError
+        })()}
+        onRetry={
+          liveStatus === 'error'
+            ? () => {
+                bootGenRef.current += 1
+                setLiveError(null)
+                setLiveStatus('connecting')
+                const projectId = currentProjectId!
+                const gen = bootGenRef.current
+                ;(async () => {
+                  try {
+                    const ensured = await withTimeout(
+                      ensureOpenCode(projectId, true),
+                      25_000,
+                      'OpenCode ensure',
+                    )
+                    if (gen !== bootGenRef.current) return
+                    if (!ensured?.healthy || isFakeOpenCodeEnsure(ensured)) {
+                      throw new Error(
+                        isFakeOpenCodeEnsure(ensured)
+                          ? 'OpenCode fake harness is disabled. Real sandbox harness is required for chat.'
+                          : ensured?.error ||
+                              'OpenCode harness did not become healthy. Background chat is unavailable.',
+                      )
+                    }
+                    const cat = await withTimeout(
+                      loadCatalogs(projectId),
+                      20_000,
+                      'Provider catalog',
+                    )
+                    if (gen !== bootGenRef.current) return
+                    await withTimeout(refreshSessions(projectId), 25_000, 'Session list')
+                    if (gen !== bootGenRef.current) return
+                    setLiveError(null)
+                    setLiveStatus(
+                      cat.connected.length > 0 ||
+                        cat.modelItems.length > 0 ||
+                        providerSkipped
+                        ? 'ready'
+                        : 'needs_provider',
+                    )
+                  } catch (e) {
+                    if (gen !== bootGenRef.current) return
+                    const down = sandboxDownFromError(e)
+                    if (down && isHardSandboxDown(down)) {
+                      const store = usePlaygroundStore.getState()
+                      store.patchProjectSandbox(projectId, {
+                        sandboxStatus: isSandboxDeadStatus(down.status)
+                          ? down.status
+                          : 'error',
+                        sandboxError: down.message,
+                      })
+                      store.setSandboxReady(projectId, false)
+                      return
+                    }
+                    setLiveError((e as Error).message)
+                    setLiveStatus('error')
+                  }
+                })()
+              }
+            : undefined
+        }
+      />
 
       {currentProjectId ? (
         <ConnectProviderModal

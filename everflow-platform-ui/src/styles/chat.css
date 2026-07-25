@@ -12,6 +12,7 @@
 }
 
 .chat-layout {
+  position: relative !important;
   display: flex !important;
   flex-direction: row !important;
   height: 100% !important;
@@ -447,38 +448,76 @@
   background: var(--pf-t--global--background--color--primary--default);
 }
 
-/* OpenCode harness loading / error gate modal */
-.chat-harness-gate-body {
+/* OpenCode harness gate — absolute over .chat-layout only (chat tab), never full-page modal */
+.chat-layout > .chat-harness-gate-overlay {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 20 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 1.25rem !important;
+  /* Dim only this panel; sibling playground panels stay interactive */
+  background: color-mix(
+    in srgb,
+    var(--pf-t--global--background--color--dark-100, #151515) 45%,
+    transparent
+  ) !important;
+  backdrop-filter: blur(2px);
+  pointer-events: auto !important;
+  /* Contain any focus / scroll within the chat panel */
+  overflow: auto !important;
+}
+
+.chat-layout .chat-harness-gate-card {
+  width: min(26rem, 100%);
+  max-height: min(90%, 28rem);
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--primary--default);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  padding: 1.25rem 1.35rem 1.15rem;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 0.75rem;
-  padding-block: 0.35rem;
+  gap: 0.65rem;
 }
 
-.chat-harness-gate-spinner {
-  display: flex;
-  justify-content: center;
-  padding-block: 0.5rem;
-}
-
-.chat-harness-gate-desc {
+.chat-layout .chat-harness-gate-title {
   margin: 0;
-  max-width: 28rem;
-  font-size: 0.9rem;
-  line-height: 1.45;
+  font-size: 1.05rem;
+  font-weight: 600;
   color: var(--pf-t--global--text--color--regular);
 }
 
-.chat-harness-gate-detail {
+.chat-layout .chat-harness-gate-spinner {
+  display: flex;
+  justify-content: center;
+  padding-block: 0.35rem;
+}
+
+.chat-layout .chat-harness-gate-desc {
   margin: 0;
-  max-width: 28rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.chat-layout .chat-harness-gate-detail {
+  margin: 0;
   font-size: 0.8rem;
   line-height: 1.4;
-  opacity: 0.9;
   color: var(--pf-t--global--color--status--danger--default);
   word-break: break-word;
+  max-width: 100%;
+}
+
+.chat-layout .chat-harness-gate-actions {
+  display: flex;
+  justify-content: center;
+  padding-block-start: 0.35rem;
 }
 
 /* Jump-to-latest control when user has scrolled up */
