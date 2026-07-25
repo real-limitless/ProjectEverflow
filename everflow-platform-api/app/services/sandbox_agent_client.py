@@ -91,6 +91,13 @@ class SandboxAgentClient:
         }
         return await self._request("POST", f"/v1/sandboxes/{name}/exec", json=payload)
 
+    async def resize_desktop(self, name: str, *, width: int, height: int) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/v1/sandboxes/{name}/desktop/resize",
+            json={"width": width, "height": height},
+        )
+
     async def bootstrap(self, name: str, harnesses: list[str]) -> dict[str, Any]:
         return await self._request(
             "POST",

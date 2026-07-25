@@ -32,6 +32,20 @@ class ExecResult(BaseModel):
     stderr: str
 
 
+class DesktopResizeRequest(BaseModel):
+    """Match noVNC panel CSS pixels to the guest X framebuffer."""
+
+    width: int = Field(ge=640, le=3840)
+    height: int = Field(ge=480, le=2160)
+
+
+class DesktopResizeResponse(BaseModel):
+    ok: bool
+    width: int
+    height: int
+    message: str = ""
+
+
 class BootstrapRequest(BaseModel):
     harnesses: list[str] = Field(default_factory=list)
 

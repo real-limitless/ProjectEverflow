@@ -192,6 +192,58 @@ async def ensure_guest_desktop_for_proxy(
         logger.warning("desktop ensure before proxy failed name=%s: %s", name, exc)
 
 
+def clamp_desktop_size(width: int, height: int) -> tuple[int, int]:
+    """Clamp and snap to even dimensions for xrandr/Xvfb."""
+    w = max(640, min(3840, int(width)))
+    h = max(480, min(2160, int(height)))
+    w -= w % 2
+    h -= h % 2
+    return w, h
+
+
+async def resize_guest_desktop(
+    exec_fn: ExecFn,
+    name: str,
+    width: int,
+    height: int,
+) -> tuple[bool, int, int, str]:
+    """Resize the guest X framebuffer to match the browser panel.
+
+    Uses ``everflow-desktop.sh --resize`` (xrandr --fb). x11vnc ``-xrandr``
+    then advertises NewFBSize so noVNC clients update.
+
+    Returns ``(ok, width, height, message)``.
+    """
+    w, h = clamp_desktop_size(width, height)
+    # Push latest script (adds --resize) and ensure stack is up.
+    await _install_desktop_script(exec_fn, name)
+    await ensure_guest_desktop(exec_fn, name)
+    try:
+        code, stdout, stderr = await exec_fn(
+            name,
+            DESKTOP_SCRIPT,
+            ["--resize", str(w), str(h)],
+            cwd="/workspace",
+            env=None,
+            timeout_seconds=20,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("desktop resize exec failed name=%s: %s", name, exc)
+        return False, w, h, str(exc)
+
+    msg = (stdout or stderr or "").strip()
+    if code != 0:
+        logger.warning(
+            "desktop resize failed name=%s code=%s err=%s",
+            name,
+            code,
+            msg[:240],
+        )
+        return False, w, h, msg or f"exit {code}"
+    logger.info("guest desktop resized name=%s %sx%s", name, w, h)
+    return True, w, h, msg or f"{w}x{h}"
+
+
 def reset_desktop_state_for_tests() -> None:
     """Clear module locks/tasks (unit tests only)."""
     _locks.clear()

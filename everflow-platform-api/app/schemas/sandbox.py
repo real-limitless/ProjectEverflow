@@ -43,3 +43,17 @@ class SandboxFsEntry(BaseModel):
     name: str
     is_dir: bool
     size: int | None = None
+
+
+class DesktopResizeRequest(BaseModel):
+    """Match the Desktop panel CSS size to the guest X framebuffer."""
+
+    width: int = Field(ge=640, le=3840)
+    height: int = Field(ge=480, le=2160)
+
+
+class DesktopResizeResponse(BaseModel):
+    ok: bool
+    width: int
+    height: int
+    message: str = ""

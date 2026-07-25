@@ -567,6 +567,25 @@ export async function execInSandbox(
   })
 }
 
+export type DesktopResizeResult = {
+  ok: boolean
+  width: number
+  height: number
+  message: string
+}
+
+/** Match guest X framebuffer to the Desktop panel CSS size (noVNC). */
+export async function resizeSandboxDesktop(
+  projectId: string,
+  width: number,
+  height: number,
+): Promise<DesktopResizeResult> {
+  return apiFetch(`/api/v1/projects/${projectId}/sandbox/desktop/resize`, {
+    method: 'POST',
+    body: JSON.stringify({ width, height }),
+  })
+}
+
 /** Run a free-form shell line via `sh -c` inside the project sandbox. */
 export async function execShellLine(
   projectId: string,

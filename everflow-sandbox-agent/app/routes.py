@@ -36,6 +36,8 @@ from app.jobs import (
 )
 from app.schemas import (
     BootstrapRequest,
+    DesktopResizeRequest,
+    DesktopResizeResponse,
     ExecRequest,
     ExecResult,
     FsEntry,
@@ -1062,6 +1064,38 @@ async def opencode_proxy(
         )
 
     return await proxy_to_opencode(request, base_url=base, path=path or "")
+
+
+@router.post(
+    "/v1/sandboxes/{name}/desktop/resize",
+    response_model=DesktopResizeResponse,
+    dependencies=[Depends(require_agent_token)],
+)
+async def resize_sandbox_desktop(
+    name: str,
+    body: DesktopResizeRequest,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> DesktopResizeResponse:
+    """Resize guest X framebuffer to match the Desktop panel (noVNC)."""
+    await _require_running_sandbox(name, backend)
+    from app.desktop import resize_guest_desktop
+
+    try:
+        ok, w, h, msg = await resize_guest_desktop(
+            backend.exec,
+            name,
+            body.width,
+            body.height,
+        )
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found") from None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("desktop resize failed name=%s: %s", name, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Desktop resize failed: {exc}",
+        ) from exc
+    return DesktopResizeResponse(ok=ok, width=w, height=h, message=msg)
 
 
 @router.get(

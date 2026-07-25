@@ -13,6 +13,8 @@ from app.core.deps import get_project_for_member
 from app.db.session import get_async_session
 from app.models.project import Project
 from app.schemas.sandbox import (
+    DesktopResizeRequest,
+    DesktopResizeResponse,
     SandboxExecRequest,
     SandboxExecResult,
     SandboxFsEntry,
@@ -287,6 +289,42 @@ async def exec_in_sandbox(
         exit_code=int(result.get("exit_code", 1)),
         stdout=str(result.get("stdout", "")),
         stderr=str(result.get("stderr", "")),
+    )
+
+
+@router.post(
+    "/projects/{project_id}/sandbox/desktop/resize",
+    response_model=DesktopResizeResponse,
+)
+async def resize_sandbox_desktop(
+    body: DesktopResizeRequest,
+    project: Project = Depends(get_project_for_member),
+    session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
+) -> DesktopResizeResponse:
+    """Resize the guest noVNC desktop framebuffer to the panel size."""
+    name = _require_name(project)
+    if project.sandbox_status != "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Sandbox is not running (status={project.sandbox_status})",
+        )
+    client = SandboxAgentClient(settings)
+    try:
+        result = await client.resize_desktop(name, width=body.width, height=body.height)
+    except SandboxAgentError as exc:
+        if exc.status_code == 404:
+            await mark_sandbox_missing(session, project)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=MISSING_ON_AGENT,
+            ) from exc
+        raise _agent_http_error(exc) from exc
+    return DesktopResizeResponse(
+        ok=bool(result.get("ok", False)),
+        width=int(result.get("width", body.width)),
+        height=int(result.get("height", body.height)),
+        message=str(result.get("message", "")),
     )
 
 
