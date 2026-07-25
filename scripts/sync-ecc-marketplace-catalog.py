@@ -26,6 +26,11 @@ ECC_API = "https://api.github.com/repos/affaan-m/ECC/contents"
 ECC_RAW = "https://raw.githubusercontent.com/affaan-m/ECC/main"
 # Bundled under everflow-platform-api/app/data/marketplace_skills/
 GRAPHIFY_SKILL_FILE = "graphify/SKILL.md"
+EVERFLOW_SKILL_FILES = {
+    "everflow-knowledge": "everflow-knowledge/SKILL.md",
+    "everflow-jobs": "everflow-jobs/SKILL.md",
+    "everflow-browser": "everflow-browser/SKILL.md",
+}
 
 SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
@@ -279,6 +284,77 @@ def curated_plugins() -> list[dict]:
     ]
 
 
+def curated_everflow_skills() -> list[dict]:
+    """First-party Everflow platform skills (also auto-seeded into sandboxes)."""
+    return [
+        {
+            "id": "everflow-knowledge",
+            "kind": "skill",
+            "name": "Everflow Knowledge",
+            "description": (
+                "Retrieve and manage Project Everflow Knowledge canvases "
+                "(docs, secrets, runbooks) via knowledge_search."
+            ),
+            "origin": "everflow",
+            "source": "everflow",
+            "contentFile": EVERFLOW_SKILL_FILES["everflow-knowledge"],
+            "tags": ["everflow", "skill", "knowledge"],
+        },
+        {
+            "id": "everflow-jobs",
+            "kind": "skill",
+            "name": "Everflow Jobs",
+            "description": (
+                "Run long-lived processes (dev servers) as Everflow Jobs instead of a blocking shell."
+            ),
+            "origin": "everflow",
+            "source": "everflow",
+            "contentFile": EVERFLOW_SKILL_FILES["everflow-jobs"],
+            "tags": ["everflow", "skill", "jobs"],
+        },
+        {
+            "id": "everflow-browser",
+            "kind": "skill",
+            "name": "Everflow Browser",
+            "description": (
+                "Playwright MCP browser automation plus headed/headless mode for the Desktop panel."
+            ),
+            "origin": "everflow",
+            "source": "everflow",
+            "contentFile": EVERFLOW_SKILL_FILES["everflow-browser"],
+            "tags": ["everflow", "skill", "browser"],
+        },
+    ]
+
+
+def curated_everflow_mcps() -> list[dict]:
+    """Platform-native MCPs merged after ECC list (dedupe by id prefers these)."""
+    return [
+        {
+            "id": "playwright",
+            "kind": "mcp",
+            "name": "Browser (Playwright)",
+            "description": (
+                "Chromium + Playwright MCP for OpenCode: surf the web headless by default, "
+                "or headed on the project Desktop panel. Install opt-in; use everflow "
+                "browser_set_mode to switch modes."
+            ),
+            "origin": "everflow",
+            "source": "https://github.com/microsoft/playwright-mcp",
+            "mcpConfig": {
+                "type": "local",
+                "command": ["everflow-playwright-mcp"],
+                "enabled": True,
+                "environment": {
+                    "PLAYWRIGHT_BROWSERS_PATH": "/opt/everflow-browsers",
+                    "DISPLAY": ":99",
+                },
+            },
+            "tags": ["browser", "playwright", "everflow", "mcp"],
+        },
+    ]
+
+
 def curated_tools() -> list[dict]:
     return [
         {
@@ -340,6 +416,16 @@ def main() -> int:
     print("Fetching ECC MCP configs…", file=sys.stderr)
     mcps = build_mcps()
     print(f"  {len(mcps)} mcps", file=sys.stderr)
+
+    # Everflow-first skills; ECC list may not collide but prepend for discoverability.
+    skills = curated_everflow_skills() + [
+        s for s in skills if s.get("id") not in EVERFLOW_SKILL_FILES
+    ]
+    # Prefer Everflow MCP definitions over ECC duplicates (e.g. playwright).
+    everflow_mcps = curated_everflow_mcps()
+    everflow_mcp_ids = {m["id"] for m in everflow_mcps}
+    mcps = everflow_mcps + [m for m in mcps if m.get("id") not in everflow_mcp_ids]
+    mcps.sort(key=lambda x: str(x.get("id") or ""))
 
     catalog = {
         "version": 1,

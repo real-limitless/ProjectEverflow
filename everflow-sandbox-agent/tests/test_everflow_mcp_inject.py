@@ -9,6 +9,7 @@ import pytest
 from app.everflow_mcp_inject import (
     KNOWLEDGE_POLICY_MARKER,
     MCP_PACKAGE_STAMP_REL,
+    PLATFORM_PLAYBOOK_MARKER,
     agent_mcp_fingerprint,
     build_everflow_mcp_config,
     ensure_everflow_mcp_package,
@@ -78,17 +79,41 @@ def test_write_host_creates_files(tmp_path: Path) -> None:
     assert "everflow" in oc["mcp"]
     assert oc["mcp"]["everflow"]["command"] == ["python3", "-m", "everflow_mcp"]
     agents = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
-    assert KNOWLEDGE_POLICY_MARKER in agents
+    assert PLATFORM_PLAYBOOK_MARKER in agents
     assert "knowledge_search" in agents
+    assert "create_job" in agents
+    assert "Tool routing" in agents
 
 
 def test_merge_knowledge_policy_idempotent() -> None:
     once = merge_knowledge_policy_markdown("")
     twice = merge_knowledge_policy_markdown(once)
-    assert twice.count(KNOWLEDGE_POLICY_MARKER) == 1
+    assert twice.count(PLATFORM_PLAYBOOK_MARKER) == 1
+    assert KNOWLEDGE_POLICY_MARKER not in twice
     with_user = merge_knowledge_policy_markdown("# My project\n\nHello.\n")
     assert with_user.startswith("# My project")
-    assert KNOWLEDGE_POLICY_MARKER in with_user
+    assert PLATFORM_PLAYBOOK_MARKER in with_user
+    assert "create_job" in with_user
+
+
+def test_merge_upgrades_legacy_knowledge_policy_marker() -> None:
+    """Old workspaces with knowledge-only block get the full playbook once."""
+    legacy = (
+        "# My app\n\n"
+        f"{KNOWLEDGE_POLICY_MARKER}\n"
+        "## Everflow project knowledge\n\n"
+        "Old short policy.\n"
+    )
+    upgraded = merge_knowledge_policy_markdown(legacy)
+    assert upgraded.startswith("# My app")
+    assert PLATFORM_PLAYBOOK_MARKER in upgraded
+    assert upgraded.count(PLATFORM_PLAYBOOK_MARKER) == 1
+    assert KNOWLEDGE_POLICY_MARKER not in upgraded
+    assert "Old short policy" not in upgraded
+    assert "create_job" in upgraded
+    # Second merge stays single-block
+    again = merge_knowledge_policy_markdown(upgraded)
+    assert again.count(PLATFORM_PLAYBOOK_MARKER) == 1
 
 
 def test_agent_mcp_fingerprint_stable(tmp_path: Path) -> None:

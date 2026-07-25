@@ -219,21 +219,77 @@ async def ensure_everflow_mcp_package(backend: Any, sandbox_name: str) -> dict[s
     }
 
 
-# Injected into workspace AGENTS.md so OpenCode agents prefer knowledge_search.
+# Injected into workspace AGENTS.md so every OpenCode agent knows Everflow ops.
+# Loaded for all agents (build/plan/custom); keep compact — long procedures belong in skills.
+PLATFORM_PLAYBOOK_MARKER = "<!-- everflow-platform-playbook -->"
+# Legacy marker from knowledge-only policy; still stripped/replaced on merge.
 KNOWLEDGE_POLICY_MARKER = "<!-- everflow-knowledge-policy -->"
-KNOWLEDGE_POLICY_MD = """<!-- everflow-knowledge-policy -->
-## Everflow project knowledge
+_MANAGED_AGENTS_MARKERS = (PLATFORM_PLAYBOOK_MARKER, KNOWLEDGE_POLICY_MARKER)
 
-Project documentation, passwords, API keys, and secrets are stored in **Everflow Knowledge canvases**
-and indexed into the platform vector store (chunk embeddings).
+PLATFORM_PLAYBOOK_MD = f"""{PLATFORM_PLAYBOOK_MARKER}
+## Project Everflow — agent playbook
 
-- Use the **everflow** MCP tools — especially `knowledge_search` — before answering
-  questions about project docs, config, passwords, keys, tokens, or a "knowledge key".
-- Knowledge is **not** listed under MCP resources. An empty resources list does **not**
-  mean knowledge is empty.
-- If `knowledge_search` returns hits, quote the chunk text and name the canvas.
-- Fallback: `list_canvases` → `get_canvas` when search returns nothing but canvases exist.
+You are the coding agent for an app running **inside a Project Everflow project sandbox**
+(isolated microVM). The user talks to the Everflow Chat UI; you change this workspace and
+call **everflow MCP** tools. You are not operating the Everflow monorepo control plane.
+
+### What Everflow gives this project
+
+| Surface | Use for |
+|---------|---------|
+| Workspace files / shell | App source, installs, one-off commands |
+| **everflow** MCP | Platform actions on *this* bound project |
+| Knowledge canvases | Project docs, runbooks, secrets (indexed) |
+| Jobs | Detached long-lived processes (dev servers) |
+| Desktop / noVNC | Headed browser and GUI when enabled |
+| Marketplace / harness | Optional agents, skills, commands, MCPs |
+
+### Tool routing (prefer MCP over guessing)
+
+1. **Project docs, passwords, API keys, tokens, “knowledge key”, runbooks**
+   - Call `knowledge_search(query)` first.
+   - Knowledge is **not** MCP resources; an empty resources list does **not** mean empty knowledge.
+   - On hits: quote chunk text and cite `canvas_name`.
+   - If empty: `list_canvases` → `get_canvas`. After editing a canvas, `reindex_canvas` when retrieval should refresh.
+
+2. **Long-running servers / websites (`npm run dev`, docker-compose up, …)**
+   - Prefer `create_job` (title + command, optional cwd) then `get_job_logs`.
+   - Use `stop_job` / `kill_job` / `restart_job` — do **not** block the agent on a forever shell.
+
+3. **Browser automation (navigate / click / snapshot)**
+   - Full browser tools come from the **Playwright MCP** (marketplace: Browser / Playwright), usually `playwright_*`.
+   - Everflow MCP: `browser_status`, `browser_set_mode(headless|headed)`. Headed uses the Desktop panel.
+   - Default is headless. Mode switches may restart OpenCode.
+
+4. **Platform entities for this project**
+   - Context: `whoami`, `get_project`.
+   - Knowledge CRUD: `list_canvases` / `get_canvas` / `create_canvas` / `update_canvas` / …
+   - Studio agent definitions (Agents panel — **not** OpenCode build/plan modes): `list_agents` / `create_agent` / …
+   - Tests: `list_test_suites`, `create_test_suite`, `create_test_case`, `run_test_suite`.
+   - Registered HTTP tools: `list_http_tools`, `call_http_tool`.
+   - Jobs: `list_jobs`, `create_job`, `get_job_logs`, start/stop/kill/restart/delete.
+
+5. **Application code**
+   - Use normal file/edit/bash tools in the workspace. Follow this project’s own conventions
+     (README, package scripts, toolkit layout).
+
+### Skills and the everflow agent
+
+- Skills (progressive procedures): `everflow-knowledge`, `everflow-jobs`, `everflow-browser`.
+- Primary agent **`everflow`**: platform ops specialist (knowledge, jobs, browser, studio tools).
+  Default coding agent remains **`build`** — switch to `everflow` for platform how-to.
+
+### Behavior rules
+
+- Stay in the bound project; do not invent other projects or Everflow control-plane APIs.
+- Prefer everflow MCP tools over inventing UI click-paths or raw platform REST calls.
+- If a tool fails (sandbox stopped, missing marketplace MCP, empty knowledge), say so and
+  suggest the next concrete step (start sandbox, install Playwright MCP, create/index a canvas).
+- You remain a capable coding agent: implement features, fix bugs, and run checks in the workspace.
 """
+
+# Backward-compatible aliases used by tests and older call sites.
+KNOWLEDGE_POLICY_MD = PLATFORM_PLAYBOOK_MD
 
 
 def merge_opencode_mcp(existing: dict[str, Any], mcp_entry: dict[str, Any]) -> dict[str, Any]:
@@ -248,21 +304,26 @@ def merge_opencode_mcp(existing: dict[str, Any], mcp_entry: dict[str, Any]) -> d
 
 
 def merge_knowledge_policy_markdown(existing: str | None) -> str:
-    """Upsert the Everflow knowledge policy block into AGENTS.md body."""
-    body = (existing or "").strip()
-    if KNOWLEDGE_POLICY_MARKER in body:
-        # Replace existing block (marker through next HTML comment or EOF)
-        import re
+    """Upsert the managed Everflow platform playbook into AGENTS.md body.
 
-        pattern = re.compile(
-            re.escape(KNOWLEDGE_POLICY_MARKER) + r".*?(?=\n<!--|\Z)",
-            re.DOTALL,
-        )
-        body = pattern.sub(KNOWLEDGE_POLICY_MD.strip(), body).strip()
-        return body + "\n"
+    Replaces any prior managed block (current or legacy knowledge-policy marker).
+    Preserves user content outside those blocks.
+    """
+    import re
+
+    body = (existing or "").strip()
+    playbook = PLATFORM_PLAYBOOK_MD.strip()
+    # Strip every managed block (marker → next HTML comment or EOF)
+    for marker in _MANAGED_AGENTS_MARKERS:
+        if marker in body:
+            pattern = re.compile(
+                re.escape(marker) + r".*?(?=\n<!--|\Z)",
+                re.DOTALL,
+            )
+            body = pattern.sub("", body).strip()
     if body:
-        return body + "\n\n" + KNOWLEDGE_POLICY_MD.strip() + "\n"
-    return KNOWLEDGE_POLICY_MD.strip() + "\n"
+        return body + "\n\n" + playbook + "\n"
+    return playbook + "\n"
 
 
 def write_everflow_mcp_host(
@@ -318,8 +379,18 @@ def write_everflow_mcp_host(
     except OSError as exc:
         logger.debug("host AGENTS.md knowledge policy write failed: %s", exc)
 
+    # First-party skills + everflow agent (platform ops primary).
+    platform_seed: dict[str, Any] | None = None
+    try:
+        from app.everflow_platform_seed import seed_platform_pack_host
+
+        platform_seed = seed_platform_pack_host(ws)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("host platform seed failed: %s", exc)
+        platform_seed = {"seeded": False, "mode": "host", "error": str(exc)}
+
     cmd = _normalize_command(command)
-    return {
+    out: dict[str, Any] = {
         "configured": True,
         "mode": "host",
         "command": cmd,
@@ -327,6 +398,9 @@ def write_everflow_mcp_host(
         "project_id": project_id,
         "api_url": api_url,
     }
+    if platform_seed is not None:
+        out["platform_seed"] = platform_seed
+    return out
 
 
 async def write_everflow_mcp_guest(
@@ -389,8 +463,17 @@ async def write_everflow_mcp_guest(
     except Exception as exc:  # noqa: BLE001
         logger.debug("guest AGENTS.md knowledge policy write failed name=%s: %s", sandbox_name, exc)
 
+    platform_seed: dict[str, Any] | None = None
+    try:
+        from app.everflow_platform_seed import seed_platform_pack_guest
+
+        platform_seed = await seed_platform_pack_guest(backend, sandbox_name)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("guest platform seed failed name=%s: %s", sandbox_name, exc)
+        platform_seed = {"seeded": False, "mode": "guest", "error": str(exc)}
+
     cmd = _normalize_command(command)
-    return {
+    out: dict[str, Any] = {
         "configured": True,
         "mode": "guest",
         "command": cmd,
@@ -398,3 +481,6 @@ async def write_everflow_mcp_guest(
         "project_id": project_id,
         "api_url": api_url,
     }
+    if platform_seed is not None:
+        out["platform_seed"] = platform_seed
+    return out

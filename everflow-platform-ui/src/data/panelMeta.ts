@@ -11,7 +11,7 @@ export const PANEL_META: Record<PanelType, PanelMeta> = {
   workflows: { label: 'Workflows', icon: '🔀' },
   database: { label: 'Database', icon: '🗄' },
   jobs: { label: 'Jobs', icon: '⏱' },
-  agents: { label: 'Agents', icon: '🤖' },
+  agents: { label: 'Agent / Skills', icon: '🤖' },
   tools: { label: 'Tools / MCPs / Plugins', icon: '🔌' },
   env: { label: 'Env / Secrets', icon: '🔐' },
   tests: { label: 'Tests', icon: '✓' },

@@ -6,6 +6,48 @@
   },
   "skills": [
     {
+      "id": "everflow-knowledge",
+      "kind": "skill",
+      "name": "Everflow Knowledge",
+      "description": "Retrieve and manage Project Everflow Knowledge canvases (docs, secrets, runbooks) via knowledge_search.",
+      "origin": "everflow",
+      "source": "everflow",
+      "contentFile": "everflow-knowledge/SKILL.md",
+      "tags": [
+        "everflow",
+        "skill",
+        "knowledge"
+      ]
+    },
+    {
+      "id": "everflow-jobs",
+      "kind": "skill",
+      "name": "Everflow Jobs",
+      "description": "Run long-lived processes (dev servers) as Everflow Jobs instead of a blocking shell.",
+      "origin": "everflow",
+      "source": "everflow",
+      "contentFile": "everflow-jobs/SKILL.md",
+      "tags": [
+        "everflow",
+        "skill",
+        "jobs"
+      ]
+    },
+    {
+      "id": "everflow-browser",
+      "kind": "skill",
+      "name": "Everflow Browser",
+      "description": "Playwright MCP browser automation plus headed/headless mode for the Desktop panel.",
+      "origin": "everflow",
+      "source": "everflow",
+      "contentFile": "everflow-browser/SKILL.md",
+      "tags": [
+        "everflow",
+        "skill",
+        "browser"
+      ]
+    },
+    {
       "id": "accessibility",
       "kind": "skill",
       "name": "accessibility",
@@ -5550,23 +5592,25 @@
     {
       "id": "playwright",
       "kind": "mcp",
-      "name": "playwright",
-      "description": "ECC MCP server: playwright",
-      "origin": "ecc",
-      "source": "https://github.com/affaan-m/ECC",
+      "name": "Browser (Playwright)",
+      "description": "Chromium + Playwright MCP for OpenCode: surf the web headless by default, or headed on the project Desktop panel. Install opt-in; use everflow browser_set_mode to switch modes.",
+      "origin": "everflow",
+      "source": "https://github.com/microsoft/playwright-mcp",
       "mcpConfig": {
         "type": "local",
         "command": [
-          "npx",
-          "-y",
-          "@playwright/mcp",
-          "--browser",
-          "chrome"
+          "everflow-playwright-mcp"
         ],
-        "enabled": true
+        "enabled": true,
+        "environment": {
+          "PLAYWRIGHT_BROWSERS_PATH": "/opt/everflow-browsers",
+          "DISPLAY": ":99"
+        }
       },
       "tags": [
-        "ecc",
+        "browser",
+        "playwright",
+        "everflow",
         "mcp"
       ]
     },

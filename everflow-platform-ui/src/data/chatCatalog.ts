@@ -34,6 +34,21 @@ export const CHAT_MCPS: CatalogItem[] = [
 ]
 
 export const CHAT_SKILLS: CatalogItem[] = [
+  {
+    id: 'everflow-knowledge',
+    label: 'everflow-knowledge',
+    description: 'Search Knowledge canvases (docs, secrets)',
+  },
+  {
+    id: 'everflow-jobs',
+    label: 'everflow-jobs',
+    description: 'Detached dev servers via Jobs panel',
+  },
+  {
+    id: 'everflow-browser',
+    label: 'everflow-browser',
+    description: 'Playwright + headed/headless Desktop',
+  },
   { id: 'fix', label: '/fix', description: 'Diagnose and patch bugs' },
   { id: 'commit', label: '/commit', description: 'Write commit messages' },
   { id: 'review-pr', label: '/review-pr', description: 'Review pull requests' },
@@ -57,7 +72,7 @@ export const CHAT_AGENTS: ChatAgentRef[] = [
 export const DEFAULT_CHAT_MODEL = 'grok-2'
 export const DEFAULT_CHAT_TOOLS = ['sandbox_fs', 'git']
 export const DEFAULT_CHAT_MCPS = ['everflow']
-export const DEFAULT_CHAT_SKILLS = ['fix']
+export const DEFAULT_CHAT_SKILLS = ['everflow-knowledge', 'everflow-jobs', 'fix']
 /** @deprecated Multi-agent demo list; routing uses DEFAULT_PRIMARY_AGENT */
 export const DEFAULT_CHAT_AGENTS = ['planner', 'frontend', 'backend']
 /** Default OpenCode-style primary agent when none selected */
@@ -69,6 +84,11 @@ export const DEFAULT_CONTEXT_WINDOW = 128_000
 export const OPENCODE_AGENT_FALLBACKS: CatalogItem[] = [
   { id: 'build', label: 'build', description: 'Full agent — implement and run tools' },
   { id: 'plan', label: 'plan', description: 'Plan mode — research and design' },
+  {
+    id: 'everflow',
+    label: 'everflow',
+    description: 'Project Everflow platform ops (knowledge, jobs, browser)',
+  },
   { id: 'general', label: 'general', description: 'General-purpose agent' },
   { id: 'explore', label: 'explore', description: 'Explore codebase (read-focused)' },
 ]
@@ -88,7 +108,8 @@ export function modeLabel(mode: ChatMode | undefined): string {
 export function pickDefaultPrimaryAgent(available: string[] = []): string {
   if (!available.length) return DEFAULT_PRIMARY_AGENT
   const lower = new Map(available.map((a) => [a.toLowerCase(), a]))
-  for (const pref of ['build', 'plan', 'general', 'explore']) {
+  // Prefer coding build/plan; everflow is available but not the default primary.
+  for (const pref of ['build', 'plan', 'general', 'explore', 'everflow']) {
     const hit = lower.get(pref)
     if (hit) return hit
   }
