@@ -29,7 +29,10 @@ async def test_reindex_and_retrieve(client: AsyncClient, auth_headers: dict[str,
         headers=auth_headers,
         json={
             "name": "pgvector notes",
-            "content_md": "# Embeddings\n\nEverflow stores knowledge chunks for retrieval.\n",
+            "content_md": (
+                "# Embeddings\n\nEverflow stores knowledge chunks for retrieval.\n\n"
+                "## Knowledge key\n\nThe password is apple1234\n"
+            ),
             "origin": "created",
         },
     )
@@ -53,6 +56,58 @@ async def test_reindex_and_retrieve(client: AsyncClient, auth_headers: dict[str,
     hits = retrieved.json()["hits"]
     assert hits
     assert hits[0]["canvas_id"] == canvas_id
+
+    secret = await client.post(
+        f"/api/v1/projects/{project_id}/knowledge/retrieve",
+        headers=auth_headers,
+        json={"query": "knowledge key password", "top_k": 3},
+    )
+    assert secret.status_code == 200, secret.text
+    secret_hits = secret.json()["hits"]
+    assert secret_hits
+    joined = " ".join(h["text"] for h in secret_hits)
+    assert "apple1234" in joined
+
+
+@pytest.mark.asyncio
+async def test_list_repairs_stuck_chunking_status(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    """Chunks present but status=chunking should heal to indexed on list."""
+    project_id = await _project(client, auth_headers)
+    create = await client.post(
+        f"/api/v1/projects/{project_id}/knowledge/canvases",
+        headers=auth_headers,
+        json={
+            "name": "stuck status",
+            "content_md": "# Doc\n\nSome body text for indexing.\n",
+            "origin": "created",
+        },
+    )
+    assert create.status_code == 201, create.text
+    canvas_id = create.json()["id"]
+    reindexed = await client.post(
+        f"/api/v1/projects/{project_id}/knowledge/canvases/{canvas_id}/reindex",
+        headers=auth_headers,
+    )
+    assert reindexed.status_code == 200
+    # Simulate crash mid-reindex UI state
+    stuck = await client.patch(
+        f"/api/v1/projects/{project_id}/knowledge/canvases/{canvas_id}",
+        headers=auth_headers,
+        json={"status": "chunking"},
+    )
+    assert stuck.status_code == 200
+    assert stuck.json()["status"] == "chunking"
+
+    listed = await client.get(
+        f"/api/v1/projects/{project_id}/knowledge/canvases",
+        headers=auth_headers,
+    )
+    assert listed.status_code == 200
+    row = next(c for c in listed.json() if c["id"] == canvas_id)
+    assert row["status"] == "indexed"
+    assert (row.get("chunks") or 0) >= 1
 
 
 @pytest.mark.asyncio

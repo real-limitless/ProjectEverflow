@@ -91,28 +91,51 @@ def cosine(a: list[float], b: list[float]) -> float:
     return float(sum(x * y for x, y in zip(a, b, strict=True)))
 
 
+async def repair_canvas_index_status(
+    session: AsyncSession,
+    canvas: KnowledgeCanvas,
+) -> KnowledgeCanvas:
+    """If chunks exist but status stuck on chunking/embedding, mark indexed.
+
+    Intermediate commits during reindex can leave status lagging after a crash
+    or cancelled request even when knowledge_chunks rows are present.
+    """
+    if canvas.status not in ("chunking", "embedding"):
+        return canvas
+    result = await session.execute(
+        select(KnowledgeChunk.id).where(KnowledgeChunk.canvas_id == canvas.id)
+    )
+    n = len(list(result.scalars().all()))
+    if n <= 0:
+        return canvas
+    canvas.status = "indexed"
+    canvas.chunks = n
+    canvas.content_hash = content_hash(canvas.content_md or "")
+    await session.commit()
+    await session.refresh(canvas)
+    return canvas
+
+
 async def reindex_canvas(session: AsyncSession, canvas: KnowledgeCanvas) -> KnowledgeCanvas:
     """Replace chunks for a canvas and mark indexed (or error)."""
-    canvas.status = "chunking"
-    await session.commit()
-
     pieces = chunk_markdown(canvas.content_md or "")
     canvas.status = "embedding"
+    # Keep previous chunks visible until replace succeeds (status only).
     await session.commit()
 
-    await session.execute(
-        delete(KnowledgeChunk).where(KnowledgeChunk.canvas_id == canvas.id)
-    )
-
-    if not pieces:
-        canvas.status = "indexed"
-        canvas.chunks = 0
-        canvas.content_hash = content_hash(canvas.content_md or "")
-        await session.commit()
-        await session.refresh(canvas)
-        return canvas
-
     try:
+        await session.execute(
+            delete(KnowledgeChunk).where(KnowledgeChunk.canvas_id == canvas.id)
+        )
+
+        if not pieces:
+            canvas.status = "indexed"
+            canvas.chunks = 0
+            canvas.content_hash = content_hash(canvas.content_md or "")
+            await session.commit()
+            await session.refresh(canvas)
+            return canvas
+
         for i, (text, heading) in enumerate(pieces):
             emb = local_embed(text)
             session.add(
@@ -136,8 +159,10 @@ async def reindex_canvas(session: AsyncSession, canvas: KnowledgeCanvas) -> Know
         canvas.content_hash = content_hash(canvas.content_md or "")
         await session.commit()
     except Exception:
+        await session.rollback()
+        # Re-load canvas after rollback
+        await session.refresh(canvas)
         canvas.status = "error"
-        canvas.chunks = 0
         await session.commit()
         raise
 

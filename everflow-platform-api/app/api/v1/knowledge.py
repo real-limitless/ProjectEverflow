@@ -56,7 +56,7 @@ from app.schemas.knowledge import (
     WebReadResult,
     WebSearchHit,
 )
-from app.services.knowledge_embed import content_hash, reindex_canvas
+from app.services.knowledge_embed import content_hash, reindex_canvas, repair_canvas_index_status
 from app.services.knowledge_repo import index_sandbox_docs
 from app.services.knowledge_retrieve import retrieve
 from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
@@ -236,7 +236,12 @@ async def list_canvases(
         .where(KnowledgeCanvas.project_id == project.id)
         .order_by(KnowledgeCanvas.updated_at.desc())
     )
-    return list(result.scalars().all())
+    canvases = list(result.scalars().all())
+    # Heal stuck chunking/embedding when chunks already exist (crash mid-reindex).
+    for canvas in canvases:
+        if canvas.status in ("chunking", "embedding"):
+            await repair_canvas_index_status(session, canvas)
+    return canvases
 
 
 @router.post(
@@ -303,7 +308,10 @@ async def get_canvas(
     session: AsyncSession = Depends(get_async_session),
 ) -> KnowledgeCanvas:
     principal.require_scope("knowledge:read")
-    return await _get_canvas_for_project(session, project.id, canvas_id)
+    canvas = await _get_canvas_for_project(session, project.id, canvas_id)
+    if canvas.status in ("chunking", "embedding"):
+        canvas = await repair_canvas_index_status(session, canvas)
+    return canvas
 
 
 @router.patch(

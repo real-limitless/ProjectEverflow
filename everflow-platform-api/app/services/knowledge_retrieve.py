@@ -107,16 +107,42 @@ async def retrieve(
         return []
 
     qvec = local_embed(query)
+    q_tokens = set(re_tokens(query))
+    q_lower = (query or "").lower().strip()
+    secretish = bool(
+        re_tokens(query)
+        and any(
+            t in q_lower
+            for t in (
+                "password",
+                "secret",
+                "api_key",
+                "apikey",
+                "token",
+                "credential",
+                "knowledge key",
+                "passphrase",
+            )
+        )
+    )
     scored: list[tuple[float, KnowledgeChunk]] = []
     for ch in chunks:
         emb = ch.embedding or []
-        # Also boost lexical overlap lightly
+        # Also boost lexical overlap lightly (helps short secrets / exact terms)
         score = cosine(qvec, emb) if emb else 0.0
-        q_tokens = set(re_tokens(query))
-        c_tokens = set(re_tokens(ch.text))
+        c_text = ch.text or ""
+        c_lower = c_text.lower()
+        c_tokens = set(re_tokens(c_text))
         if q_tokens and c_tokens:
             overlap = len(q_tokens & c_tokens) / max(len(q_tokens), 1)
-            score = 0.7 * score + 0.3 * overlap
+            score = 0.65 * score + 0.35 * overlap
+        # Exact / substring boost for passwords, keys, titled sections
+        if q_lower and len(q_lower) >= 3 and q_lower in c_lower:
+            score = max(score, 0.92)
+        if secretish and any(
+            k in c_lower for k in ("password", "secret", "api_key", "token", "knowledge key")
+        ):
+            score = min(1.0, score + 0.15)
         scored.append((score, ch))
 
     scored.sort(key=lambda x: x[0], reverse=True)
