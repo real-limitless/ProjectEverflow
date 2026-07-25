@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Alert,
+  AlertActionCloseButton,
+  AlertActionLink,
+} from '@patternfly/react-core'
 import AngleRightIcon from '@patternfly/react-icons/dist/esm/icons/angle-right-icon'
 import {
   DEFAULT_CHAT_AGENTS,
@@ -59,6 +64,13 @@ import {
   parseModelId,
   sessionToConversation,
 } from '@/lib/opencode/mapParts'
+import {
+  humanizeChatError,
+  isOpenCodeSessionMissingError,
+  remintOpenCodeSession,
+  replaceConversationInList,
+  sanitizeMessagesForRemint,
+} from '@/lib/opencode/sessionSync'
 import { agentFromPack, getOpenCodeHarness } from '@/lib/harness/opencodePack'
 import { pushToast } from '@/lib/studioToast'
 import {
@@ -96,6 +108,14 @@ type LiveStatus =
   | 'needs_provider'
   | 'error'
   | 'demo'
+
+type ChatAlertState = {
+  variant: 'danger' | 'warning' | 'info'
+  title: string
+  description: string
+  /** Offer Sync session when OpenCode lost this ses_ id */
+  sessionStale?: boolean
+}
 
 /** API 409 / detail when platform sandbox is not running. */
 function sandboxDownFromError(
@@ -149,6 +169,8 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const [worktreeBusy, setWorktreeBusy] = useState(false)
   const [liveStatus, setLiveStatus] = useState<LiveStatus>('idle')
   const [liveError, setLiveError] = useState<string | null>(null)
+  const [chatAlert, setChatAlert] = useState<ChatAlertState | null>(null)
+  const [sessionSyncing, setSessionSyncing] = useState(false)
   const [providerOpen, setProviderOpen] = useState(false)
   /** User chose to skip connecting a key (use free / built-in OpenCode models). */
   const [providerSkipped, setProviderSkipped] = useState(false)
@@ -166,6 +188,8 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const bootGenRef = useRef(0)
   const sendingRef = useRef(false)
   const pollAbortRef = useRef(0)
+  /** Prevent concurrent remint from hydrate + send. */
+  const remintingRef = useRef(false)
   /** Question request ids already answered in this session — never re-inject as pending. */
   const answeredQuestionIdsRef = useRef<Set<string>>(new Set())
   /** Soft-default everflow MCP at most once per panel mount. */
@@ -250,6 +274,124 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const activeConv = conversations.find((c) => c.id === st.convId) || primary
   const primaryAgent =
     st.primaryAgent || activeConv?.primaryAgent || DEFAULT_PRIMARY_AGENT
+
+  const clearChatError = useCallback(() => {
+    setLiveError(null)
+    setChatAlert(null)
+  }, [])
+
+  const setChatErrorFrom = useCallback(
+    (
+      err: unknown,
+      opts?: { sessionStale?: boolean; variant?: ChatAlertState['variant'] },
+    ) => {
+      const h = humanizeChatError(err)
+      const sessionStale =
+        opts?.sessionStale ?? isOpenCodeSessionMissingError(err)
+      setLiveError(h.description)
+      setChatAlert({
+        variant:
+          opts?.variant ??
+          (sessionStale ? 'warning' : 'danger'),
+        title: h.title,
+        description: h.description,
+        sessionStale,
+      })
+    },
+    [],
+  )
+
+  /** Create a new OpenCode session and migrate local UI history off a ghost id. */
+  const remintAndApply = useCallback(
+    async (
+      projectId: string,
+      oldSessionId?: string | null,
+    ): Promise<{ sessionId: string; messages: ChatMessage[] } | null> => {
+      if (remintingRef.current) return null
+      remintingRef.current = true
+      setSessionSyncing(true)
+      try {
+        const list =
+          usePlaygroundStore.getState().projectChats[projectId] || []
+        const prev = oldSessionId
+          ? list.find((c) => c.id === oldSessionId)
+          : undefined
+        const panelMsgs =
+          usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
+        const localMessages = sanitizeMessagesForRemint(
+          (prev?.messages?.length ? prev.messages : panelMsgs) || [],
+        )
+        const result = await remintOpenCodeSession(projectId, {
+          oldSessionId: oldSessionId || undefined,
+          title: prev?.title,
+          localMessages,
+          prev,
+        })
+        const nextList = replaceConversationInList(
+          list,
+          oldSessionId || undefined,
+          result.conversation,
+        )
+        usePlaygroundStore.setState((state) => ({
+          projectChats: {
+            ...state.projectChats,
+            [projectId]: nextList,
+          },
+        }))
+        ensureInstanceState(panelKey, {
+          convId: result.session.id,
+          title: result.conversation.title,
+          messages: result.conversation.messages,
+        })
+        return {
+          sessionId: result.session.id,
+          messages: result.conversation.messages,
+        }
+      } finally {
+        remintingRef.current = false
+        setSessionSyncing(false)
+      }
+    },
+    [ensureInstanceState, panelKey],
+  )
+
+  const syncSessionManually = useCallback(async () => {
+    if (!currentProjectId) return
+    const oldId =
+      usePlaygroundStore.getState().instanceState[panelKey]?.convId || undefined
+    try {
+      const reminted = await remintAndApply(currentProjectId, oldId)
+      if (!reminted) {
+        pushToast('Session sync already in progress', { kind: 'info' })
+        return
+      }
+      clearChatError()
+      pushToast('Chat session synced', {
+        description: 'A new OpenCode session was created; your history stays visible.',
+        kind: 'success',
+        ms: 4500,
+      })
+      setChatAlert({
+        variant: 'info',
+        title: 'Session synced to OpenCode',
+        description:
+          'OpenCode history starts fresh for new replies. Your previous messages remain visible here.',
+      })
+    } catch (e) {
+      setChatErrorFrom(e, { sessionStale: true, variant: 'danger' })
+      pushToast('Could not sync session', {
+        description: (e as Error).message,
+        kind: 'danger',
+        ms: 5000,
+      })
+    }
+  }, [
+    clearChatError,
+    currentProjectId,
+    panelKey,
+    remintAndApply,
+    setChatErrorFrom,
+  ])
 
   const hydrateSession = useCallback(
     async (
@@ -406,17 +548,44 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         })
         return msgs
       } catch (e) {
-        const msg = (e as Error).message || 'Failed to load messages'
-        // Stale session after sandbox recreate — clear banner noise; caller remaps.
-        if (/internal server error|unknownerror|not found|404|500/i.test(msg)) {
-          setLiveError(null)
-          return usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
+        const local =
+          usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
+        // Ghost session after harness restart — remint once and keep local history.
+        if (isOpenCodeSessionMissingError(e)) {
+          try {
+            const reminted = await remintAndApply(projectId, sessionId)
+            if (reminted) {
+              pushToast('Chat session was recreated', {
+                description:
+                  'OpenCode no longer had this chat id. Your messages stay visible here.',
+                kind: 'warning',
+                ms: 5000,
+              })
+              setChatAlert({
+                variant: 'info',
+                title: 'Session synced to OpenCode',
+                description:
+                  'A new harness session was created. Previous messages remain visible; new replies use the new session.',
+              })
+              setLiveError(null)
+              return reminted.messages
+            }
+          } catch (remintErr) {
+            setChatErrorFrom(remintErr, { sessionStale: true, variant: 'danger' })
+            return local
+          }
+          setChatErrorFrom(e, { sessionStale: true })
+          return local
         }
-        setLiveError(msg)
-        return usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
+        if (/internal server error|unknownerror|500/i.test((e as Error).message || '')) {
+          // Transient harness blip — keep local transcript without a scary alert.
+          return local
+        }
+        setChatErrorFrom(e)
+        return local
       }
     },
-    [ensureInstanceState, panelKey],
+    [ensureInstanceState, panelKey, remintAndApply, setChatErrorFrom],
   )
 
   const refreshSessions = useCallback(
@@ -469,18 +638,35 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         const created = await createSession(projectId, 'New chat')
         mapped.push(sessionToConversation(created, []))
       }
-      // createSession can race ahead of listSessions — keep preferId in the rail.
+      // Preferred id missing from OpenCode (harness restart / refresh) — remint,
+      // do NOT re-insert a ghost ses_… that will 404 on every message load.
       if (safePrefer && !mapped.some((c) => c.id === safePrefer)) {
         const prev = prevById.get(safePrefer)
-        mapped.unshift(
-          prev ||
-            sessionToConversation(
-              { id: safePrefer, title: 'New chat' } as Parameters<
-                typeof sessionToConversation
-              >[0],
-              [],
-            ),
-        )
+        try {
+          const reminted = await remintOpenCodeSession(projectId, {
+            oldSessionId: safePrefer,
+            title: prev?.title || 'New chat',
+            localMessages: prev?.messages,
+            prev,
+          })
+          mapped.unshift(reminted.conversation)
+          pushToast('Chat session was recreated', {
+            description:
+              'OpenCode no longer had your previous session. History stays visible in Everflow.',
+            kind: 'warning',
+            ms: 5000,
+          })
+          setChatAlert({
+            variant: 'info',
+            title: 'Session synced to OpenCode',
+            description:
+              'A new harness session was created after refresh. Your previous messages remain visible.',
+          })
+        } catch (remintErr) {
+          console.warn('Session remint after preferId miss failed', remintErr)
+          // Fall back to first live session (already in mapped) — never ghost.
+          setChatErrorFrom(remintErr, { sessionStale: true })
+        }
       }
       usePlaygroundStore.setState((state) => ({
         projectChats: { ...state.projectChats, [projectId]: mapped },
@@ -507,7 +693,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       }
       return mapped
     },
-    [ensureInstanceState, hydrateSession, panelKey],
+    [ensureInstanceState, hydrateSession, panelKey, setChatErrorFrom],
   )
 
   // If a persisted panel still points at a local placeholder id, remap on live.
@@ -704,7 +890,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     let cancelled = false
     const gen = ++bootGenRef.current
     setLiveStatus('connecting')
-    setLiveError(null)
+    clearChatError()
 
     const stillActive = () => !cancelled && gen === bootGenRef.current
 
@@ -744,7 +930,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         const prefer = isOpenCodeSessionId(preferRaw) ? preferRaw : undefined
         try {
           await withTimeout(refreshSessions(currentProjectId, prefer), 25_000, 'Session list')
-          if (stillActive()) setLiveError(null)
+          if (stillActive()) clearChatError()
         } catch (sessErr) {
           // Try one create; if that fails too, harness is not usable for chat.
           console.warn('OpenCode session refresh failed', sessErr)
@@ -760,7 +946,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
                 title: created.title || 'New chat',
                 messages: [],
               })
-              setLiveError(null)
+              clearChatError()
             }
           } catch (createErr) {
             throw new Error(
@@ -1089,13 +1275,13 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         })
         await refreshSessions(projectId, convId)
       } catch (e) {
-        setLiveError((e as Error).message || 'Could not create chat session')
+        setChatErrorFrom(e)
         return
       }
     }
     setSending(true)
     sendingRef.current = true
-    setLiveError(null)
+    clearChatError()
     const pollGen = ++pollAbortRef.current
     const streamStartedAt = Date.now()
     let clientTtftMs: number | undefined
@@ -1210,20 +1396,44 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       const PROMPT_ACCEPT_MS = 45_000
       let promptTimer: number | undefined
       const acceptPromise = (async () => {
-        try {
-          await promptAsync(projectId, convId, body)
-        } catch (asyncErr) {
+        const promptOnce = async (sid: string) => {
           try {
-            await promptSync(projectId, convId, body)
-          } catch (syncErr) {
-            const cur =
-              usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
-              []
-            const kept = cur.filter((m) => !m.id.startsWith('pending-'))
-            ensureInstanceState(panelKey, { messages: kept })
-            updateConversationMessages(projectId, convId, kept)
-            throw syncErr || asyncErr
+            await promptAsync(projectId, sid, body)
+          } catch {
+            await promptSync(projectId, sid, body)
           }
+        }
+        try {
+          await promptOnce(convId)
+        } catch (firstErr) {
+          // Session gone on harness — remint and retry the prompt once.
+          if (isOpenCodeSessionMissingError(firstErr)) {
+            const reminted = await remintAndApply(projectId, convId)
+            if (reminted) {
+              convId = reminted.sessionId
+              const optimisticMsgs =
+                usePlaygroundStore.getState().instanceState[panelKey]?.messages ||
+                reminted.messages
+              updateConversationMessages(projectId, convId, optimisticMsgs)
+              ensureInstanceState(panelKey, {
+                convId,
+                messages: optimisticMsgs,
+              })
+              pushToast('Chat session was recreated', {
+                description: 'Retrying your message on a new OpenCode session…',
+                kind: 'warning',
+                ms: 4000,
+              })
+              await promptOnce(convId)
+              return
+            }
+          }
+          const cur =
+            usePlaygroundStore.getState().instanceState[panelKey]?.messages || []
+          const kept = cur.filter((m) => !m.id.startsWith('pending-'))
+          ensureInstanceState(panelKey, { messages: kept })
+          updateConversationMessages(projectId, convId, kept)
+          throw firstErr
         }
       })()
       let acceptOutcome: 'ok' | 'timeout' = 'ok'
@@ -1246,6 +1456,12 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         setLiveError(
           'OpenCode is slow to accept the prompt — still waiting for a reply…',
         )
+        setChatAlert({
+          variant: 'info',
+          title: 'Still waiting for OpenCode',
+          description:
+            'OpenCode is slow to accept the prompt — still waiting for a reply…',
+        })
       } else {
         // Re-await so a real accept failure still throws into the outer catch.
         await acceptPromise
@@ -1323,10 +1539,11 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
             .find((m) => m.role === 'assistant' && !m.id.startsWith('pending-'))
           if (assistantTurnReady(lastAsst) || messageHasReplyText(lastAsst!)) {
             gotReady = true
-            setLiveError(null)
+            clearChatError()
           } else if (!gotReady) {
-            setLiveError(
+            setChatErrorFrom(
               'No complete response from OpenCode yet. The answer may still appear if you refresh.',
+              { variant: 'warning' },
             )
           }
         }
@@ -1339,7 +1556,12 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
         })
       }
     } catch (e) {
-      setLiveError((e as Error).message)
+      setChatErrorFrom(e)
+      pushToast(humanizeChatError(e).title, {
+        description: humanizeChatError(e).description,
+        kind: 'danger',
+        ms: 5000,
+      })
       const msg = ((e as Error).message || '').toLowerCase()
       if (msg.includes('auth') || msg.includes('api key') || (e as { status?: number }).status === 401) {
         // Soft prompt only — free models may still work after picking another model
@@ -2000,10 +2222,45 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           )}
         </div>
 
-        {liveError && liveStatus === 'ready' ? (
-          <div className="chat-composer-hint" role="alert" style={{ color: 'var(--pf-t--global--color--status--danger--default)' }}>
-            {liveError}
-          </div>
+        {chatAlert && liveStatus === 'ready' ? (
+          <Alert
+            className="chat-inline-alert"
+            variant={chatAlert.variant}
+            isInline
+            title={chatAlert.title}
+            actionClose={
+              <AlertActionCloseButton
+                title="Close alert"
+                onClose={() => clearChatError()}
+              />
+            }
+            actionLinks={
+              chatAlert.sessionStale ||
+              /session not found|not registered on the harness|sync creates/i.test(
+                chatAlert.description,
+              ) ? (
+                <>
+                  <AlertActionLink
+                    onClick={() => {
+                      if (!sessionSyncing) void syncSessionManually()
+                    }}
+                  >
+                    {sessionSyncing ? 'Syncing…' : 'Sync session'}
+                  </AlertActionLink>
+                  <AlertActionLink
+                    onClick={() => {
+                      clearChatError()
+                      void liveNewChat()
+                    }}
+                  >
+                    New chat
+                  </AlertActionLink>
+                </>
+              ) : undefined
+            }
+          >
+            {chatAlert.description}
+          </Alert>
         ) : null}
 
         <ChatComposer

@@ -1166,6 +1166,24 @@ button.chat-composer-send {
   color: var(--pf-t--global--text--color--subtle) !important;
 }
 
+/* Full-width PatternFly alert between message list and composer */
+.chat-layout .chat-inline-alert,
+.chat-main .chat-inline-alert {
+  margin: 0.5rem 0.75rem 0.35rem !important;
+  flex-shrink: 0;
+}
+
+.chat-layout .chat-inline-alert .pf-v6-c-alert__title,
+.chat-main .chat-inline-alert .pf-v6-c-alert__title {
+  font-size: 0.85rem !important;
+}
+
+.chat-layout .chat-inline-alert .pf-v6-c-alert__description,
+.chat-main .chat-inline-alert .pf-v6-c-alert__description {
+  font-size: 0.78rem !important;
+  line-height: 1.4;
+}
+
 .composer-popover-list {
   display: flex;
   flex-direction: column;
