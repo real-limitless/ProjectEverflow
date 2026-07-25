@@ -181,6 +181,12 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const [mcpsLive, setMcpsLive] = useState<CatalogItem[] | null>(null)
   const [agentsLive, setAgentsLive] = useState<CatalogItem[] | null>(null)
   const [sending, setSending] = useState(false)
+  /** When true, auto-scroll message list to latest content. */
+  const [stickToBottom, setStickToBottom] = useState(true)
+  const [showJumpOrb, setShowJumpOrb] = useState(false)
+  const messagesRef = useRef<HTMLDivElement | null>(null)
+  const stickToBottomRef = useRef(true)
+  stickToBottomRef.current = stickToBottom
   const sseRef = useRef<AbortController | null>(null)
   const liveRef = useRef(false)
   const agentsLiveRef = useRef<CatalogItem[] | null>(null)
@@ -275,6 +281,48 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const activeConv = conversations.find((c) => c.id === st.convId) || primary
   const primaryAgent =
     st.primaryAgent || activeConv?.primaryAgent || DEFAULT_PRIMARY_AGENT
+
+  const NEAR_BOTTOM_PX = 96
+
+  const isNearBottom = useCallback((el: HTMLElement) => {
+    return el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX
+  }, [])
+
+  const scrollMessagesToEnd = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const el = messagesRef.current
+    if (!el) return
+    const reduce =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: reduce ? 'auto' : behavior,
+    })
+  }, [])
+
+  const onMessagesScroll = useCallback(() => {
+    const el = messagesRef.current
+    if (!el) return
+    const near = isNearBottom(el)
+    setStickToBottom(near)
+    setShowJumpOrb(!near)
+  }, [isNearBottom])
+
+  const jumpToLatest = useCallback(() => {
+    setStickToBottom(true)
+    setShowJumpOrb(false)
+    scrollMessagesToEnd('smooth')
+  }, [scrollMessagesToEnd])
+
+  // Follow latest messages while pinned to bottom (streaming / new turns).
+  useEffect(() => {
+    if (!stickToBottom) {
+      setShowJumpOrb(true)
+      return
+    }
+    scrollMessagesToEnd('auto')
+    setShowJumpOrb(false)
+  }, [messages, sending, stickToBottom, scrollMessagesToEnd, chatAlert])
 
   const clearChatError = useCallback(() => {
     setLiveError(null)
@@ -1282,6 +1330,9 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     }
     setSending(true)
     sendingRef.current = true
+    // New send: re-pin to latest so the user sees the turn unfold.
+    setStickToBottom(true)
+    setShowJumpOrb(false)
     clearChatError()
     const pollGen = ++pollAbortRef.current
     const streamStartedAt = Date.now()
@@ -1999,7 +2050,6 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           title={st.title || activeConv?.title || 'Chat'}
           mode={mode}
           metrics={activeConv?.metrics}
-          onModeChange={(m) => setChatMode(panelKey, m)}
           useWorktree={Boolean(activeConv?.useWorktree)}
           worktree={activeConv?.worktree}
           worktreeAvailable={Boolean(
@@ -2196,44 +2246,64 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           </div>
         ) : null}
 
-        <div className={`messages${isEmpty && !sending ? ' messages--empty' : ''}`}>
-          {isEmpty &&
-          !sending &&
-          liveStatus !== 'error' &&
-          liveStatus !== 'connecting' ? (
-            <ChatEmptyState
-              onSuggestion={(text) => {
-                setDraft(text)
-              }}
-            />
-          ) : (
-            messages.map((m, i) => (
-              <ChatMessageRow
-                key={m.id || `msg-${i}`}
-                message={m}
-                onEdit={(id, text) =>
-                  useLive
-                    ? void (async () => {
-                        await revertMessage(currentProjectId!, st.convId!, id)
-                        await sendLive(text)
-                      })()
-                    : editUserMessage(panelKey, id, text)
-                }
-                onRetry={(id) =>
-                  useLive ? void liveRetry(id) : retryAssistantMessage(panelKey, id)
-                }
-                onFork={(id) =>
-                  useLive ? void liveFork(id) : forkConversation(panelKey, id)
-                }
-                onQuestionOption={(opt) => send(opt)}
-                onQuestionReply={(requestId, answers) =>
-                  void onQuestionReply(requestId, answers)
-                }
-                onQuestionReject={(requestId) => void onQuestionReject(requestId)}
-                onPermission={onPermission}
+        <div className="chat-messages-wrap">
+          <div
+            ref={messagesRef}
+            className={`messages${isEmpty && !sending ? ' messages--empty' : ''}`}
+            onScroll={onMessagesScroll}
+          >
+            {isEmpty &&
+            !sending &&
+            liveStatus !== 'error' &&
+            liveStatus !== 'connecting' ? (
+              <ChatEmptyState
+                onSuggestion={(text) => {
+                  setDraft(text)
+                }}
               />
-            ))
-          )}
+            ) : (
+              messages.map((m, i) => (
+                <ChatMessageRow
+                  key={m.id || `msg-${i}`}
+                  message={m}
+                  onEdit={(id, text) =>
+                    useLive
+                      ? void (async () => {
+                          await revertMessage(currentProjectId!, st.convId!, id)
+                          await sendLive(text)
+                        })()
+                      : editUserMessage(panelKey, id, text)
+                  }
+                  onRetry={(id) =>
+                    useLive ? void liveRetry(id) : retryAssistantMessage(panelKey, id)
+                  }
+                  onFork={(id) =>
+                    useLive ? void liveFork(id) : forkConversation(panelKey, id)
+                  }
+                  onQuestionOption={(opt) => send(opt)}
+                  onQuestionReply={(requestId, answers) =>
+                    void onQuestionReply(requestId, answers)
+                  }
+                  onQuestionReject={(requestId) => void onQuestionReject(requestId)}
+                  onPermission={onPermission}
+                />
+              ))
+            )}
+          </div>
+          {showJumpOrb && !isEmpty ? (
+            <button
+              type="button"
+              className="chat-jump-orb"
+              title="Jump to latest message"
+              aria-label="Jump to latest message"
+              onClick={jumpToLatest}
+            >
+              <span className="chat-jump-orb-icon" aria-hidden>
+                ↓
+              </span>
+              {sending ? <span className="chat-jump-orb-dot" aria-hidden /> : null}
+            </button>
+          ) : null}
         </div>
 
         {chatAlert && liveStatus === 'ready' ? (
@@ -2294,6 +2364,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
             ensureInstanceState(panelKey, { enabledSkills: ids })
           }
           onAgentChange={(id) => setConversationAgent(panelKey, id)}
+          onModeChange={(m) => setChatMode(panelKey, m)}
           modelOptions={composerModels || undefined}
           allModelOptions={models || undefined}
           allowDemoModelFallback={!useLive}

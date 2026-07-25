@@ -1,10 +1,5 @@
-import {
-  Button,
-  Switch,
-  ToggleGroup,
-  ToggleGroupItem,
-} from '@patternfly/react-core'
-import { CHAT_MODES, modeLabel } from '@/data/chatCatalog'
+import { Button, Switch } from '@patternfly/react-core'
+import { modeLabel } from '@/data/chatCatalog'
 import { formatTokenCount } from '@/lib/chatMarkdown'
 import type {
   ChatMode,
@@ -16,7 +11,6 @@ interface ChatHeaderProps {
   title: string
   mode: ChatMode
   metrics?: ConversationMetrics
-  onModeChange: (mode: ChatMode) => void
   /** Opt-in worktree isolation for this conversation */
   useWorktree?: boolean
   worktree?: ConversationWorktree
@@ -33,7 +27,6 @@ export function ChatHeader({
   title,
   mode,
   metrics,
-  onModeChange,
   useWorktree = false,
   worktree,
   worktreeAvailable = false,
@@ -106,19 +99,6 @@ export function ChatHeader({
         ) : null}
       </div>
 
-      <ToggleGroup className="chat-mode-toggle" aria-label="Permission mode">
-        {CHAT_MODES.map((m) => (
-          <ToggleGroupItem
-            key={m.id}
-            text={m.label}
-            buttonId={`chat-mode-${m.id}`}
-            isSelected={mode === m.id}
-            onChange={() => onModeChange(m.id)}
-            title={m.description}
-          />
-        ))}
-      </ToggleGroup>
-
       <div className="chat-metrics" aria-label="Conversation metrics">
         <span className="metric" title={`Context ${used.toLocaleString()} / ${window.toLocaleString()} tokens`}>
           <span className="metric-label">Context</span>
@@ -145,7 +125,10 @@ export function ChatHeader({
               : '—'}
           </span>
         </span>
-        <span className="metric metric-mode-mobile" title="Permission mode">
+        <span
+          className="metric metric-mode-mobile"
+          title="Permission mode (change in composer)"
+        >
           <span className="metric-label">Mode</span>
           <span className="metric-value">{modeLabel(mode)}</span>
         </span>

@@ -8,18 +8,45 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
-/** Lightweight Markdown → HTML for demo chat bubbles. */
+function renderFenceHtml(lang: string, code: string): string {
+  const cls = lang ? ` class="lang-${escapeHtml(lang)}"` : ''
+  return `<pre class="md-code"><code${cls}>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`
+}
+
+/**
+ * Lightweight Markdown → HTML for chat bubbles.
+ *
+ * Fenced code blocks are replaced with single-line placeholders before the
+ * line-based paragraph pass, so multi-line ``` blocks are not split into
+ * escaped </code></pre> text nodes.
+ */
 export function markdownToHtml(md: string): string {
   let src = md.replace(/\r\n/g, '\n')
+  const blocks: string[] = []
 
-  // Fenced code blocks
-  src = src.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang: string, code: string) => {
-    const cls = lang ? ` class="lang-${escapeHtml(lang)}"` : ''
-    return `<pre class="md-code"><code${cls}>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`
+  const stash = (html: string): string => {
+    const i = blocks.length
+    blocks.push(html)
+    // Single-line sentinel (no newlines) so the line loop never splits HTML
+    return `\uE000MD${i}\uE001`
+  }
+
+  // Closed fenced code blocks (language optional; newline after fence optional)
+  src = src.replace(/```([^\n`]*)\n?([\s\S]*?)```/g, (_m, langRaw: string, code: string) => {
+    const lang = (langRaw || '').trim().split(/\s+/)[0] || ''
+    return stash(renderFenceHtml(lang, code))
   })
 
-  // Tables (simple pipe rows)
-  src = src.replace(/(?:^\|.+\|\n)+/gm, (block) => {
+  // Incomplete streaming fence: open ``` without close → provisional code block
+  src = src.replace(/```([^\n`]*)\n?([\s\S]*)$/g, (_m, langRaw: string, code: string) => {
+    // Only if this looks like an unfinished fence (no closing ```)
+    if (code.includes('```')) return _m
+    const lang = (langRaw || '').trim().split(/\s+/)[0] || ''
+    return stash(renderFenceHtml(lang, code || ''))
+  })
+
+  // Tables (simple pipe rows) — also stash so multi-line tables survive split
+  src = src.replace(/(?:^\|.+\|[ \t]*\n)+/gm, (block) => {
     const rows = block.trim().split('\n').filter(Boolean)
     if (rows.length < 2) return block
     const parseRow = (row: string) =>
@@ -30,11 +57,16 @@ export function markdownToHtml(md: string): string {
     const isSep = (row: string) => /^\|?\s*:?-{3,}/.test(row)
     const header = parseRow(rows[0])
     const bodyRows = rows.slice(1).filter((r) => !isSep(r)).map(parseRow)
+    if (!bodyRows.length && rows.length === 2 && isSep(rows[1])) {
+      // header + separator only
+    }
     const th = header.map((h) => `<th>${inlineMd(h)}</th>`).join('')
     const tr = bodyRows
       .map((cells) => `<tr>${cells.map((c) => `<td>${inlineMd(c)}</td>`).join('')}</tr>`)
       .join('')
-    return `<table class="md-table"><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table>`
+    return stash(
+      `<table class="md-table"><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table>`,
+    )
   })
 
   const lines = src.split('\n')
@@ -49,10 +81,12 @@ export function markdownToHtml(md: string): string {
     listType = null
   }
 
+  const isSentinel = (line: string) => /^\uE000MD\d+\uE001$/.test(line.trim())
+
   for (const line of lines) {
-    if (line.startsWith('<pre') || line.startsWith('<table')) {
+    if (isSentinel(line.trim()) || line.startsWith('<pre') || line.startsWith('<table')) {
       flushList()
-      out.push(line)
+      out.push(line.trim())
       continue
     }
     const h = /^(#{1,3})\s+(.+)$/.exec(line)
@@ -88,7 +122,13 @@ export function markdownToHtml(md: string): string {
     out.push(`<p>${inlineMd(line)}</p>`)
   }
   flushList()
-  return out.join('\n')
+
+  let html = out.join('\n')
+  html = html.replace(/\uE000MD(\d+)\uE001/g, (_m, idx: string) => {
+    const i = Number(idx)
+    return blocks[i] ?? ''
+  })
+  return html
 }
 
 function inlineMd(s: string): string {

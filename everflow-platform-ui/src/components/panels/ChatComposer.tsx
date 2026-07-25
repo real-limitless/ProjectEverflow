@@ -16,6 +16,7 @@ import WrenchIcon from '@patternfly/react-icons/dist/esm/icons/wrench-icon'
 import OutlinedStarIcon from '@patternfly/react-icons/dist/esm/icons/outlined-star-icon'
 import {
   CHAT_MCPS,
+  CHAT_MODES,
   CHAT_MODELS,
   CHAT_SKILLS,
   CHAT_TOOLS,
@@ -41,6 +42,7 @@ interface ChatComposerProps {
   onMcpsChange: (ids: string[]) => void
   onSkillsChange: (ids: string[]) => void
   onAgentChange: (id: string) => void
+  onModeChange: (mode: ChatMode) => void
   /** Live catalogs from OpenCode (optional) */
   modelOptions?: CatalogItem[]
   /** Full OpenCode catalog for browse (defaults to modelOptions) */
@@ -82,6 +84,7 @@ export function ChatComposer({
   onMcpsChange,
   onSkillsChange,
   onAgentChange,
+  onModeChange,
   modelOptions,
   allModelOptions,
   allowDemoModelFallback = true,
@@ -96,6 +99,7 @@ export function ChatComposer({
   const taRef = useRef<HTMLTextAreaElement>(null)
   const [modelOpen, setModelOpen] = useState(false)
   const [agentOpen, setAgentOpen] = useState(false)
+  const [modeOpen, setModeOpen] = useState(false)
 
   useEffect(() => {
     const el = taRef.current
@@ -233,6 +237,36 @@ export function ChatComposer({
               <span className="composer-icon-count">{skills.length}</span>
             </button>
           </Popover>
+
+          <Select
+            isOpen={modeOpen}
+            selected={mode}
+            onSelect={(_e, v) => {
+              onModeChange(String(v) as ChatMode)
+              setModeOpen(false)
+            }}
+            onOpenChange={setModeOpen}
+            toggle={(toggleRef) => (
+              <MenuToggle
+                ref={toggleRef}
+                variant="plain"
+                className={`composer-mode-toggle composer-mode-toggle--${mode}`}
+                onClick={() => setModeOpen(!modeOpen)}
+                isExpanded={modeOpen}
+                title={`Permission mode: ${modeLabel(mode)}`}
+              >
+                <span className="composer-mode-label">{modeLabel(mode)}</span>
+              </MenuToggle>
+            )}
+          >
+            <SelectList>
+              {CHAT_MODES.map((m) => (
+                <SelectOption key={m.id} value={m.id} description={m.description}>
+                  {m.label}
+                </SelectOption>
+              ))}
+            </SelectList>
+          </Select>
 
           <Select
             isOpen={agentOpen}

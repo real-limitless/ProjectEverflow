@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import FileIcon from '@patternfly/react-icons/dist/esm/icons/file-icon'
 import ExternalLinkAltIcon from '@patternfly/react-icons/dist/esm/icons/external-link-alt-icon'
+import AngleRightIcon from '@patternfly/react-icons/dist/esm/icons/angle-right-icon'
 import { markdownToHtml } from '@/lib/chatMarkdown'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import type {
@@ -437,6 +438,139 @@ function StreamStatus({ label }: { label: string }) {
   )
 }
 
+function isStepBlock(b: ChatBlock): boolean {
+  return (
+    b.type === 'tool' ||
+    b.type === 'terminal' ||
+    b.type === 'web_search' ||
+    b.type === 'knowledge_citations'
+  )
+}
+
+function isInteractiveBlock(b: ChatBlock): boolean {
+  return b.type === 'question' || b.type === 'permission'
+}
+
+function isAnswerBlock(b: ChatBlock): boolean {
+  return (
+    b.type === 'text' ||
+    b.type === 'markdown' ||
+    b.type === 'image' ||
+    b.type === 'attachment'
+  )
+}
+
+/** Collapsible model reasoning — auto-collapses once the answer body appears. */
+function ThinkingPanel({
+  thinking,
+  incomplete,
+  hasAnswerBody,
+}: {
+  thinking: string
+  incomplete: boolean
+  hasAnswerBody: boolean
+}) {
+  const reasoningOnly = incomplete && !hasAnswerBody
+  const [expanded, setExpanded] = useState(reasoningOnly)
+
+  useEffect(() => {
+    if (reasoningOnly) setExpanded(true)
+    else if (hasAnswerBody) setExpanded(false)
+  }, [reasoningOnly, hasAnswerBody])
+
+  const approxTokens = Math.max(1, Math.ceil(thinking.length / 4))
+  const label = reasoningOnly
+    ? `Thinking… (~${approxTokens} tok)`
+    : incomplete
+      ? 'Reasoning'
+      : `Thought · ~${approxTokens} tok`
+
+  return (
+    <div className={`chat-thinking${reasoningOnly ? ' chat-thinking--live' : ''}`}>
+      <button
+        type="button"
+        className="chat-thinking-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <AngleRightIcon className={expanded ? 'chat-chevron-open' : undefined} />
+        {reasoningOnly ? <span className="chat-stream-spinner" aria-hidden /> : null}
+        <span>{label}</span>
+        <span className="chat-thinking-hint">{expanded ? 'Hide' : 'Show'}</span>
+      </button>
+      {expanded ? (
+        <div className="chat-thinking-body" title="Model reasoning">
+          {thinking}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** Collapsible tool/terminal/web/knowledge steps — collapsed when message completes. */
+function StepsPanel({
+  blocks,
+  incomplete,
+  onQuestionOption,
+  onQuestionReply,
+  onQuestionReject,
+  onPermission,
+}: {
+  blocks: ChatBlock[]
+  incomplete: boolean
+  onQuestionOption?: (option: string) => void
+  onQuestionReply?: (requestId: string, answers: string[][]) => void
+  onQuestionReject?: (requestId: string) => void
+  onPermission?: (permissionId: string, response: 'once' | 'always' | 'reject') => void
+}) {
+  const running = blocks.some(
+    (b) => b.type === 'tool' && b.tool?.status === 'running',
+  )
+  const [expanded, setExpanded] = useState(incomplete || running)
+
+  useEffect(() => {
+    if (incomplete || running) setExpanded(true)
+    else setExpanded(false)
+  }, [incomplete, running])
+
+  const n = blocks.length
+  const label = incomplete || running
+    ? `Running steps… (${n})`
+    : `Used ${n} step${n === 1 ? '' : 's'}`
+
+  return (
+    <div className="chat-steps">
+      <button
+        type="button"
+        className="chat-steps-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <AngleRightIcon className={expanded ? 'chat-chevron-open' : undefined} />
+        {incomplete || running ? (
+          <span className="chat-stream-spinner" aria-hidden />
+        ) : null}
+        <span>{label}</span>
+        <span className="chat-thinking-hint">{expanded ? 'Hide' : 'Show'}</span>
+      </button>
+      {expanded ? (
+        <div className="chat-steps-body">
+          {blocks.map((b, i) => (
+            <BlockView
+              key={b.partId || `step-${i}`}
+              block={b}
+              onQuestionOption={onQuestionOption}
+              onQuestionReply={onQuestionReply}
+              onQuestionReject={onQuestionReject}
+              onPermission={onPermission}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export function ChatMessageContent({
   message,
   onQuestionOption,
@@ -452,36 +586,68 @@ export function ChatMessageContent({
       b.type === 'question' &&
       (!b.questionRequest || b.questionRequest.status === 'pending'),
   )
-  const hasBody =
+
+  const { answerBlocks, stepBlocks, interactiveBlocks } = useMemo(() => {
+    const blocks = message.blocks || []
+    return {
+      answerBlocks: blocks.filter(isAnswerBlock),
+      stepBlocks: blocks.filter(isStepBlock),
+      interactiveBlocks: blocks.filter(isInteractiveBlock),
+    }
+  }, [message.blocks])
+
+  const hasAnswerBody =
     !!(message.text || '').trim() ||
-    (message.blocks || []).some(
+    answerBlocks.some(
       (b) =>
-        (b.type === 'text' || b.type === 'markdown') && !!(b.text || '').trim(),
-    ) ||
-    !!(
-      message.tool ||
-      message.blocks?.some(
-        (b) =>
-          b.type === 'tool' ||
-          b.type === 'terminal' ||
-          b.type === 'web_search' ||
-          b.type === 'question' ||
-          b.type === 'permission' ||
-          b.type === 'knowledge_citations',
-      )
+        ((b.type === 'text' || b.type === 'markdown') && !!(b.text || '').trim()) ||
+        b.type === 'image' ||
+        b.type === 'attachment',
     )
+
+  const hasSteps =
+    stepBlocks.length > 0 || Boolean(message.tool)
 
   if (message.blocks?.length) {
     return (
       <div className={`msg-blocks${incomplete ? ' msg-blocks--streaming' : ''}`}>
         {message.thinking ? (
-          <div className="thinking" title="Model reasoning">
-            {message.thinking}
-          </div>
+          <ThinkingPanel
+            thinking={message.thinking}
+            incomplete={incomplete}
+            hasAnswerBody={hasAnswerBody || hasSteps}
+          />
         ) : null}
-        {message.blocks.map((b, i) => (
+
+        {hasSteps ? (
+          <StepsPanel
+            blocks={
+              message.tool && !stepBlocks.some((b) => b.type === 'tool')
+                ? [
+                    ...stepBlocks,
+                    {
+                      type: 'tool' as const,
+                      tool: {
+                        name: 'tool',
+                        title: message.tool.title,
+                        body: message.tool.body,
+                        status: 'done' as const,
+                      },
+                    },
+                  ]
+                : stepBlocks
+            }
+            incomplete={incomplete}
+            onQuestionOption={onQuestionOption}
+            onQuestionReply={onQuestionReply}
+            onQuestionReject={onQuestionReject}
+            onPermission={onPermission}
+          />
+        ) : null}
+
+        {answerBlocks.map((b, i) => (
           <BlockView
-            key={b.partId || i}
+            key={b.partId || `ans-${i}`}
             block={b}
             onQuestionOption={onQuestionOption}
             onQuestionReply={onQuestionReply}
@@ -489,8 +655,28 @@ export function ChatMessageContent({
             onPermission={onPermission}
           />
         ))}
+
+        {interactiveBlocks.map((b, i) => (
+          <BlockView
+            key={b.partId || `ix-${i}`}
+            block={b}
+            onQuestionOption={onQuestionOption}
+            onQuestionReply={onQuestionReply}
+            onQuestionReject={onQuestionReject}
+            onPermission={onPermission}
+          />
+        ))}
+
         {incomplete && !hasPendingQuestion ? (
-          <StreamStatus label={hasBody ? 'Working…' : 'Generating…'} />
+          <StreamStatus
+            label={
+              message.thinking && !hasAnswerBody && !hasSteps
+                ? 'Thinking…'
+                : hasAnswerBody || hasSteps
+                  ? 'Working…'
+                  : 'Generating…'
+            }
+          />
         ) : null}
         {hasPendingQuestion && incomplete ? (
           <StreamStatus label="Waiting for your answer…" />
@@ -502,22 +688,31 @@ export function ChatMessageContent({
   return (
     <>
       {message.thinking ? (
-        <div className="thinking" title="Model reasoning">
-          {message.thinking}
-        </div>
+        <ThinkingPanel
+          thinking={message.thinking}
+          incomplete={incomplete}
+          hasAnswerBody={!!(message.text || '').trim() || !!message.tool}
+        />
       ) : null}
       {message.tool ? (
-        <div className="tool-card">
-          <div className="tool-card-head">
-            <span>
-              {toolIcon()} {message.tool.title}
-            </span>
-            <span className="ok">✓ done</span>
-          </div>
-          <pre>{message.tool.body}</pre>
-        </div>
+        <StepsPanel
+          blocks={[
+            {
+              type: 'tool',
+              tool: {
+                name: 'tool',
+                title: message.tool.title,
+                body: message.tool.body,
+                status: 'done',
+              },
+            },
+          ]}
+          incomplete={incomplete}
+        />
       ) : null}
-      {incomplete && !message.text ? <StreamStatus label="Generating…" /> : null}
+      {incomplete && !message.text && !message.thinking ? (
+        <StreamStatus label="Generating…" />
+      ) : null}
       {message.text ? (
         <div
           className={`msg-md${incomplete ? ' msg-md--streaming' : ''}`}

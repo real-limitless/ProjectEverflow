@@ -428,6 +428,14 @@
 }
 
 /* —— Messages —— */
+.chat-layout .chat-messages-wrap {
+  position: relative !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
 .chat-layout .messages {
   flex: 1 1 auto !important;
   min-height: 0 !important;
@@ -437,6 +445,138 @@
   flex-direction: column !important;
   gap: 0.875rem;
   background: var(--pf-t--global--background--color--primary--default);
+}
+
+/* Jump-to-latest control when user has scrolled up */
+.chat-layout .chat-jump-orb {
+  position: absolute !important;
+  right: 1rem !important;
+  bottom: 0.85rem !important;
+  z-index: 5;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--primary--default);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  color: var(--pf-t--global--text--color--regular);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.chat-layout .chat-jump-orb:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+
+.chat-layout .chat-jump-orb-icon {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.chat-layout .chat-jump-orb-dot {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--pf-t--global--color--status--info--default, #06c);
+}
+
+/* Thinking / reasoning collapsible */
+.chat-layout .chat-thinking {
+  margin-block-end: 0.45rem;
+  border-radius: 8px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--secondary--default);
+  overflow: hidden;
+}
+
+.chat-layout .chat-thinking--live {
+  border-color: var(--pf-t--global--border--color--brand--default);
+}
+
+.chat-layout .chat-thinking-toggle,
+.chat-layout .chat-steps-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.78rem;
+  color: var(--pf-t--global--text--color--subtle);
+  cursor: pointer;
+  text-align: start;
+}
+
+.chat-layout .chat-thinking-toggle:hover,
+.chat-layout .chat-steps-toggle:hover {
+  color: var(--pf-t--global--text--color--regular);
+  background: var(--pf-t--global--background--color--primary--default);
+}
+
+.chat-layout .chat-thinking-hint {
+  margin-inline-start: auto;
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+.chat-layout .chat-thinking-body {
+  font-size: 0.75rem;
+  color: var(--pf-t--global--text--color--subtle);
+  font-style: italic;
+  margin: 0;
+  padding: 0.35rem 0.65rem 0.55rem;
+  max-height: 10rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  border-block-start: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.chat-layout .chat-steps {
+  margin-block-end: 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--secondary--default);
+  overflow: hidden;
+}
+
+.chat-layout .chat-steps-body {
+  padding: 0.4rem 0.5rem 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  border-block-start: 1px solid var(--pf-t--global--border--color--default);
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.chat-layout .chat-chevron-open {
+  transform: rotate(90deg);
+}
+
+.chat-layout .composer-mode-toggle {
+  max-width: 6.5rem;
+}
+
+.chat-layout .composer-mode-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.chat-layout .composer-mode-toggle--auto .composer-mode-label {
+  color: var(--pf-t--global--color--status--warning--default, #f0ab00);
+}
+
+.chat-layout .composer-mode-toggle--ask .composer-mode-label {
+  color: var(--pf-t--global--text--color--subtle);
 }
 
 .chat-layout .messages.messages--empty {
@@ -854,6 +994,7 @@
   margin-block-end: 0;
 }
 
+/* Legacy plain thinking class (kept for any leftover markup) */
 .chat-layout .bubble .thinking {
   font-size: 0.75rem;
   color: var(--pf-t--global--text--color--subtle);
