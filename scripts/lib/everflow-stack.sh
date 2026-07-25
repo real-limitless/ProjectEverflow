@@ -480,14 +480,17 @@ upgrade_recreate_stack() {
     fi
   fi
   ensure_local_registry || true
+  # Always force-recreate: podman/docker compose often keep old containers when the
+  # image *tag* is unchanged (e.g. :latest) even after registry reseed rewrote the digest.
+  # Without --force-recreate, upgrades can report success while serving stale UI/API.
   if [[ "${mode}" == "build" ]]; then
     step "Rebuilding & recreating stack"
-    compose -f "${COMPOSE_FILE}" up --build -d || return 1
+    compose -f "${COMPOSE_FILE}" up --build -d --force-recreate || return 1
   else
     step "Pulling images & recreating stack"
     compose -f "${COMPOSE_FILE}" pull || warn "pull had errors; continuing with local images"
-    compose -f "${COMPOSE_FILE}" up -d --no-build 2>/dev/null \
-      || compose -f "${COMPOSE_FILE}" up -d || return 1
+    compose -f "${COMPOSE_FILE}" up -d --no-build --force-recreate 2>/dev/null \
+      || compose -f "${COMPOSE_FILE}" up -d --force-recreate || return 1
   fi
   return 0
 }
