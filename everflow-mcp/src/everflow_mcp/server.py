@@ -29,6 +29,16 @@ mcp = FastMCP(
         "- If search is empty, call list_canvases then get_canvas for likely docs.\n"
         "- Use reindex_canvas after creating/updating a canvas when retrieval should refresh.\n"
         "\n"
+        "BROWSER / WEB SURFING:\n"
+        "- Full navigate/click/type/snapshot tools come from the separate Playwright MCP "
+        "(install marketplace item 'Browser (Playwright)' / id playwright). "
+        "Those tools are typically named playwright_* once enabled.\n"
+        "- Use browser_status to see if Playwright is enabled, mode (headless|headed), "
+        "and Desktop readiness.\n"
+        "- Default mode is headless. Call browser_set_mode(mode='headed') when the user "
+        "should watch the browser in the Desktop panel; browser_set_mode(mode='headless') "
+        "to return to headless. Mode switches restart OpenCode so Playwright MCP respawns.\n"
+        "\n"
         "To spin up a website or dev server, prefer create_job (e.g. npm run dev) "
         "over a blocking shell so the process survives and appears in the Jobs panel. "
         "Use get_job_logs to verify startup; stop_job/kill_job to shut down. "
@@ -499,6 +509,34 @@ async def restart_job(job_id: str) -> str:
     """Restart a background job (stop if needed, then start with stored command)."""
     try:
         return _ok(await _client().restart_job(job_id))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def browser_status() -> str:
+    """Status of the opt-in Playwright browser harness (enabled, mode, desktop, prebake).
+
+    Browse tools themselves are on the playwright MCP after marketplace install.
+    """
+    try:
+        return _ok(await _client().browser_status())
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def browser_set_mode(mode: str, restart_opencode: bool = True) -> str:
+    """Set browser mode to headless or headed (visible on project Desktop).
+
+    Args:
+        mode: headless (default) or headed / headful / visible.
+        restart_opencode: Restart OpenCode so Playwright MCP picks up the mode (default true).
+    """
+    try:
+        return _ok(
+            await _client().browser_set_mode(mode, restart_opencode=restart_opencode)
+        )
     except Exception as exc:  # noqa: BLE001
         return _err(exc)
 

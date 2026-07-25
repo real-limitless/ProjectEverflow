@@ -76,6 +76,15 @@ Detached long-lived processes in the project sandbox (Jobs panel). Prefer these 
 
 Requires a **running** sandbox. Sandbox tokens need the `jobs:rw` scope (included in default mint scopes).
 
+### Browser (Playwright harness control)
+
+Full navigate / click / snapshot tools come from the **Playwright MCP** (marketplace: **Browser (Playwright)**). Everflow MCP only controls mode and status:
+
+- `browser_status` — enabled?, mode (`headless`|`headed`), Desktop listening, prebaked Chromium
+- `browser_set_mode` — `mode=headless|headed` (headed uses the project Desktop / noVNC panel)
+
+Default is **headless**. Install the marketplace MCP first so OpenCode loads `@playwright/mcp` via `everflow-playwright-mcp`.
+
 ## How the guest gets this package
 
 OpenCode runs `python3 -m everflow_mcp` **inside the project microVM**. On each OpenCode ensure, the sandbox-agent:

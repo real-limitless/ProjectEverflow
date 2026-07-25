@@ -57,3 +57,25 @@ class DesktopResizeResponse(BaseModel):
     width: int
     height: int
     message: str = ""
+
+
+class BrowserModeRequest(BaseModel):
+    mode: str = Field(default="headless", pattern="^(headless|headed|headful|visible)$")
+    restart_opencode: bool = True
+
+
+class BrowserStatusRead(BaseModel):
+    sandbox_name: str
+    enabled: bool = False
+    mode: str = "headless"
+    mcp_configured: bool = False
+    wrapper_present: bool = False
+    browsers_present: bool = False
+    desktop_listening: bool = False
+    display: str = ":99"
+    browsers_path: str = "/opt/everflow-browsers"
+    hints: list[str] = Field(default_factory=list)
+    playwright_mcp: dict[str, Any] | None = None
+    ok: bool | None = None
+    desktop_action: dict[str, Any] | None = None
+    opencode_restart: dict[str, Any] | None = None

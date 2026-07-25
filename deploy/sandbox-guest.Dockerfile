@@ -25,6 +25,8 @@ FROM ${BASE_IMAGE}
 ARG CLAUDE_CODE_VERSION=latest
 # Primary package name; fallback tried in RUN if missing
 ARG OPENCODE_PACKAGE=opencode-ai
+# Official Playwright MCP + Chromium for opt-in OpenCode browser tools
+ARG PLAYWRIGHT_MCP_VERSION=latest
 
 LABEL org.opencontainers.image.title="everflow-sandbox-guest" \
       org.opencontainers.image.description="Everflow project microVM image with Node + agent harnesses preinstalled" \
@@ -33,7 +35,8 @@ LABEL org.opencontainers.image.title="everflow-sandbox-guest" \
 ENV DEBIAN_FRONTEND=noninteractive \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PATH="/usr/local/bin:${PATH}"
+    PATH="/usr/local/bin:${PATH}" \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/everflow-browsers
 
 ARG NOVNC_VERSION=1.5.0
 
@@ -94,11 +97,28 @@ RUN pip install --no-cache-dir /opt/everflow-mcp \
     && command -v everflow-mcp \
     && printf 'everflow_mcp=%s\n' "$(command -v everflow-mcp)" >> /etc/everflow/prebaked
 
+# Playwright MCP + Chromium (opt-in via marketplace; headless default, headed on Desktop)
+# Image grows significantly; avoids cold npx + browser download on first Chat use.
+RUN npm install -g "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" \
+    && mkdir -p /opt/everflow-browsers \
+    && (cd /usr/local/lib/node_modules/@playwright/mcp \
+        && npx --yes playwright install-deps chromium \
+        && PLAYWRIGHT_BROWSERS_PATH=/opt/everflow-browsers npx --yes playwright install chromium) \
+    && npm cache clean --force \
+    && printf 'playwright_mcp=%s\nbrowsers=%s\n' \
+        "$(command -v playwright-mcp 2>/dev/null || ls /usr/local/lib/node_modules/@playwright/mcp/cli.js 2>/dev/null || echo missing)" \
+        "/opt/everflow-browsers" \
+        >> /etc/everflow/prebaked
+
 # Desktop / noVNC stack (started by entrypoint; disable with EF_DESKTOP_ENABLE=0)
 COPY deploy/sandbox-guest-desktop.sh /usr/local/bin/everflow-desktop.sh
 COPY deploy/sandbox-guest-entrypoint.sh /usr/local/bin/sandbox-guest-entrypoint.sh
-RUN chmod +x /usr/local/bin/everflow-desktop.sh /usr/local/bin/sandbox-guest-entrypoint.sh \
-    && printf 'novnc=6080\n' >> /etc/everflow/prebaked
+COPY deploy/everflow-playwright-mcp.sh /usr/local/bin/everflow-playwright-mcp
+RUN chmod +x /usr/local/bin/everflow-desktop.sh \
+        /usr/local/bin/sandbox-guest-entrypoint.sh \
+        /usr/local/bin/everflow-playwright-mcp \
+    && printf 'novnc=6080\nplaywright_wrapper=/usr/local/bin/everflow-playwright-mcp\n' \
+        >> /etc/everflow/prebaked
 
 WORKDIR /workspace
 

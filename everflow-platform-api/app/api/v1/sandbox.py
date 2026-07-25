@@ -12,7 +12,10 @@ from app.config import Settings, get_settings
 from app.core.deps import get_project_for_member
 from app.db.session import get_async_session
 from app.models.project import Project
+from app.core.principal import Principal, get_principal, get_project_for_principal
 from app.schemas.sandbox import (
+    BrowserModeRequest,
+    BrowserStatusRead,
     DesktopResizeRequest,
     DesktopResizeResponse,
     SandboxExecRequest,
@@ -326,6 +329,75 @@ async def resize_sandbox_desktop(
         height=int(result.get("height", body.height)),
         message=str(result.get("message", "")),
     )
+
+
+@router.get(
+    "/projects/{project_id}/sandbox/browser/status",
+    response_model=BrowserStatusRead,
+)
+async def get_sandbox_browser_status(
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
+) -> BrowserStatusRead:
+    """Playwright browser harness status (JWT or sandbox token)."""
+    principal.require_scope("project:read")
+    name = _require_name(project)
+    if project.sandbox_status != "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Sandbox is not running (status={project.sandbox_status})",
+        )
+    client = SandboxAgentClient(settings)
+    try:
+        result = await client.browser_status(name)
+    except SandboxAgentError as exc:
+        if exc.status_code == 404:
+            await mark_sandbox_missing(session, project)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=MISSING_ON_AGENT,
+            ) from exc
+        raise _agent_http_error(exc) from exc
+    return BrowserStatusRead(**result)
+
+
+@router.post(
+    "/projects/{project_id}/sandbox/browser/mode",
+    response_model=BrowserStatusRead,
+)
+async def set_sandbox_browser_mode(
+    body: BrowserModeRequest,
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
+) -> BrowserStatusRead:
+    """Switch headless/headed browser mode; headed ensures Desktop (JWT or sandbox token)."""
+    principal.require_scope("project:read")
+    name = _require_name(project)
+    if project.sandbox_status != "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Sandbox is not running (status={project.sandbox_status})",
+        )
+    client = SandboxAgentClient(settings)
+    try:
+        result = await client.browser_set_mode(
+            name,
+            mode=body.mode,
+            restart_opencode=body.restart_opencode,
+        )
+    except SandboxAgentError as exc:
+        if exc.status_code == 404:
+            await mark_sandbox_missing(session, project)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=MISSING_ON_AGENT,
+            ) from exc
+        raise _agent_http_error(exc) from exc
+    return BrowserStatusRead(**result)
 
 
 @router.get("/projects/{project_id}/sandbox/fs", response_model=list[SandboxFsEntry])

@@ -98,6 +98,22 @@ class SandboxAgentClient:
             json={"width": width, "height": height},
         )
 
+    async def browser_status(self, name: str) -> dict[str, Any]:
+        return await self._request("GET", f"/v1/sandboxes/{name}/browser/status")
+
+    async def browser_set_mode(
+        self,
+        name: str,
+        *,
+        mode: str,
+        restart_opencode: bool = True,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/v1/sandboxes/{name}/browser/mode",
+            json={"mode": mode, "restart_opencode": restart_opencode},
+        )
+
     async def bootstrap(self, name: str, harnesses: list[str]) -> dict[str, Any]:
         return await self._request(
             "POST",

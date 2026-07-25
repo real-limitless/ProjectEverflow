@@ -79,6 +79,45 @@ def test_default_timeout_is_split() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_browser_status_and_set_mode() -> None:
+    respx.get(f"{BASE}/api/v1/projects/{PID}/sandbox/browser/status").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "sandbox_name": "proj-demo",
+                "enabled": True,
+                "mode": "headless",
+                "mcp_configured": True,
+                "wrapper_present": True,
+                "browsers_present": True,
+                "desktop_listening": False,
+                "hints": [],
+            },
+        )
+    )
+    respx.post(f"{BASE}/api/v1/projects/{PID}/sandbox/browser/mode").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "sandbox_name": "proj-demo",
+                "enabled": True,
+                "mode": "headed",
+                "ok": True,
+                "desktop_listening": True,
+            },
+        )
+    )
+    c = _client()
+    st = await c.browser_status()
+    assert st["mode"] == "headless"
+    assert st["enabled"] is True
+    out = await c.browser_set_mode("headed")
+    assert out["mode"] == "headed"
+    assert out["ok"] is True
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_list_projects() -> None:
     respx.get(f"{BASE}/api/v1/projects/{PID}").mock(
         return_value=httpx.Response(

@@ -36,6 +36,8 @@ from app.jobs import (
 )
 from app.schemas import (
     BootstrapRequest,
+    BrowserModeRequest,
+    BrowserStatusResponse,
     DesktopResizeRequest,
     DesktopResizeResponse,
     ExecRequest,
@@ -866,6 +868,15 @@ async def opencode_ensure(
 
         # Guest microVM: write MCP into guest FS + reverse tunnel
         await _configure_everflow_mcp(guest=True, host_ws=_host_workspace_path(rec))
+        # Opt-in Playwright MCP: normalize wrapper + headed desktop if enabled
+        try:
+            from app.browser import normalize_playwright_mcp_if_enabled
+
+            browser_norm = await normalize_playwright_mcp_if_enabled(backend, name)
+            if browser_norm.get("normalized"):
+                logger.info("playwright mcp normalize name=%s %s", name, browser_norm)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("playwright mcp normalize skipped name=%s: %s", name, exc)
         # Also mirror to host path if present (best-effort)
         host_ws = _host_workspace_path(rec)
         if host_ws is not None and host_ws.is_dir() and body and body.everflow_token:
@@ -946,17 +957,30 @@ async def put_opencode_harness(
     backend: Annotated[SandboxBackend, Depends(get_backend)],
 ) -> OpenCodeHarnessResponse:
     """Write/merge OpenCode agents, skills, and MCP into the sandbox workspace."""
+    from app.browser import (
+        playwright_mcp_config,
+        sync_browser_stamps_from_pack,
+        sync_browser_stamps_guest,
+    )
+
     rec = await _require_running_sandbox(name, backend)
     ws = _host_workspace_path(rec)
     # Keep null MCP values (server deletion) — exclude_none would drop them.
     payload = body.model_dump(exclude_none=True)
     if body.mcp is not None:
         payload["mcp"] = body.mcp
+        # Normalize Everflow playwright install to wrapper + chromium env.
+        mcp_block = payload["mcp"]
+        if isinstance(mcp_block, dict) and "playwright" in mcp_block:
+            if mcp_block["playwright"] is not None:
+                payload["mcp"] = {**mcp_block, "playwright": playwright_mcp_config()}
     try:
         if ws is not None:
             pack = apply_pack_to_workspace(ws, payload)
+            sync_browser_stamps_from_pack(ws, payload)
         else:
             pack = await apply_pack_via_backend(backend, name, payload)
+            await sync_browser_stamps_guest(backend, name, payload)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except PermissionError as exc:
@@ -1096,6 +1120,60 @@ async def resize_sandbox_desktop(
             detail=f"Desktop resize failed: {exc}",
         ) from exc
     return DesktopResizeResponse(ok=ok, width=w, height=h, message=msg)
+
+
+@router.get(
+    "/v1/sandboxes/{name}/browser/status",
+    response_model=BrowserStatusResponse,
+    dependencies=[Depends(require_agent_token)],
+)
+async def get_sandbox_browser_status(
+    name: str,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> BrowserStatusResponse:
+    """Playwright browser harness status (opt-in MCP, mode, desktop)."""
+    await _require_running_sandbox(name, backend)
+    from app.browser import browser_status
+
+    try:
+        data = await browser_status(backend, name)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("browser status failed name=%s: %s", name, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Browser status failed: {exc}",
+        ) from exc
+    return BrowserStatusResponse(**data)
+
+
+@router.post(
+    "/v1/sandboxes/{name}/browser/mode",
+    response_model=BrowserStatusResponse,
+    dependencies=[Depends(require_agent_token)],
+)
+async def set_sandbox_browser_mode(
+    name: str,
+    body: BrowserModeRequest,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> BrowserStatusResponse:
+    """Switch headless/headed Playwright mode; headed ensures Desktop."""
+    await _require_running_sandbox(name, backend)
+    from app.browser import set_browser_mode
+
+    try:
+        data = await set_browser_mode(
+            backend,
+            name,
+            mode=body.mode,
+            restart_opencode=body.restart_opencode,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("browser mode set failed name=%s: %s", name, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Browser mode failed: {exc}",
+        ) from exc
+    return BrowserStatusResponse(**data)
 
 
 @router.get(

@@ -377,6 +377,26 @@ class EverflowClient:
             f"/api/v1/projects/{self.project_id}/jobs/{job_id}",
         )
 
+    # --- browser (Playwright harness control; browse tools are playwright MCP) ---
+
+    async def browser_status(self) -> dict[str, Any]:
+        return await self.request(
+            "GET",
+            f"/api/v1/projects/{self.project_id}/sandbox/browser/status",
+        )
+
+    async def browser_set_mode(
+        self,
+        mode: str,
+        *,
+        restart_opencode: bool = True,
+    ) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/sandbox/browser/mode",
+            json_body={"mode": mode, "restart_opencode": restart_opencode},
+        )
+
 
 def dumps(data: Any) -> str:
     return json.dumps(data, indent=2, default=str)

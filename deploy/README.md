@@ -139,7 +139,9 @@ ONLY=guest PUSH=true ./deploy/local-registry.sh build-push
 
 Microsandbox pulls OCI images into its cache (`MSB_HOME`). First provision may download once from the **local** registry; later creates reuse the cache.
 
-Upgrade harness versions by rebuilding the guest image (optional build-args on the Dockerfile: `CLAUDE_CODE_VERSION`, `OPENCODE_PACKAGE`).
+Upgrade harness versions by rebuilding the guest image (optional build-args on the Dockerfile: `CLAUDE_CODE_VERSION`, `OPENCODE_PACKAGE`, `PLAYWRIGHT_MCP_VERSION`).
+
+The guest image prebakes **Chromium + `@playwright/mcp`** and the `everflow-playwright-mcp` wrapper (`PLAYWRIGHT_BROWSERS_PATH=/opt/everflow-browsers`). Marketplace **Browser (Playwright)** is opt-in for OpenCode; headless is default, headed uses the Desktop/noVNC stack. Rebuild the guest after changing browser tooling.
 
 ## Live Preview (wildcard subdomains)
 
