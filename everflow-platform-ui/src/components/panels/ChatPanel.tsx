@@ -73,6 +73,7 @@ import {
 } from '@/lib/opencode/sessionSync'
 import { agentFromPack, getOpenCodeHarness } from '@/lib/harness/opencodePack'
 import { pushToast } from '@/lib/studioToast'
+import { buildKnowledgeSystemContext } from '@/lib/knowledgeRag'
 import {
   approveWorktree,
   catalogReposToWorkspace,
@@ -1347,6 +1348,16 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       if (agentName) body.agent = agentName
       if (Object.keys(toolsMap).length) body.tools = toolsMap
 
+      // Auto-RAG: inject top knowledge chunks into system so Chat answers from
+      // the platform vector index even if the model skips knowledge_search.
+      const systemParts: string[] = []
+      try {
+        const rag = await buildKnowledgeSystemContext(projectId, text)
+        if (rag) systemParts.push(rag)
+      } catch {
+        /* non-fatal */
+      }
+
       // Opt-in worktree: create lazily on first Edit/Auto prompt
       const modeNow = modeRef.current
       const convSnap =
@@ -1387,7 +1398,10 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           }
           patchConversationWorktree(projectId, convId, wt, { useWorktree: true })
         }
-        body.system = worktreeSystemPrompt(wt.path, wt.parentPath)
+        systemParts.push(worktreeSystemPrompt(wt.path, wt.parentPath))
+      }
+      if (systemParts.length) {
+        body.system = systemParts.join('\n\n')
       }
 
       // prompt_async should return quickly, but guest proxy congestion can stall it.
