@@ -14,7 +14,10 @@ v1 supports the five operations most commonly used in n8n templates:
   with ``{recordId, fields, createdTime, updatedRecords,
   createdRecords, source: 'airtable'}``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When an ``airtableApi`` credential is attached and no mock is present,
+real calls are made to the Airtable REST API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
 
 Parameters honored:
 
@@ -49,7 +52,10 @@ Behavior precedence:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the operation envelope.
-3. Offline synthetic response with deterministic-looking ids and
+3. If an ``airtableApi`` credential resolves (``token`` present), a real
+   call is made to the Airtable REST API and the response is normalized
+   into the operation envelope.
+4. Offline synthetic response with deterministic-looking ids and
    timestamps.
 
 Items with an empty resolved ``base`` or ``table`` are skipped (no item
@@ -65,7 +71,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -399,13 +407,134 @@ def _synthesize_response(
 # ── Response resolution ────────────────────────────────────────────────
 
 
-def _resolve_airtable_response(
+def _build_airtable_request(
+    cred: dict[str, Any],
+    operation: str,
+    base: str,
+    table: str,
+    record_id: str,
+    fields: dict[str, Any],
+    max_records: int,
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Airtable REST API request config.
+
+    Returns ``None`` when the credential has no ``token``.
+    """
+    token = str(
+        cred.get("token") or cred.get("apiKey") or cred.get("api_key") or ""
+    )
+    if not token:
+        return None
+    base_url = str(cred.get("baseUrl") or "https://api.airtable.com").rstrip("/")
+    api_base = f"{base_url}/v0"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    if operation == "list":
+        max_rec = max(1, max_records)
+        query_parts: list[str] = [f"maxRecords={max_rec}"]
+        view = str(params.get("view") or AIRTABLE_DEFAULT_VIEW)
+        if view:
+            query_parts.append(f"view={view}")
+        formula = params.get("filterByFormula")
+        if isinstance(formula, str) and formula.strip():
+            query_parts.append(f"filterByFormula={formula}")
+        sort = params.get("sort")
+        if isinstance(sort, list):
+            for i, s in enumerate(sort):
+                if isinstance(s, dict):
+                    field = s.get("field")
+                    if field:
+                        query_parts.append(f"sort[{i}][field]={field}")
+                    direction = str(s.get("direction") or "asc").lower()
+                    query_parts.append(f"sort[{i}][direction]={direction}")
+        qs = "&".join(query_parts)
+        return HttpRequestConfig(
+            url=f"{api_base}/{base}/{table}?{qs}",
+            method="GET",
+            headers=headers,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "create":
+        body: dict[str, Any] = {"records": [{"fields": fields or {}}]}
+        return HttpRequestConfig(
+            url=f"{api_base}/{base}/{table}",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "read":
+        return HttpRequestConfig(
+            url=f"{api_base}/{base}/{table}/{record_id}",
+            method="GET",
+            headers=headers,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "update":
+        body = {"fields": fields or {}}
+        return HttpRequestConfig(
+            url=f"{api_base}/{base}/{table}/{record_id}",
+            method="PATCH",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    # upsert — PATCH (update) when record_id is present, else POST (create)
+    if record_id:
+        body = {"fields": fields or {}}
+        return HttpRequestConfig(
+            url=f"{api_base}/{base}/{table}/{record_id}",
+            method="PATCH",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+    body = {"records": [{"fields": fields or {}}]}
+    return HttpRequestConfig(
+        url=f"{api_base}/{base}/{table}",
+        method="POST",
+        headers=headers,
+        body=body,
+        body_mode="json",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _envelope_from_airtable_api(
+    data: dict[str, Any],
+    operation: str,
+    record_id: str,
+    fields: dict[str, Any],
+) -> dict[str, Any]:
+    """Convert a real Airtable REST API response to the internal
+    operation envelope shape."""
+    return _normalize_response(data, operation, record_id, fields)
+
+
+async def _resolve_airtable_response(
     *,
     operation: str,
     base: str,
     table: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
     max_records: int,
     record_id: str,
@@ -414,8 +543,8 @@ def _resolve_airtable_response(
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"airtable_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"airtable_api"``, ``"offline"`` so downstream observers can tell
+    where the result came from.
     """
     mocks = ctx.mocks or {}
     amock = mocks.get("airtable_response")
@@ -440,6 +569,30 @@ def _resolve_airtable_response(
         if env is not None:
             return env, "http_response"
 
+    cred = resolve_credential(node, ctx, "airtableApi")
+    if cred:
+        cfg = _build_airtable_request(
+            cred, operation, base, table, record_id, fields, max_records, params
+        )
+        if cfg is not None:
+            logger.info(
+                "airtable real HTTP call operation=%s base=%s table=%s",
+                operation,
+                base,
+                table,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_airtable_api(
+                            resp.body, operation, record_id, fields
+                        ),
+                        "airtable_api",
+                    )
+            except Exception as exc:
+                logger.warning("airtable HTTP call failed: %s", exc)
+
     return (
         _synthesize_response(operation, max_records, record_id, fields),
         "offline",
@@ -462,7 +615,7 @@ def _build_list_items(
             "operation": "list",
             "source": "airtable",
         }
-        if source != "airtable_response":
+        if source not in ("airtable_response", "airtable_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -477,7 +630,7 @@ def _build_list_items(
             "operation": "list",
             "source": "airtable",
         }
-        if source != "airtable_response":
+        if source not in ("airtable_response", "airtable_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -497,7 +650,7 @@ def _build_create_item(
         "operation": "create",
         "source": "airtable",
     }
-    if source != "airtable_response":
+    if source not in ("airtable_response", "airtable_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}
@@ -514,7 +667,7 @@ def _build_read_item(
         "operation": "read",
         "source": "airtable",
     }
-    if source != "airtable_response":
+    if source not in ("airtable_response", "airtable_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}
@@ -531,7 +684,7 @@ def _build_update_item(
         "operation": "update",
         "source": "airtable",
     }
-    if source != "airtable_response":
+    if source not in ("airtable_response", "airtable_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}
@@ -552,7 +705,7 @@ def _build_upsert_item(
         "operation": "upsert",
         "source": "airtable",
     }
-    if source != "airtable_response":
+    if source not in ("airtable_response", "airtable_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}
@@ -666,12 +819,13 @@ async def exec_airtable(
                 )
                 fields = resolved_fields if isinstance(resolved_fields, dict) else {}
 
-        envelope, source = _resolve_airtable_response(
+        envelope, source = await _resolve_airtable_response(
             operation=operation,
             base=base,
             table=table,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
             max_records=max_records,
             record_id=record_id,

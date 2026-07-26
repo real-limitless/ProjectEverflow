@@ -6,7 +6,10 @@ v1 covers the operations most commonly used in n8n templates:
   REST API. Emits one item per input (or one item per issue for ``search``
   in array mode) with operation-specific fields and ``source: 'jira'``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a ``jiraApi`` credential is attached and no mock is present, real
+calls are made to the Jira REST API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
 
 Parameters honored by ``jira``:
 
@@ -48,7 +51,10 @@ Behavior precedence:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is used as
    the response.
-3. Offline synthetic response with deterministic-looking numbers and
+3. If a ``jiraApi`` credential resolves (``baseUrl``, ``email``, and
+   ``apiToken`` present), a real call is made to the Jira REST API via
+   :func:`execute_http_request` and the response is used.
+4. Offline synthetic response with deterministic-looking numbers and
    timestamps.
 
 Items with an empty resolved ``issueKey`` (for ``get`` / ``update`` /
@@ -58,13 +64,16 @@ item emitted).
 
 from __future__ import annotations
 
+import base64
 import logging
 import random
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -314,22 +323,207 @@ def _synthesize_offline(
     return {}
 
 
+# ── Real HTTP request building ────────────────────────────────────────
+
+
+def _build_jira_request(
+    cred: dict[str, Any],
+    operation: str,
+    issue_key: str,
+    project_key: str,
+    summary: str,
+    description: str,
+    issue_type: str,
+    assignee: str,
+    labels: list[str],
+    priority: str,
+    status: str,
+    jql: str,
+    max_results: int,
+    fields: list[str],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Jira REST API request config.
+
+    Returns ``None`` when the credential lacks ``baseUrl``, ``email``,
+    or ``apiToken``.
+    """
+    base_url = str(
+        cred.get("baseUrl") or cred.get("base_url") or ""
+    ).rstrip("/")
+    email = str(cred.get("email") or "")
+    api_token = str(
+        cred.get("apiToken") or cred.get("api_token") or ""
+    )
+    if not base_url or not email or not api_token:
+        return None
+
+    raw = f"{email}:{api_token}".encode("utf-8")
+    auth_header = "Basic " + base64.b64encode(raw).decode("ascii")
+    headers = {
+        "Authorization": auth_header,
+        "Accept": "application/json",
+    }
+
+    api_base = f"{base_url}/rest/api/3"
+
+    if operation == "create":
+        body: dict[str, Any] = {
+            "fields": {
+                "project": {"key": project_key},
+                "summary": summary,
+                "issuetype": {"name": issue_type},
+            }
+        }
+        if description:
+            body["fields"]["description"] = {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": description}],
+                    }
+                ],
+            }
+        if assignee:
+            body["fields"]["assignee"] = {"accountId": assignee}
+        if labels:
+            body["fields"]["labels"] = labels
+        if priority:
+            body["fields"]["priority"] = {"name": priority}
+        return HttpRequestConfig(
+            url=f"{api_base}/issue",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "get":
+        return HttpRequestConfig(
+            url=f"{api_base}/issue/{issue_key}",
+            method="GET",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "update":
+        body = {"fields": {}}
+        if summary:
+            body["fields"]["summary"] = summary
+        if description:
+            body["fields"]["description"] = {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": description}],
+                    }
+                ],
+            }
+        if assignee:
+            body["fields"]["assignee"] = {"accountId": assignee}
+        if priority:
+            body["fields"]["priority"] = {"name": priority}
+        return HttpRequestConfig(
+            url=f"{api_base}/issue/{issue_key}",
+            method="PUT",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "delete":
+        return HttpRequestConfig(
+            url=f"{api_base}/issue/{issue_key}",
+            method="DELETE",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "search":
+        body = {
+            "jql": jql,
+            "maxResults": max_results,
+            "fields": fields,
+        }
+        return HttpRequestConfig(
+            url=f"{api_base}/search",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    return None
+
+
+def _envelope_from_jira_api(
+    data: dict[str, Any],
+    operation: str,
+    issue_key: str,
+) -> dict[str, Any]:
+    """Convert a real Jira REST API response to the internal envelope shape."""
+    if operation == "delete":
+        return {
+            "success": True,
+            "issueKey": issue_key,
+            "deletedAt": _now_iso(),
+        }
+    if operation == "search":
+        return {
+            "startAt": data.get("startAt", 0),
+            "maxResults": data.get("maxResults", 0),
+            "total": data.get("total", 0),
+            "issues": data.get("issues") or [],
+        }
+    return {
+        "id": data.get("id"),
+        "key": data.get("key") or issue_key,
+        "self": data.get("self", ""),
+        "fields": data.get("fields") if isinstance(data.get("fields"), dict) else {},
+    }
+
+
 # ── Mock resolution ───────────────────────────────────────────────────
 
 
-def _resolve_jira_response(
+async def _resolve_jira_response(
     *,
     operation: str,
     issue_or_jql: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
     synth: Any,
+    issue_key: str,
+    project_key: str,
+    summary: str,
+    description: str,
+    issue_type: str,
+    assignee: str,
+    labels: list[str],
+    priority: str,
+    status: str,
+    jql: str,
+    max_results: int,
+    fields: list[str],
 ) -> tuple[dict[str, Any], str]:
     """Return ``(response, source)`` for the current call.
 
     ``source`` is one of ``"jira_response"``, ``"http_response"``,
-    ``"offline"``.
+    ``"jira_api"``, ``"offline"``.
     """
     mocks = ctx.mocks or {}
     jmock = mocks.get("jira_response")
@@ -347,6 +541,41 @@ def _resolve_jira_response(
         body = hmock.get("body")
         if isinstance(body, dict):
             return body, "http_response"
+
+    cred = resolve_credential(node, ctx, "jiraApi")
+    if cred:
+        cfg = _build_jira_request(
+            cred,
+            operation=operation,
+            issue_key=issue_key,
+            project_key=project_key,
+            summary=summary,
+            description=description,
+            issue_type=issue_type,
+            assignee=assignee,
+            labels=labels,
+            priority=priority,
+            status=status,
+            jql=jql,
+            max_results=max_results,
+            fields=fields,
+            params=params,
+        )
+        if cfg is not None:
+            logger.info(
+                "jira real HTTP call operation=%s issueKey=%s",
+                operation,
+                issue_key,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_jira_api(resp.body, operation, issue_key),
+                        "jira_api",
+                    )
+            except Exception as exc:
+                logger.warning("jira HTTP call failed: %s", exc)
 
     return synth(), "offline"
 
@@ -490,13 +719,26 @@ async def exec_jira(
                 max_results=max_results,
             )
 
-        response, source = _resolve_jira_response(
+        response, source = await _resolve_jira_response(
             operation=operation,
             issue_or_jql=issue_or_jql,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
             synth=_synth,
+            issue_key=issue_key,
+            project_key=project_key,
+            summary=summary,
+            description=description,
+            issue_type=issue_type,
+            assignee=assignee,
+            labels=labels,
+            priority=priority,
+            status=status,
+            jql=jql,
+            max_results=max_results,
+            fields=fields,
         )
 
         # Build emitted items
@@ -519,7 +761,7 @@ async def exec_jira(
                 "deletedAt": response.get("deletedAt") or _now_iso(),
                 "source": "jira",
             }
-            if source != "jira_response":
+            if source not in ("jira_response", "jira_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -553,7 +795,7 @@ async def exec_jira(
                 ),
                 "source": "jira",
             }
-            if source != "jira_response":
+            if source not in ("jira_response", "jira_api"):
                 payload["mockSource"] = source
             # Echo optional resolved fields for create
             if operation == "create":
@@ -613,7 +855,7 @@ def _build_search_items(
             "fields": fields,
             "source": "jira",
         }
-        if source != "jira_response":
+        if source not in ("jira_response", "jira_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -641,7 +883,7 @@ def _build_search_items(
                 "assignee": assignee_name,
                 "source": "jira",
             }
-            if source != "jira_response":
+            if source not in ("jira_response", "jira_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}

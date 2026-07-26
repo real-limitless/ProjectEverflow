@@ -15,6 +15,10 @@ v1 supports the five operations most commonly used in n8n templates:
 - ``queryDatabase``— query a database; emit one item per result with
   ``{pageId, title, createdTime, source: 'notion'}``.
 
+When a ``notionApi`` credential is attached and no mock is present, real
+calls are made to the Notion API via :func:`execute_http_request`.
+Otherwise the executor is mock-driven with an offline synthetic fallback.
+
 Parameters honored:
 
 - ``operation``   (``"search"`` / ``"createPage"`` / ``"getPage"`` /
@@ -48,7 +52,10 @@ Behavior precedence:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the operation envelope.
-3. Offline synthetic response with deterministic-looking ids and
+3. If a ``notionApi`` credential resolves (``token`` present), a real
+   call is made to the Notion API via :func:`execute_http_request` and
+   the response is used.
+4. Offline synthetic response with deterministic-looking ids and
    timestamps.
 
 Items missing ``pageId`` (for ``getPage``/``updatePage``) or
@@ -64,7 +71,9 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -491,10 +500,145 @@ def _notion_response_from_http_mock(
     return _coerce_query_database_envelope(body, page_size=page_size)
 
 
+# ── Real HTTP request building ────────────────────────────────────────
+
+
+def _build_notion_request(
+    cred: dict[str, Any],
+    operation: str,
+    query: str,
+    filter_dict: dict[str, Any],
+    sorts_list: list[Any],
+    parent_id: str,
+    properties: dict[str, Any],
+    children: list[Any],
+    page_id: str,
+    database_id: str,
+    page_size: int,
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Notion API request config.
+
+    Returns ``None`` when the credential has no ``token``.
+    """
+    token = str(
+        cred.get("token") or cred.get("apiKey") or cred.get("api_key") or ""
+    )
+    if not token:
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Notion-Version": "2022-06-28",
+        "Accept": "application/json",
+    }
+    api_base = "https://api.notion.com/v1"
+
+    if operation == "search":
+        body: dict[str, Any] = {}
+        if query:
+            body["query"] = query
+        if filter_dict:
+            body["filter"] = filter_dict
+        body["page_size"] = page_size
+        return HttpRequestConfig(
+            url=f"{api_base}/search",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "createPage":
+        body: dict[str, Any] = {"properties": properties or {}}
+        if parent_id:
+            body["parent"] = {"database_id": parent_id}
+        if children:
+            body["children"] = children
+        return HttpRequestConfig(
+            url=f"{api_base}/pages",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "getPage":
+        return HttpRequestConfig(
+            url=f"{api_base}/pages/{page_id}",
+            method="GET",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "updatePage":
+        body: dict[str, Any] = {}
+        if properties:
+            body["properties"] = properties
+        return HttpRequestConfig(
+            url=f"{api_base}/pages/{page_id}",
+            method="PATCH",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "queryDatabase":
+        body: dict[str, Any] = {}
+        if filter_dict:
+            body["filter"] = filter_dict
+        if sorts_list:
+            body["sorts"] = sorts_list
+        body["page_size"] = page_size
+        return HttpRequestConfig(
+            url=f"{api_base}/databases/{database_id}/query",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    return None
+
+
+def _envelope_from_notion_api(
+    data: dict[str, Any],
+    *,
+    operation: str,
+    page_size: int,
+    parent_id: str,
+    properties: dict[str, Any],
+    page_id: str,
+) -> dict[str, Any]:
+    """Convert a real Notion API response to the internal envelope shape."""
+    if operation == "search":
+        return _coerce_search_envelope(data, page_size=page_size)
+    if operation == "createPage":
+        return _coerce_create_page_envelope(
+            data, parent_id=parent_id, properties=properties
+        )
+    if operation == "getPage":
+        return _coerce_get_page_envelope(data, page_id=page_id)
+    if operation == "updatePage":
+        return _coerce_update_page_envelope(
+            data, page_id=page_id, properties=properties
+        )
+    return _coerce_query_database_envelope(data, page_size=page_size)
+
+
 # ── Response resolution ────────────────────────────────────────────────
 
 
-def _resolve_notion_response(
+async def _resolve_notion_response(
     *,
     operation: str,
     params: dict[str, Any],
@@ -503,13 +647,19 @@ def _resolve_notion_response(
     properties: dict[str, Any],
     page_id: str,
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
+    query: str,
+    filter_dict: dict[str, Any],
+    sorts_list: list[Any],
+    children: list[Any],
+    database_id: str,
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"notion_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"notion_api"``, ``"offline"`` so downstream observers can tell
+    where the result came from.
     """
     mocks = ctx.mocks or {}
     nmock = mocks.get("notion_response")
@@ -581,6 +731,45 @@ def _resolve_notion_response(
         )
         if env is not None:
             return env, "http_response"
+
+    cred = resolve_credential(node, ctx, "notionApi")
+    if cred:
+        cfg = _build_notion_request(
+            cred,
+            operation=operation,
+            query=query,
+            filter_dict=filter_dict,
+            sorts_list=sorts_list,
+            parent_id=parent_id,
+            properties=properties,
+            children=children,
+            page_id=page_id,
+            database_id=database_id,
+            page_size=page_size,
+            params=params,
+        )
+        if cfg is not None:
+            logger.info(
+                "notion real HTTP call operation=%s pageId=%s",
+                operation,
+                page_id,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_notion_api(
+                            resp.body,
+                            operation=operation,
+                            page_size=page_size,
+                            parent_id=parent_id,
+                            properties=properties,
+                            page_id=page_id,
+                        ),
+                        "notion_api",
+                    )
+            except Exception as exc:
+                logger.warning("notion HTTP call failed: %s", exc)
 
     if operation == "search":
         return _synthesize_search_response(page_size), "offline"
@@ -691,7 +880,7 @@ async def exec_notion(
             filter_dict = _resolve_dict_param(params, "filter", item, ectx, ("filter",))
             sorts_list = _resolve_list_param(params, "sorts", item, ectx, ("sorts",))
 
-        envelope, source = _resolve_notion_response(
+        envelope, source = await _resolve_notion_response(
             operation=operation,
             params=params,
             page_size=page_size,
@@ -699,7 +888,13 @@ async def exec_notion(
             properties=properties,
             page_id=page_id,
             item=item,
+            node=node,
             ctx=ctx,
+            query=query,
+            filter_dict=filter_dict,
+            sorts_list=sorts_list,
+            children=children,
+            database_id=database_id,
         )
 
         if operation == "search":
@@ -717,7 +912,7 @@ async def exec_notion(
                 }
                 if filter_dict:
                     payload["filter"] = filter_dict
-                if source != "notion_response":
+                if source not in ("notion_response", "notion_api"):
                     payload["mockSource"] = source
                 ni = item.clone()
                 ni.json = {**item.json, **payload}
@@ -736,7 +931,7 @@ async def exec_notion(
                         "ok": True,
                         "source": "notion",
                     }
-                    if source != "notion_response":
+                    if source not in ("notion_response", "notion_api"):
                         payload["mockSource"] = source
                     ni = item.clone()
                     ni.json = {**item.json, **payload}
@@ -762,7 +957,7 @@ async def exec_notion(
             }
             if children:
                 payload["children"] = children
-            if source != "notion_response":
+            if source not in ("notion_response", "notion_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -781,7 +976,7 @@ async def exec_notion(
                 "ok": True,
                 "source": "notion",
             }
-            if source != "notion_response":
+            if source not in ("notion_response", "notion_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -798,7 +993,7 @@ async def exec_notion(
                 "ok": True,
                 "source": "notion",
             }
-            if source != "notion_response":
+            if source not in ("notion_response", "notion_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -818,7 +1013,7 @@ async def exec_notion(
                     "ok": True,
                     "source": "notion",
                 }
-                if source != "notion_response":
+                if source not in ("notion_response", "notion_api"):
                     payload["mockSource"] = source
                 ni = item.clone()
                 ni.json = {**item.json, **payload}

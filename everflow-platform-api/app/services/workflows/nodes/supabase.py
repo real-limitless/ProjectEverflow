@@ -12,7 +12,10 @@ v1 supports the four operations most commonly used in n8n templates:
 - ``upsert`` — upsert rows in a table; emit one item per input with
   ``{data, count, status, upserted, source: 'supabase'}``.
 
-All database calls are mock-driven — no real Supabase connection is made.
+When a ``supabaseApi`` credential is attached and no mock is present,
+real calls are made to the Supabase PostgREST API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
 
 Parameters honored:
 
@@ -50,7 +53,10 @@ Behavior precedence:
 3. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the Supabase envelope.
-4. Offline synthetic response with deterministic-looking ids.
+4. If a ``supabaseApi`` credential resolves (``url`` and ``apiKey``
+   present), a real call is made to the Supabase PostgREST API and the
+   response is normalized into the operation envelope.
+5. Offline synthetic response with deterministic-looking ids.
 
 Items with an empty resolved ``table`` are skipped (no item emitted).
 """
@@ -62,7 +68,9 @@ import random
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -304,12 +312,142 @@ def _response_from_http_mock(
 # ── Response resolution ────────────────────────────────────────────────
 
 
-def _resolve_supabase_response(
+def _build_supabase_request(
+    cred: dict[str, Any],
+    operation: str,
+    table: str,
+    schema: str,
+    params: dict[str, Any],
+    limit: int,
+    records: list[dict[str, Any]],
+    match: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Supabase PostgREST request config.
+
+    Returns ``None`` when the credential has no ``url`` or ``apiKey``.
+    """
+    url = str(
+        cred.get("url") or cred.get("baseUrl") or cred.get("host") or ""
+    ).rstrip("/")
+    api_key = str(
+        cred.get("apiKey")
+        or cred.get("api_key")
+        or cred.get("anonKey")
+        or cred.get("serviceKey")
+        or ""
+    )
+    if not url or not api_key:
+        return None
+    rest_base = f"{url}/rest/v1"
+    headers: dict[str, str] = {
+        "apikey": api_key,
+        "Authorization": f"Bearer {api_key}",
+    }
+    if schema and schema != SUPABASE_DEFAULT_SCHEMA:
+        headers["Accept-Profile"] = schema
+
+    if operation == "select":
+        columns = str(params.get("columns") or SUPABASE_DEFAULT_COLUMNS)
+        query_parts: list[str] = [f"select={columns}"]
+        filter_dict = params.get("filter")
+        if isinstance(filter_dict, dict):
+            for col, val in filter_dict.items():
+                query_parts.append(f"{col}=eq.{val}")
+        order = params.get("order")
+        if isinstance(order, dict):
+            col = order.get("column")
+            if col:
+                ascending = order.get("ascending", True)
+                direction = "asc" if ascending else "desc"
+                query_parts.append(f"order={col}.{direction}")
+        query_parts.append(f"limit={limit}")
+        qs = "&".join(query_parts)
+        return HttpRequestConfig(
+            url=f"{rest_base}/{table}?{qs}",
+            method="GET",
+            headers=headers,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "insert":
+        headers["Prefer"] = "return=representation"
+        body: Any = records if records else []
+        return HttpRequestConfig(
+            url=f"{rest_base}/{table}",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "update":
+        headers["Prefer"] = "return=representation"
+        match_filters: list[str] = []
+        if isinstance(match, dict):
+            for col, val in match.items():
+                match_filters.append(f"{col}=eq.{val}")
+        body = records[0] if records else {}
+        request_url = f"{rest_base}/{table}"
+        if match_filters:
+            request_url = f"{request_url}?{'&'.join(match_filters)}"
+        return HttpRequestConfig(
+            url=request_url,
+            method="PATCH",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    # upsert
+    headers["Prefer"] = "return=representation,resolution=merge-duplicates"
+    on_conflict = str(
+        params.get("onConflict") or SUPABASE_DEFAULT_ON_CONFLICT
+    )
+    body = records if records else []
+    return HttpRequestConfig(
+        url=f"{rest_base}/{table}?on_conflict={on_conflict}",
+        method="POST",
+        headers=headers,
+        body=body,
+        body_mode="json",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _envelope_from_supabase_api(
+    data: Any,
+    operation: str,
+) -> dict[str, Any]:
+    """Convert a real Supabase PostgREST response to the internal
+    envelope shape.
+
+    PostgREST returns a bare JSON array for most operations; this wraps
+    it into the ``{data, count, status}`` envelope the executor uses.
+    """
+    if isinstance(data, list):
+        raw: dict[str, Any] = {"data": data, "count": len(data)}
+    elif isinstance(data, dict):
+        raw = data
+    else:
+        raw = {"data": []}
+    return _normalize_response(raw, operation)
+
+
+async def _resolve_supabase_response(
     *,
     operation: str,
     table: str,
+    schema: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
     limit: int,
     records: list[dict[str, Any]],
@@ -318,8 +456,8 @@ def _resolve_supabase_response(
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"supabase_response"``, ``"db_response"``,
-    ``"http_response"``, ``"offline"`` so downstream observers can tell
-    where the result came from.
+    ``"http_response"``, ``"supabase_api"``, ``"offline"`` so downstream
+    observers can tell where the result came from.
     """
     mocks = ctx.mocks or {}
     smock = mocks.get("supabase_response")
@@ -347,6 +485,27 @@ def _resolve_supabase_response(
         if env is not None:
             return env, "http_response"
 
+    cred = resolve_credential(node, ctx, "supabaseApi")
+    if cred:
+        cfg = _build_supabase_request(
+            cred, operation, table, schema, params, limit, records, match
+        )
+        if cfg is not None:
+            logger.info(
+                "supabase real HTTP call operation=%s table=%s",
+                operation,
+                table,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, (dict, list)):
+                    return (
+                        _envelope_from_supabase_api(resp.body, operation),
+                        "supabase_api",
+                    )
+            except Exception as exc:
+                logger.warning("supabase HTTP call failed: %s", exc)
+
     return (
         _synthesize_response(operation, limit, records, match),
         "offline",
@@ -371,7 +530,7 @@ def _build_select_items(
             "count": count,
             "source": "supabase",
         }
-        if source != "supabase_response":
+        if source not in ("supabase_response", "supabase_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -384,7 +543,7 @@ def _build_select_items(
             "count": count,
             "source": "supabase",
         }
-        if source != "supabase_response":
+        if source not in ("supabase_response", "supabase_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -406,7 +565,7 @@ def _build_write_item(
     }
     if operation == "upsert":
         payload["upserted"] = envelope.get("upserted", True)
-    if source != "supabase_response":
+    if source not in ("supabase_response", "supabase_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}
@@ -486,11 +645,13 @@ async def exec_supabase(
             )
             match = match_resolved if isinstance(match_resolved, dict) else {}
 
-        envelope, source = _resolve_supabase_response(
+        envelope, source = await _resolve_supabase_response(
             operation=operation,
             table=table,
+            schema=schema,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
             limit=limit,
             records=records,
