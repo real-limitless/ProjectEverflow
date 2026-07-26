@@ -207,6 +207,8 @@ export interface KnowledgeLink {
   rel: string
 }
 
+export type WebReadMethod = 'http' | 'browser' | 'ocr'
+
 export interface WebSearchHit {
   id: string
   title: string
@@ -214,6 +216,8 @@ export interface WebSearchHit {
   snippet: string
   /** Cleaned full-page text for Reader mode (Markdown) */
   readerMarkdown?: string
+  /** How the reader text was extracted (if loaded) */
+  extractMethod?: WebReadMethod
 }
 
 /** @deprecated Mind maps are Mermaid-sourced now */

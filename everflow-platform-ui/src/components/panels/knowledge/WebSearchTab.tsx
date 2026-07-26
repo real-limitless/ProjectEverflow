@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { Button, TextInput } from '@patternfly/react-core'
+import { Button, Pagination, TextInput } from '@patternfly/react-core'
 import { EmptySplash } from '@/components/studio/EmptySplash'
 import { getProject } from '@/data/projects'
 import {
@@ -24,6 +24,8 @@ function truncateName(name: string, max = 200): string {
   return t.length <= max ? t : `${t.slice(0, max - 1)}…`
 }
 
+const DEFAULT_PAGE_SIZE = 10
+
 export function WebSearchTab({ projectId }: WebSearchTabProps) {
   const project = getProject(projectId === 'default' ? null : projectId)
   const useApi = Boolean(project?.fromApi) && !isDemoMode()
@@ -33,29 +35,50 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
   const replaceCanvases = useStudioDemoStore((s) => s.update)
 
   const [searchQ, setSearchQ] = useState('')
+  const [activeQuery, setActiveQuery] = useState('')
   const [hits, setHits] = useState<WebSearchHit[]>([])
   const [readerId, setReaderId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [hasMore, setHasMore] = useState(false)
 
   const reader = hits.find((h) => h.id === readerId) ?? null
 
-  const runSearch = async () => {
-    const q = searchQ.trim()
+  // Approximate itemCount for PatternFly Pagination (SearXNG has no total).
+  const itemCount = hasMore
+    ? page * pageSize + 1
+    : Math.max((page - 1) * pageSize + hits.length, hits.length)
+
+  const runSearch = async (opts?: { page?: number; pageSize?: number; query?: string }) => {
+    const q = (opts?.query ?? searchQ).trim()
+    const nextPage = opts?.page ?? 1
+    const nextSize = opts?.pageSize ?? pageSize
     if (!q) {
       setHits([])
       setError(null)
       setReaderId(null)
+      setActiveQuery('')
+      setHasMore(false)
+      setPage(1)
       return
     }
     setLoading(true)
     setError(null)
     setReaderId(null)
     try {
-      const results = await searchKnowledgeWeb(projectId, q)
+      const envelope = await searchKnowledgeWeb(projectId, q, {
+        page: nextPage,
+        pageSize: nextSize,
+      })
+      setActiveQuery(envelope.query || q)
+      setPage(envelope.page || nextPage)
+      setPageSize(envelope.page_size || nextSize)
+      setHasMore(Boolean(envelope.has_more))
       setHits(
-        results.map((r) => ({
+        (envelope.results || []).map((r) => ({
           id: r.id,
           title: r.title,
           url: r.url,
@@ -65,6 +88,7 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
       )
     } catch (e) {
       setHits([])
+      setHasMore(false)
       setError(
         e instanceof ApiError
           ? e.message
@@ -77,19 +101,28 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
     }
   }
 
-  const onContentLoaded = useCallback((hitId: string, markdown: string, title?: string) => {
-    setHits((prev) =>
-      prev.map((h) =>
-        h.id === hitId
-          ? {
-              ...h,
-              readerMarkdown: markdown,
-              ...(title ? { title } : {}),
-            }
-          : h,
-      ),
-    )
-  }, [])
+  const onContentLoaded = useCallback(
+    (
+      hitId: string,
+      markdown: string,
+      title?: string,
+      method?: WebSearchHit['extractMethod'],
+    ) => {
+      setHits((prev) =>
+        prev.map((h) =>
+          h.id === hitId
+            ? {
+                ...h,
+                readerMarkdown: markdown,
+                ...(title ? { title } : {}),
+                ...(method ? { extractMethod: method } : {}),
+              }
+            : h,
+        ),
+      )
+    },
+    [],
+  )
 
   const runDemoPipeline = (id: string) => {
     updateCanvas(projectId, id, { status: 'chunking', chunks: 0 })
@@ -183,12 +216,16 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
           onChange={(_e, v) => setSearchQ(v)}
           placeholder="Search the web…"
           onKeyDown={(e) => {
-            if (e.key === 'Enter') void runSearch()
+            if (e.key === 'Enter') void runSearch({ page: 1 })
           }}
           aria-label="Web search query"
           isDisabled={loading}
         />
-        <Button variant="primary" onClick={() => void runSearch()} isLoading={loading}>
+        <Button
+          variant="primary"
+          onClick={() => void runSearch({ page: 1 })}
+          isLoading={loading}
+        >
           Search
         </Button>
       </div>
@@ -207,7 +244,7 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
       {!loading && hits.length === 0 && !error ? (
         <EmptySplash
           title="Web search"
-          body="Run a query, open a hit to read the full article (extracted text) or view the live website, then pin it to Knowledge."
+          body="Run a query, open a hit to read the full article (extracted text) or view the live website, then pin it to Knowledge. Follow links in Reader and use browser extract when plain HTML fails."
         />
       ) : null}
       {loading ? <div className="lc-meta">Searching…</div> : null}
@@ -242,6 +279,33 @@ export function WebSearchTab({ projectId }: WebSearchTabProps) {
             </div>
           </div>
         ))}
+      {!loading && activeQuery && hits.length > 0 ? (
+        <div className="knowledge-web-pagination">
+          <Pagination
+            itemCount={itemCount}
+            perPage={pageSize}
+            page={page}
+            onSetPage={(_e, p) => void runSearch({ page: p, query: activeQuery })}
+            onPerPageSelect={(_e, per) =>
+              void runSearch({ page: 1, pageSize: per, query: activeQuery })
+            }
+            perPageOptions={[
+              { title: '10', value: 10 },
+              { title: '20', value: 20 },
+              { title: '30', value: 30 },
+            ]}
+            variant="bottom"
+            isDisabled={loading}
+            titles={{
+              paginationAriaLabel: 'Web search results pagination',
+            }}
+          />
+          <span className="knowledge-web-page-indicator">
+            Page {page}
+            {hasMore ? ' · more available' : ''}
+          </span>
+        </div>
+      ) : null}
     </div>
   )
 }

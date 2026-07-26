@@ -56,17 +56,24 @@ from app.schemas.knowledge import (
     WebReadRequest,
     WebReadResult,
     WebSearchHit,
+    WebSearchResponse,
 )
 from app.services.knowledge_embed import content_hash, reindex_canvas, repair_canvas_index_status
 from app.services.knowledge_repo import index_sandbox_docs
 from app.services.knowledge_retrieve import retrieve
 from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
-from app.services.web_read import WebReadError, fetch_reader_content
+from app.services.web_read import WebReadError, fetch_reader_content_cascade
 
 router = APIRouter(tags=["knowledge"])
 
 
-async def _searxng_web_search(base_url: str, q: str) -> list[WebSearchHit]:
+async def _searxng_web_search(
+    base_url: str,
+    q: str,
+    *,
+    page: int = 1,
+    page_size: int = 10,
+) -> WebSearchResponse:
     root = (base_url or "").rstrip("/")
     if not root:
         raise HTTPException(
@@ -74,9 +81,14 @@ async def _searxng_web_search(base_url: str, q: str) -> list[WebSearchHit]:
             detail="Web search unavailable: SEARXNG_URL is not configured",
         )
     url = f"{root}/search"
+    pageno = max(1, page)
+    size = max(1, min(page_size, 50))
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.get(url, params={"q": q, "format": "json"})
+            resp = await client.get(
+                url,
+                params={"q": q, "format": "json", "pageno": pageno},
+            )
     except httpx.RequestError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -122,7 +134,22 @@ async def _searxng_web_search(base_url: str, q: str) -> list[WebSearchHit]:
                 snippet=snippet,
             )
         )
-    return hits
+
+    # SearXNG returns a full engine page (~10–20). Slice to requested page_size
+    # and treat a full page as "maybe more".
+    page_hits = hits[:size]
+    has_more = len(hits) > size or len(hits) >= size
+    # Empty page ⇒ definitely no more
+    if not page_hits:
+        has_more = False
+
+    return WebSearchResponse(
+        query=q,
+        page=pageno,
+        page_size=size,
+        has_more=has_more,
+        results=page_hits,
+    )
 
 
 async def _get_canvas_for_project(
@@ -164,16 +191,23 @@ async def _snapshot(
 
 @router.get(
     "/projects/{project_id}/knowledge/web-search",
-    response_model=list[WebSearchHit],
+    response_model=WebSearchResponse,
 )
 async def knowledge_web_search(
     q: str = Query(..., min_length=1, max_length=500),
+    page: int = Query(default=1, ge=1, le=100),
+    page_size: int = Query(default=10, ge=1, le=50),
     _project: Project = Depends(get_project_for_principal),
     principal: Principal = Depends(get_principal),
     settings: Settings = Depends(get_settings),
-) -> list[WebSearchHit]:
+) -> WebSearchResponse:
     principal.require_scope("knowledge:read")
-    return await _searxng_web_search(settings.searxng_url, q.strip())
+    return await _searxng_web_search(
+        settings.searxng_url,
+        q.strip(),
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post(
@@ -182,12 +216,22 @@ async def knowledge_web_search(
 )
 async def knowledge_web_read(
     body: WebReadRequest,
-    _project: Project = Depends(get_project_for_principal),
+    project: Project = Depends(get_project_for_principal),
     principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
 ) -> WebReadResult:
     principal.require_scope("knowledge:read")
     try:
-        data = await fetch_reader_content(body.url)
+        data = await fetch_reader_content_cascade(
+            body.url,
+            mode=body.mode,
+            max_ocr_pages=body.max_ocr_pages,
+            project=project,
+            session=session,
+            principal=principal,
+            settings=settings,
+        )
     except WebReadError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return WebReadResult(**data)
@@ -405,6 +449,7 @@ async def refresh_canvas_source(
     project: Project = Depends(get_project_for_principal),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
+    settings: Settings = Depends(get_settings),
 ) -> RefreshSourceResult:
     principal.require_scope("knowledge:rw")
     canvas = await _get_canvas_for_project(session, project.id, canvas_id)
@@ -415,7 +460,14 @@ async def refresh_canvas_source(
         )
     previous = canvas.content_hash
     try:
-        data = await fetch_reader_content(canvas.source_url)
+        data = await fetch_reader_content_cascade(
+            canvas.source_url,
+            mode="auto",
+            project=project,
+            session=session,
+            principal=principal,
+            settings=settings,
+        )
     except WebReadError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 

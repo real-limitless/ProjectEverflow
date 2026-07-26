@@ -70,6 +70,26 @@ class BrowserStatusResponse(BaseModel):
     opencode_restart: dict[str, Any] | None = None
 
 
+class BrowserReadRequest(BaseModel):
+    """Headless Playwright page extract for Knowledge Reader."""
+
+    url: str = Field(min_length=1, max_length=2048)
+    include_screenshot: bool = False
+    timeout_ms: int = Field(default=35000, ge=5000, le=90000)
+
+
+class BrowserReadResponse(BaseModel):
+    final_url: str
+    title: str = ""
+    text: str = ""
+    html: str = ""
+    html_or_text: str = ""
+    screenshot_b64: str | None = None
+    status: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+    ok: bool = True
+
+
 class BootstrapRequest(BaseModel):
     harnesses: list[str] = Field(default_factory=list)
 

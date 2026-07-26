@@ -77,8 +77,15 @@ class Settings(BaseSettings):
         default_factory=lambda: ["agent-claude-code", "agent-opencode"],
     )
     sandbox_agent_timeout_seconds: float = 120.0
-    # Project-scoped tokens for in-sandbox Everflow MCP (seconds)
-    sandbox_token_ttl_seconds: int = 60 * 60 * 24  # 24h
+    # Project-scoped tokens for in-sandbox Everflow MCP (seconds).
+    # Idle TTL: unused tokens expire after this window. Active use slides expiry
+    # (see sandbox_tokens.verify) so long-running OpenCode/MCP sessions stay valid.
+    sandbox_token_ttl_seconds: int = 60 * 60 * 24  # 24h idle / slide window
+    # Hard cap from mint time even with continuous use (0 = no absolute cap).
+    sandbox_token_max_lifetime_seconds: int = 60 * 60 * 24 * 30  # 30d
+    # When remaining life is below this, extend expires_at (reduces DB writes).
+    # Default half of TTL so active sessions renew once per ~12h with 24h TTL.
+    sandbox_token_slide_if_remaining_seconds: int = 60 * 60 * 12  # 12h
     # Browser / external base for the API
     public_api_url: str = "http://localhost:8000"
     # Platform API URL as seen by sandbox-agent (compose service DNS). Used for

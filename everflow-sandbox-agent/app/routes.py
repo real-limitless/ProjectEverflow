@@ -39,6 +39,8 @@ from app.jobs import (
 from app.schemas import (
     BootstrapRequest,
     BrowserModeRequest,
+    BrowserReadRequest,
+    BrowserReadResponse,
     BrowserStatusResponse,
     DesktopResizeRequest,
     DesktopResizeResponse,
@@ -843,6 +845,8 @@ async def opencode_ensure(
                 project_id=body.everflow_project_id,
                 command=command,
                 force_credentials=force_credentials,
+                # Agent reaches platform via compose DNS; guest URL is reverse-tunnel only.
+                probe_api_url=agent_platform_url or None,
             )
         elif host_ws is not None:
             mcp_status = write_everflow_mcp_host(
@@ -852,6 +856,7 @@ async def opencode_ensure(
                 project_id=body.everflow_project_id,
                 command=command,
                 force_credentials=force_credentials,
+                probe_api_url=agent_platform_url or host_api_url or None,
             )
         if mcp_status is not None and tunnel_info is not None:
             mcp_status = {**mcp_status, "tunnel": tunnel_info}
@@ -920,6 +925,8 @@ async def opencode_ensure(
                     project_id=body.everflow_project_id or "",
                     command=body.everflow_mcp_command,
                     force_credentials=bool(body.force_restart) if body else False,
+                    probe_api_url=(cfg.platform_api_url or body.everflow_api_url or "").rstrip("/")
+                    or None,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.debug("host mirror mcp write ignored: %s", exc)
@@ -1235,6 +1242,44 @@ async def set_sandbox_browser_mode(
             detail=f"Browser mode failed: {exc}",
         ) from exc
     return BrowserStatusResponse(**data)
+
+
+@router.post(
+    "/v1/sandboxes/{name}/browser/read",
+    response_model=BrowserReadResponse,
+    dependencies=[Depends(require_agent_token)],
+)
+async def sandbox_browser_read(
+    name: str,
+    body: BrowserReadRequest,
+    backend: Annotated[SandboxBackend, Depends(get_backend)],
+) -> BrowserReadResponse:
+    """Headless Playwright extract for Knowledge Reader (text + optional screenshot)."""
+    await _require_running_sandbox(name, backend)
+    from app.browser import browser_read_page, validate_public_http_url
+
+    try:
+        validate_public_http_url(body.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    try:
+        data = await browser_read_page(
+            backend,
+            name,
+            url=body.url,
+            include_screenshot=body.include_screenshot,
+            timeout_ms=body.timeout_ms,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("browser read failed name=%s: %s", name, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Browser read failed: {exc}",
+        ) from exc
+    return BrowserReadResponse(**data, ok=True)
 
 
 @router.get(

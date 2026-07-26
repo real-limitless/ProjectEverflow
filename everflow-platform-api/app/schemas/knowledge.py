@@ -103,8 +103,24 @@ class WebSearchHit(BaseModel):
     reader_markdown: str | None = None
 
 
+class WebSearchResponse(BaseModel):
+    """Paginated web search results (SearXNG pageno)."""
+
+    query: str
+    page: int = 1
+    page_size: int = 10
+    has_more: bool = False
+    results: list[WebSearchHit] = Field(default_factory=list)
+
+
+WebReadMode = Literal["auto", "http", "browser", "ocr"]
+WebReadMethod = Literal["http", "browser", "ocr"]
+
+
 class WebReadRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
+    mode: WebReadMode = "auto"
+    max_ocr_pages: int = Field(default=3, ge=1, le=6)
 
 
 class WebReadResult(BaseModel):
@@ -112,6 +128,8 @@ class WebReadResult(BaseModel):
     title: str
     markdown: str
     content_type: str = "text/html"
+    method: WebReadMethod = "http"
+    warnings: list[str] = Field(default_factory=list)
 
 
 class KnowledgeRetrieveRequest(BaseModel):

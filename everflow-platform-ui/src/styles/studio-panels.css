@@ -1403,6 +1403,65 @@ button.canvas-collection-row {
   height: 100%;
 }
 
+.knowledge-web-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-block-start: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.knowledge-web-page-indicator {
+  font-size: var(--pf-t--global--font--size--xs);
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.reader-mode-chrome {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  padding: 0.35rem 0;
+}
+
+.reader-mode-url-input {
+  flex: 1 1 12rem;
+  min-width: 10rem;
+}
+
+.reader-mode-method-badge {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  color: var(--pf-t--global--text--color--subtle);
+  white-space: nowrap;
+}
+
+.reader-mode-method-badge.method-http {
+  border-color: var(--pf-t--global--border--color--status--info--default, #2b9af3);
+}
+
+.reader-mode-method-badge.method-browser {
+  border-color: var(--pf-t--global--border--color--status--warning--default, #f0ab00);
+  color: var(--pf-t--global--text--color--status--warning--default, #795600);
+}
+
+.reader-mode-method-badge.method-ocr {
+  border-color: var(--pf-t--global--border--color--status--success--default, #3e8635);
+  color: var(--pf-t--global--text--color--status--success--default, #1e4f18);
+}
+
+.reader-mode-body a {
+  cursor: pointer;
+}
+
 .knowledge-panel-body--fill .reader-mode,
 .knowledge-panel-body .reader-mode {
   min-height: min(70vh, 800px);

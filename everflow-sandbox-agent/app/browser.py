@@ -420,3 +420,249 @@ def apply_playwright_mcp_host(workspace: Path) -> None:
         oc["$schema"] = "https://opencode.ai/config.json"
     oc_path.write_text(json.dumps(oc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     apply_browser_stamps_host(root, enabled=True)
+
+
+# ── Knowledge Reader: headless page extract (reuse Playwright Chromium) ───────
+
+# Minimal SSRF guard mirrored from platform web_read (host-only; agent re-checks).
+_BLOCKED_HOST_SUFFIXES = (".localhost", ".local")
+_BLOCKED_HOSTS = {
+    "localhost",
+    "localhost.localdomain",
+    "metadata.google.internal",
+    "metadata",
+}
+
+
+def validate_public_http_url(url: str) -> str:
+    """Allow only public http(s) URLs (basic SSRF guard for browser navigate)."""
+    import ipaddress
+    from urllib.parse import urlparse
+
+    raw = (url or "").strip()
+    if not raw or len(raw) > 2048:
+        raise ValueError("Invalid URL")
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only http(s) URLs are allowed")
+    if not parsed.netloc or parsed.username or parsed.password:
+        raise ValueError("Invalid URL host")
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    if not host or host in _BLOCKED_HOSTS:
+        raise ValueError("URL host is not allowed")
+    if any(host.endswith(s) for s in _BLOCKED_HOST_SUFFIXES):
+        raise ValueError("URL host is not allowed")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return raw
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        raise ValueError("URL host is not allowed")
+    return raw
+
+
+# Node script executed inside the guest with Playwright + prebaked Chromium.
+_BROWSER_READ_JS = r"""
+const fs = require('fs');
+const path = require('path');
+
+function loadPlaywright() {
+  const candidates = [
+    '/usr/local/lib/node_modules/@playwright/mcp/node_modules/playwright',
+    '/usr/local/lib/node_modules/playwright',
+    'playwright',
+  ];
+  for (const c of candidates) {
+    try {
+      return require(c);
+    } catch (_) {}
+  }
+  throw new Error('playwright package not found in guest; rebuild everflow-sandbox-guest');
+}
+
+async function main() {
+  const url = process.env.EVERFLOW_BROWSER_URL || '';
+  const includeShot = (process.env.EVERFLOW_BROWSER_SCREENSHOT || '') === '1';
+  const timeoutMs = parseInt(process.env.EVERFLOW_BROWSER_TIMEOUT_MS || '30000', 10);
+  if (!url) {
+    console.log(JSON.stringify({ ok: false, error: 'missing URL' }));
+    process.exit(2);
+  }
+  process.env.PLAYWRIGHT_BROWSERS_PATH =
+    process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/everflow-browsers';
+
+  const { chromium } = loadPlaywright();
+  let browser;
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+    });
+    const context = await browser.newContext({
+      userAgent:
+        'Mozilla/5.0 (compatible; EverflowReader/1.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1280, height: 900 },
+    });
+    const page = await context.newPage();
+    page.setDefaultTimeout(timeoutMs);
+    const resp = await page.goto(url, {
+      waitUntil: 'domcontentloaded',
+      timeout: timeoutMs,
+    });
+    try {
+      await page.waitForLoadState('networkidle', { timeout: Math.min(8000, timeoutMs) });
+    } catch (_) {}
+
+    const finalUrl = page.url();
+    const title = await page.title();
+    let text = '';
+    try {
+      text = await page.evaluate(() => {
+        const root =
+          document.querySelector('article') ||
+          document.querySelector('main') ||
+          document.querySelector('[role="main"]') ||
+          document.body;
+        return (root && root.innerText) || '';
+      });
+    } catch (_) {}
+    let html = '';
+    try {
+      html = await page.evaluate(() => {
+        const root =
+          document.querySelector('article') ||
+          document.querySelector('main') ||
+          document.querySelector('[role="main"]') ||
+          document.body;
+        return (root && root.innerHTML) || '';
+      });
+    } catch (_) {}
+
+    let screenshot_b64 = null;
+    if (includeShot) {
+      try {
+        const buf = await page.screenshot({ fullPage: true, type: 'png' });
+        // Cap ~2.5MB raw → base64
+        if (buf.length <= 2_500_000) {
+          screenshot_b64 = buf.toString('base64');
+        } else {
+          const small = await page.screenshot({ fullPage: false, type: 'png' });
+          screenshot_b64 = small.toString('base64');
+        }
+      } catch (e) {
+        // ignore screenshot errors
+      }
+    }
+
+    const status = resp ? resp.status() : 0;
+    console.log(
+      JSON.stringify({
+        ok: true,
+        final_url: finalUrl,
+        title: title || '',
+        text: (text || '').slice(0, 200000),
+        html: (html || '').slice(0, 500000),
+        status,
+        screenshot_b64,
+      })
+    );
+  } catch (e) {
+    console.log(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) }));
+    process.exitCode = 1;
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (_) {}
+    }
+  }
+}
+
+main();
+"""
+
+
+async def browser_read_page(
+    backend: Any,
+    name: str,
+    *,
+    url: str,
+    include_screenshot: bool = False,
+    timeout_ms: int = 35000,
+) -> dict[str, Any]:
+    """Navigate with guest Chromium/Playwright and return text + optional screenshot."""
+    safe = validate_public_http_url(url)
+    timeout_ms = max(5000, min(int(timeout_ms or 35000), 90000))
+    script_path = "/tmp/everflow-browser-read.js"
+    # Write script into guest
+    b64 = base64.b64encode(_BROWSER_READ_JS.encode("utf-8")).decode("ascii")
+    write_script = (
+        "import base64, pathlib\n"
+        f"p=pathlib.Path({script_path!r})\n"
+        f"p.write_bytes(base64.b64decode({b64!r}))\n"
+        "print('ok')\n"
+    )
+    code, stdout, stderr = await backend.exec(
+        name,
+        "python3",
+        ["-c", write_script],
+        cwd="/workspace",
+        timeout_seconds=15,
+    )
+    if code != 0:
+        raise RuntimeError(f"Failed to stage browser-read script: {stderr or stdout}")
+
+    env = {
+        "PLAYWRIGHT_BROWSERS_PATH": BROWSERS_PATH,
+        "EVERFLOW_BROWSER_URL": safe,
+        "EVERFLOW_BROWSER_SCREENSHOT": "1" if include_screenshot else "0",
+        "EVERFLOW_BROWSER_TIMEOUT_MS": str(timeout_ms),
+        "HOME": "/tmp",
+    }
+    # node timeout slightly above page timeout
+    exec_timeout = (timeout_ms / 1000.0) + 25.0
+    code, stdout, stderr = await backend.exec(
+        name,
+        "node",
+        [script_path],
+        cwd="/workspace",
+        env=env,
+        timeout_seconds=exec_timeout,
+    )
+    raw_out = (stdout or "").strip()
+    # Last non-empty line should be JSON
+    line = ""
+    for ln in reversed(raw_out.splitlines()):
+        if ln.strip():
+            line = ln.strip()
+            break
+    if not line:
+        raise RuntimeError(
+            f"Browser read produced no output (exit={code}): {stderr or 'no stderr'}"
+        )
+    try:
+        data = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Browser read invalid JSON: {line[:200]}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("Browser read payload is not an object")
+    if not data.get("ok"):
+        err = str(data.get("error") or stderr or "browser read failed")
+        raise RuntimeError(err)
+    return {
+        "final_url": data.get("final_url") or safe,
+        "title": data.get("title") or "",
+        "text": data.get("text") or "",
+        "html": data.get("html") or "",
+        "html_or_text": data.get("html") or data.get("text") or "",
+        "screenshot_b64": data.get("screenshot_b64"),
+        "status": data.get("status"),
+        "warnings": [],
+    }

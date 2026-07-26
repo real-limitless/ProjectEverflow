@@ -302,8 +302,33 @@ def html_to_reader_markdown(html: str, *, base_url: str = "") -> tuple[str, str]
     return title, md[:200_000]
 
 
+_THIN_MIN_CHARS = 400
+_SOFT_BLOCK_PHRASES = (
+    "enable javascript",
+    "enable js",
+    "please enable cookies",
+    "captcha",
+    "access denied",
+    "attention required",
+    "checking your browser",
+    "cf-browser-verification",
+    "just a moment",
+    "verify you are human",
+    "bot detection",
+    "cloudflare",
+)
+
+
+def is_thin_markdown(md: str) -> bool:
+    """True when extracted text is too short or looks like a soft block page."""
+    text = re.sub(r"\s+", " ", (md or "").strip()).lower()
+    if len(text) < _THIN_MIN_CHARS:
+        return True
+    return any(p in text for p in _SOFT_BLOCK_PHRASES)
+
+
 async def fetch_reader_content(url: str) -> dict[str, Any]:
-    """Fetch URL and return reader payload dict."""
+    """Fetch URL via HTTP and return reader payload dict (method=http)."""
     safe_url = validate_public_http_url(url)
 
     try:
@@ -338,11 +363,11 @@ async def fetch_reader_content(url: str) -> dict[str, Any]:
             status_code=502,
         )
 
-    # Non-HTML: return a short note (PDF/images would need OCR elsewhere)
+    # Non-HTML: escalate to browser/OCR rather than hard-fail in cascade callers
     if ctype and ctype not in ("text/html", "application/xhtml+xml", "text/plain") and not ctype.startswith("text/"):
         raise WebReadError(
             f"Unsupported content type for Reader ({ctype or 'unknown'}). "
-            "Open the Website tab or original URL instead.",
+            "Try browser extract or open the original URL.",
             status_code=415,
         )
 
@@ -362,7 +387,7 @@ async def fetch_reader_content(url: str) -> dict[str, Any]:
 
     if not md.strip():
         raise WebReadError(
-            "Could not extract readable text from this page. Try the Website tab.",
+            "Could not extract readable text from this page. Try browser extract.",
             status_code=422,
         )
 
@@ -371,4 +396,227 @@ async def fetch_reader_content(url: str) -> dict[str, Any]:
         "title": title,
         "markdown": md,
         "content_type": ctype or "text/html",
+        "method": "http",
+        "warnings": [],
     }
+
+
+def _payload_from_browser(data: dict[str, Any], *, method: str = "browser") -> dict[str, Any]:
+    final_url = str(data.get("final_url") or data.get("url") or "").strip()
+    title = str(data.get("title") or "").strip()
+    text = str(data.get("text") or "").strip()
+    html = str(data.get("html") or data.get("html_or_text") or "").strip()
+    md = ""
+    if html and ("<" in html and ">" in html):
+        t2, md = html_to_reader_markdown(html, base_url=final_url or "")
+        if not title and t2:
+            title = t2
+    if not md.strip() and text:
+        md = text[:200_000]
+    if not title:
+        title = urlparse(final_url).hostname or final_url or "Page"
+    if not final_url:
+        final_url = str(data.get("url") or "")
+    return {
+        "url": final_url,
+        "title": title,
+        "markdown": md[:200_000],
+        "content_type": "text/html",
+        "method": method,
+        "warnings": list(data.get("warnings") or []),
+        "screenshot_b64": data.get("screenshot_b64"),
+    }
+
+
+async def _browser_read_via_sandbox(
+    url: str,
+    *,
+    project: Any,
+    settings: Any,
+    include_screenshot: bool = False,
+) -> dict[str, Any]:
+    from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
+
+    name = getattr(project, "sandbox_name", None)
+    if not name:
+        raise WebReadError(
+            "Browser extract needs a project sandbox. Start the project sandbox first.",
+            status_code=503,
+        )
+    if not getattr(settings, "sandbox_enabled", True):
+        raise WebReadError("Sandbox is disabled on this deployment.", status_code=503)
+
+    client = SandboxAgentClient(settings)
+    try:
+        data = await client.browser_read(
+            name,
+            url=url,
+            include_screenshot=include_screenshot,
+        )
+    except SandboxAgentError as exc:
+        msg = str(exc) or "Browser extract failed"
+        code = 503 if (exc.status_code in (404, 409, 503) or "not provisioned" in msg.lower()) else 502
+        raise WebReadError(msg, status_code=code) from exc
+    if not isinstance(data, dict):
+        raise WebReadError("Browser extract returned invalid payload", status_code=502)
+    return data
+
+
+async def fetch_reader_content_cascade(
+    url: str,
+    *,
+    mode: str = "auto",
+    max_ocr_pages: int = 3,
+    project: Any = None,
+    session: Any = None,
+    principal: Any = None,
+    settings: Any = None,
+) -> dict[str, Any]:
+    """HTTP → sandbox Playwright DOM → vision OCR cascade.
+
+    ``mode``: auto | http | browser | ocr
+    """
+    mode_norm = (mode or "auto").strip().lower()
+    if mode_norm not in ("auto", "http", "browser", "ocr"):
+        mode_norm = "auto"
+
+    warnings: list[str] = []
+    http_payload: dict[str, Any] | None = None
+    http_error: WebReadError | None = None
+
+    if mode_norm in ("auto", "http"):
+        try:
+            http_payload = await fetch_reader_content(url)
+        except WebReadError as exc:
+            http_error = exc
+            if mode_norm == "http":
+                raise
+            warnings.append(f"HTTP extract: {exc}")
+
+        if http_payload and mode_norm == "http":
+            return http_payload
+
+        if http_payload and mode_norm == "auto" and not is_thin_markdown(http_payload.get("markdown") or ""):
+            return http_payload
+
+        if http_payload and is_thin_markdown(http_payload.get("markdown") or ""):
+            warnings.append("HTTP extract looked thin or blocked; trying browser…")
+
+    # Browser step
+    browser_payload: dict[str, Any] | None = None
+    browser_error: WebReadError | None = None
+    need_browser = mode_norm in ("auto", "browser", "ocr")
+    if need_browser and mode_norm != "http":
+        want_shot = mode_norm == "ocr" or mode_norm == "auto"
+        try:
+            raw_browser = await _browser_read_via_sandbox(
+                url,
+                project=project,
+                settings=settings,
+                include_screenshot=want_shot,
+            )
+            browser_payload = _payload_from_browser(raw_browser, method="browser")
+            browser_payload["warnings"] = warnings + list(browser_payload.get("warnings") or [])
+        except WebReadError as exc:
+            browser_error = exc
+            warnings.append(f"Browser extract: {exc}")
+            if mode_norm == "browser":
+                raise
+
+    if browser_payload and mode_norm == "browser":
+        if not (browser_payload.get("markdown") or "").strip():
+            raise WebReadError(
+                "Browser extract returned no readable text.",
+                status_code=422,
+            )
+        browser_payload["warnings"] = warnings
+        browser_payload.pop("screenshot_b64", None)
+        return browser_payload
+
+    if (
+        browser_payload
+        and mode_norm == "auto"
+        and not is_thin_markdown(browser_payload.get("markdown") or "")
+    ):
+        browser_payload["warnings"] = warnings
+        browser_payload.pop("screenshot_b64", None)
+        return browser_payload
+
+    # OCR step
+    need_ocr = mode_norm in ("auto", "ocr")
+    if need_ocr:
+        shot = None
+        if browser_payload:
+            shot = browser_payload.get("screenshot_b64")
+        if not shot and project is not None and settings is not None:
+            try:
+                raw_browser = await _browser_read_via_sandbox(
+                    url,
+                    project=project,
+                    settings=settings,
+                    include_screenshot=True,
+                )
+                if not browser_payload:
+                    browser_payload = _payload_from_browser(raw_browser, method="browser")
+                shot = raw_browser.get("screenshot_b64")
+            except WebReadError as exc:
+                warnings.append(f"Browser screenshot: {exc}")
+                if mode_norm == "ocr":
+                    raise
+
+        if shot and session is not None and principal is not None and settings is not None and project is not None:
+            try:
+                from app.services.web_ocr import ocr_screenshot_to_markdown
+
+                title = (browser_payload or http_payload or {}).get("title") or ""
+                final_url = (browser_payload or http_payload or {}).get("url") or url
+                md = await ocr_screenshot_to_markdown(
+                    session,
+                    project_id=project.id,
+                    user_id=principal.user.id,
+                    settings=settings,
+                    image_b64=str(shot),
+                    page_url=str(final_url),
+                    title=str(title),
+                    max_pages=max_ocr_pages,
+                )
+                if md and md.strip():
+                    return {
+                        "url": final_url,
+                        "title": title or urlparse(str(final_url)).hostname or "Page",
+                        "markdown": md[:200_000],
+                        "content_type": "text/html",
+                        "method": "ocr",
+                        "warnings": warnings + ["Used vision OCR on browser screenshot"],
+                    }
+                warnings.append("OCR returned empty text")
+            except WebReadError as exc:
+                warnings.append(f"OCR: {exc}")
+                if mode_norm == "ocr":
+                    raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("OCR cascade failed: %s", exc)
+                warnings.append(f"OCR failed: {exc}")
+                if mode_norm == "ocr":
+                    raise WebReadError(f"OCR failed: {exc}", status_code=502) from exc
+        elif mode_norm == "ocr":
+            raise WebReadError(
+                "OCR needs a running project sandbox (for screenshots) and an OCR-capable provider key.",
+                status_code=503,
+            )
+
+    # Fallbacks: return best available thin content rather than hard fail in auto
+    for candidate in (browser_payload, http_payload):
+        if candidate and (candidate.get("markdown") or "").strip():
+            candidate = {**candidate, "warnings": warnings}
+            candidate.pop("screenshot_b64", None)
+            return candidate
+
+    if browser_error:
+        raise browser_error
+    if http_error:
+        raise http_error
+    raise WebReadError(
+        "Could not extract readable text (HTTP, browser, and OCR all failed).",
+        status_code=422,
+    )

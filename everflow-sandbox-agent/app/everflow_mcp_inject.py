@@ -98,8 +98,9 @@ def mcp_identity_matches(
 ) -> bool:
     """True when guest MCP is already bound to this project + tunnel URL.
 
-    Token is intentionally ignored: rotating the bearer without force_restart
-    would thrash OpenCode; the existing token stays valid until revoke/expiry.
+    Token is intentionally ignored for identity: rotating the bearer without
+    need would thrash OpenCode. Expired tokens are detected separately via
+    ``probe_sandbox_token`` / ``existing_token_needs_refresh``.
     """
     if not existing_env:
         return False
@@ -110,6 +111,146 @@ def mcp_identity_matches(
     if not cur_url or not want_url or not cur_proj or not want_proj:
         return False
     return cur_url == want_url and cur_proj == want_proj
+
+
+def probe_sandbox_token_sync(
+    *,
+    api_url: str,
+    token: str,
+    project_id: str,
+    timeout: float = 5.0,
+) -> bool | None:
+    """Sync probe: True valid, False rejected, None indeterminate."""
+    base = (api_url or "").rstrip("/")
+    tok = (token or "").strip()
+    pid = (project_id or "").strip()
+    if not base or not tok or not pid:
+        return False
+    url = f"{base}/api/v1/projects/{pid}/mcp/context"
+    try:
+        import httpx
+
+        with httpx.Client(timeout=timeout) as client:
+            res = client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {tok}",
+                    "Accept": "application/json",
+                },
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("sandbox token probe failed (indeterminate): %s", exc)
+        return None
+    if res.status_code == 200:
+        return True
+    if res.status_code in (401, 403):
+        return False
+    logger.debug(
+        "sandbox token probe status=%s (indeterminate)", res.status_code
+    )
+    return None
+
+
+async def probe_sandbox_token(
+    *,
+    api_url: str,
+    token: str,
+    project_id: str,
+    timeout: float = 5.0,
+) -> bool | None:
+    """Check whether a sandbox bearer still works against the platform API.
+
+    Returns:
+      True  — token accepted (200)
+      False — token rejected (401/403) → rewrite credentials
+      None  — indeterminate (network / 5xx) → keep existing to avoid thrash
+    """
+    base = (api_url or "").rstrip("/")
+    tok = (token or "").strip()
+    pid = (project_id or "").strip()
+    if not base or not tok or not pid:
+        return False
+    url = f"{base}/api/v1/projects/{pid}/mcp/context"
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            res = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {tok}",
+                    "Accept": "application/json",
+                },
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("sandbox token probe failed (indeterminate): %s", exc)
+        return None
+    if res.status_code == 200:
+        return True
+    if res.status_code in (401, 403):
+        return False
+    logger.debug(
+        "sandbox token probe status=%s (indeterminate)", res.status_code
+    )
+    return None
+
+
+def existing_token_needs_refresh(
+    existing_env: dict[str, str],
+    *,
+    api_url: str,
+    project_id: str,
+    probe_api_url: str | None = None,
+    probe: bool | None = None,
+) -> bool:
+    """True when identity matches but the stored token is known-invalid.
+
+    ``probe_api_url`` is the URL the *agent* uses to reach the platform
+    (compose DNS). Guest ``api_url`` may be 127.0.0.1 reverse-tunnel only.
+
+    If ``probe`` is provided, skip the HTTP call (tests / precomputed).
+    """
+    if not mcp_identity_matches(
+        existing_env, api_url=api_url, project_id=project_id
+    ):
+        return False
+    token = (existing_env.get("EVERFLOW_TOKEN") or "").strip()
+    if not token:
+        return True
+    if probe is not None:
+        return probe is False
+    probe_base = (probe_api_url or api_url or "").rstrip("/")
+    result = probe_sandbox_token_sync(
+        api_url=probe_base,
+        token=token,
+        project_id=project_id,
+    )
+    # Only force rewrite on explicit auth failure.
+    return result is False
+
+
+async def existing_token_needs_refresh_async(
+    existing_env: dict[str, str],
+    *,
+    api_url: str,
+    project_id: str,
+    probe_api_url: str | None = None,
+) -> bool:
+    """Async variant of :func:`existing_token_needs_refresh`."""
+    if not mcp_identity_matches(
+        existing_env, api_url=api_url, project_id=project_id
+    ):
+        return False
+    token = (existing_env.get("EVERFLOW_TOKEN") or "").strip()
+    if not token:
+        return True
+    probe_base = (probe_api_url or api_url or "").rstrip("/")
+    result = await probe_sandbox_token(
+        api_url=probe_base,
+        token=token,
+        project_id=project_id,
+    )
+    return result is False
 
 
 def agent_mcp_fingerprint(root: Path | None = None) -> str | None:
@@ -375,11 +516,13 @@ def write_everflow_mcp_host(
     project_id: str,
     command: str | list[str] | None = None,
     force_credentials: bool = False,
+    probe_api_url: str | None = None,
 ) -> dict[str, Any]:
     """Write MCP env + opencode.json on a host-accessible workspace path.
 
     When ``force_credentials`` is False and identity (api_url + project_id)
-    already matches, skip credential rewrite so OpenCode need not restart.
+    already matches **and** the stored token still validates, skip credential
+    rewrite so OpenCode need not restart. Expired tokens force a rewrite.
     """
     ws = Path(workspace)
     ef = ws / ".everflow"
@@ -394,7 +537,20 @@ def write_everflow_mcp_host(
     identity_ok = mcp_identity_matches(
         existing_env, api_url=api_url, project_id=project_id
     )
+    stale_token = False
     if identity_ok and not force_credentials:
+        stale_token = existing_token_needs_refresh(
+            existing_env,
+            api_url=api_url,
+            project_id=project_id,
+            probe_api_url=probe_api_url,
+        )
+        if stale_token:
+            logger.info(
+                "host mcp token rejected by platform; rewriting credentials project=%s",
+                project_id,
+            )
+    if identity_ok and not force_credentials and not stale_token:
         platform_seed: dict[str, Any] | None = None
         try:
             from app.everflow_platform_seed import seed_platform_pack_host
@@ -493,19 +649,35 @@ async def write_everflow_mcp_guest(
     project_id: str,
     command: str | list[str] | None = None,
     force_credentials: bool = False,
+    probe_api_url: str | None = None,
 ) -> dict[str, Any]:
     """Write MCP env + opencode.json into the guest workspace via write_fs.
 
     When ``force_credentials`` is False and the guest already has the same
-    project_id + api_url, skip rewriting token/env/opencode.json so OpenCode
-    does not need a restart (Chat ensure churn).
+    project_id + api_url **and** the stored token still validates, skip
+    rewriting so OpenCode does not restart. Explicit 401/403 on the stored
+    token forces a credential rewrite (recovery after idle expiry).
     """
     existing_env_raw = await _guest_read_text(backend, sandbox_name, MCP_ENV_REL)
     existing_env = parse_mcp_env(existing_env_raw)
     identity_ok = mcp_identity_matches(
         existing_env, api_url=api_url, project_id=project_id
     )
+    stale_token = False
     if identity_ok and not force_credentials:
+        stale_token = await existing_token_needs_refresh_async(
+            existing_env,
+            api_url=api_url,
+            project_id=project_id,
+            probe_api_url=probe_api_url,
+        )
+        if stale_token:
+            logger.info(
+                "guest mcp token rejected by platform; rewriting credentials name=%s project=%s",
+                sandbox_name,
+                project_id,
+            )
+    if identity_ok and not force_credentials and not stale_token:
         # Still ensure platform playbook/skills exist (cheap, no OpenCode restart).
         platform_seed: dict[str, Any] | None = None
         try:
