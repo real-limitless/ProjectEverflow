@@ -9,7 +9,10 @@ v1 covers the operations most commonly used in n8n templates:
   payload; items carry ``{object, phoneNumberId, from, messageId, text,
   timestamp, source}``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a ``whatsAppApi`` credential is attached and no mock is present,
+real calls are made to the WhatsApp Business Cloud API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
 
 Parameters honored by ``whatsApp``:
 
@@ -29,7 +32,10 @@ Behavior precedence for ``whatsApp``:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the WhatsApp envelope.
-3. Offline synthetic response: ``{messaging_product, contacts,
+3. If a ``whatsAppApi`` credential resolves (``accessToken`` and
+   ``phoneNumberId`` present), a real ``POST`` to the WhatsApp Business
+   Cloud API is made and the response envelope is used.
+4. Offline synthetic response: ``{messaging_product, contacts,
    messages}`` with a random ``wamid.<hex>`` message id and current
    timestamp.
 
@@ -54,7 +60,9 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -234,20 +242,84 @@ def _response_from_http_mock(mock: Any, phone: str, phone_digits: str) -> dict[s
     return None
 
 
-def _resolve_whatsapp_response(
+def _build_whatsapp_request(
+    cred: dict[str, Any],
+    phone_digits: str,
+    text: str,
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real WhatsApp Business Cloud API ``sendMessage`` request config.
+
+    Returns ``None`` when the credential has no ``accessToken`` or
+    ``phoneNumberId``.
+    """
+    access_token = str(
+        cred.get("accessToken") or cred.get("access_token") or ""
+    )
+    phone_number_id = str(
+        cred.get("phoneNumberId") or cred.get("phone_number_id") or ""
+    )
+    if not access_token or not phone_number_id:
+        return None
+    body: dict[str, Any] = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": phone_digits,
+        "type": "text",
+        "text": {"body": text},
+    }
+    return HttpRequestConfig(
+        url=f"https://graph.facebook.com/v18.0/{phone_number_id}/messages",
+        method="POST",
+        headers={"Authorization": f"Bearer {access_token}"},
+        body=body,
+        body_mode="json",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _envelope_from_whatsapp_api(
+    data: dict[str, Any],
+    phone: str,
+    phone_digits: str,
+) -> dict[str, Any]:
+    """Convert a real WhatsApp Business Cloud API response to the
+    internal envelope shape."""
+    contacts = data.get("contacts")
+    if not isinstance(contacts, list) or not contacts:
+        contacts = [{"input": phone, "wa_id": phone_digits}]
+    messages = data.get("messages")
+    if not isinstance(messages, list) or not messages:
+        messages = [
+            {
+                "id": f"wamid.{uuid.uuid4().hex[:16]}",
+                "from": phone_digits,
+                "timestamp": str(int(time.time())),
+            }
+        ]
+    return {
+        "messaging_product": data.get("messaging_product", "whatsapp"),
+        "contacts": contacts,
+        "messages": messages,
+    }
+
+
+async def _resolve_whatsapp_response(
     *,
     phone: str,
     phone_digits: str,
     text: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"whatsapp_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"whatsapp_api"``, ``"offline"`` so downstream observers can tell
+    where the result came from.
     """
     mocks = ctx.mocks or {}
     wmock = mocks.get("whatsapp_response")
@@ -287,6 +359,24 @@ def _resolve_whatsapp_response(
         env = _response_from_http_mock(hmock, phone, phone_digits)
         if env is not None:
             return env, "http_response"
+
+    cred = resolve_credential(node, ctx, "whatsAppApi")
+    if cred:
+        cfg = _build_whatsapp_request(cred, phone_digits, text, params)
+        if cfg is not None:
+            logger.info(
+                "whatsapp real HTTP call phoneNumber=%s",
+                phone,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_whatsapp_api(resp.body, phone, phone_digits),
+                        "whatsapp_api",
+                    )
+            except Exception as exc:
+                logger.warning("whatsapp HTTP call failed: %s", exc)
 
     return _synthesize_response(phone, phone_digits), "offline"
 
@@ -336,12 +426,13 @@ async def exec_whatsapp(
 
         phone_digits = _digits_only(phone)
 
-        envelope, source = _resolve_whatsapp_response(
+        envelope, source = await _resolve_whatsapp_response(
             phone=phone,
             phone_digits=phone_digits,
             text=text,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
         )
 
@@ -354,7 +445,7 @@ async def exec_whatsapp(
             "contacts": _extract_contacts(envelope),
             "source": "whatsApp",
         }
-        if source != "whatsapp_response":
+        if source not in ("whatsapp_response", "whatsapp_api"):
             payload["mockSource"] = source
 
         ni = item.clone()

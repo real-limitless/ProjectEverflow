@@ -10,7 +10,10 @@ v1 covers the operations most commonly used in n8n templates:
   ``{eventType, messageId, channelId, guildId, authorId,
   authorUsername, content, timestamp, source: 'discordTrigger'}``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a ``discordApi`` (bot token) or ``discordWebhookApi`` (webhook URL)
+credential is attached and no mock is present, real calls are made to
+the Discord API via :func:`execute_http_request`. Otherwise the
+executor is mock-driven with an offline synthetic fallback.
 
 Parameters honored by ``discord``:
 
@@ -32,7 +35,12 @@ Behavior precedence for ``discord``:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the Discord envelope.
-3. Offline synthetic response with a random ``id``, echoed
+3. If a ``discordApi`` credential resolves (``token`` present), a real
+   ``POST /channels/{channelId}/messages`` call is made to the Discord
+   API; if a ``discordWebhookApi`` credential resolves (``webhookUrl``
+   present), a real ``POST {webhookUrl}`` call is made. The response
+   envelope is used.
+4. Offline synthetic response with a random ``id``, echoed
    ``channel_id``/``content``, a ``MOCK_BOT_ID`` ``author``, current
    ISO timestamp, ``tts`` and ``embeds``.
 
@@ -59,7 +67,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -269,21 +279,93 @@ def _discord_response_from_http_mock(mock: Any) -> dict[str, Any] | None:
     return None
 
 
-def _resolve_discord_response(
-    *,
+def _build_discord_request(
+    cred: dict[str, Any],
+    channel_id: str,
+    content: str,
+    username: str,
+    tts: bool,
+    embeds: list[Any],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Discord message request config.
+
+    Supports both bot-token (``discordApi``) and webhook
+    (``discordWebhookApi``) credentials. Returns ``None`` when the
+    credential has neither a ``token`` nor a ``webhookUrl``.
+    """
+    token = str(cred.get("token") or cred.get("apiToken") or cred.get("access_token") or "")
+    webhook_url = str(cred.get("webhookUrl") or cred.get("webhook_url") or "")
+    if token:
+        body: dict[str, Any] = {"content": content, "tts": tts}
+        if embeds:
+            body["embeds"] = list(embeds)
+        return HttpRequestConfig(
+            url=f"https://discord.com/api/v10/channels/{channel_id}/messages",
+            method="POST",
+            headers={"Authorization": f"Bot {token}"},
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+    if webhook_url:
+        body = {"content": content, "username": username, "tts": tts}
+        if embeds:
+            body["embeds"] = list(embeds)
+        return HttpRequestConfig(
+            url=webhook_url,
+            method="POST",
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+    return None
+
+
+def _envelope_from_discord_api(
+    data: dict[str, Any],
     channel_id: str,
     content: str,
     tts: bool,
     embeds: list[Any],
+) -> dict[str, Any]:
+    """Convert a real Discord API message response to the internal
+    envelope shape."""
+    return {
+        "id": data.get("id") or _new_message_id(),
+        "channel_id": data.get("channel_id") or channel_id,
+        "content": data.get("content") or content,
+        "author": data.get("author")
+        or {
+            "id": MOCK_BOT_ID,
+            "username": "mock-bot",
+            "bot": True,
+        },
+        "timestamp": data.get("timestamp") or _now_iso(),
+        "tts": bool(data.get("tts", tts)),
+        "embeds": list(data.get("embeds", []) or []),
+    }
+
+
+async def _resolve_discord_response(
+    *,
+    channel_id: str,
+    content: str,
+    username: str,
+    tts: bool,
+    embeds: list[Any],
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"discord_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result
-    came from.
+    ``"discord_api"``, ``"offline"`` so downstream observers can tell
+    where the result came from.
     """
     mocks = ctx.mocks or {}
     dmock = mocks.get("discord_response")
@@ -333,6 +415,32 @@ def _resolve_discord_response(
         if env is not None:
             return env, "http_response"
 
+    cred = resolve_credential(node, ctx, "discordApi") or resolve_credential(
+        node, ctx, "discordWebhookApi"
+    )
+    if cred:
+        cfg = _build_discord_request(
+            cred, channel_id, content, username, tts, embeds, params
+        )
+        if cfg is not None:
+            logger.info(
+                "discord real HTTP call channelId=%s tts=%s embeds=%d",
+                channel_id,
+                tts,
+                len(embeds),
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_discord_api(
+                            resp.body, channel_id, content, tts, embeds
+                        ),
+                        "discord_api",
+                    )
+            except Exception as exc:
+                logger.warning("discord HTTP call failed: %s", exc)
+
     return (
         _synthesize_response(
             channel_id=channel_id, content=content, tts=tts, embeds=embeds
@@ -372,13 +480,15 @@ async def exec_discord(
             )
             continue
 
-        envelope, source = _resolve_discord_response(
+        envelope, source = await _resolve_discord_response(
             channel_id=channel_id,
             content=content,
+            username=username,
             tts=tts,
             embeds=embeds,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
         )
 
@@ -403,7 +513,7 @@ async def exec_discord(
             payload["author"] = author
         elif author_username:
             payload["author"] = {"id": MOCK_BOT_ID, "username": author_username, "bot": True}
-        if source != "discord_response":
+        if source not in ("discord_response", "discord_api"):
             payload["mockSource"] = source
 
         ni = item.clone()

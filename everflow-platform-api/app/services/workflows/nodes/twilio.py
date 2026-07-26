@@ -7,7 +7,10 @@ v1 covers the two operations most commonly used in n8n templates:
 - ``call``  — place an outbound call via the Twilio API
   (``POST /2010-04-01/Accounts/{AccountSid}/Calls.json``).
 
-All API calls are mock-driven — no real network I/O is performed.
+When a ``twilioApi`` credential is attached and no mock is present,
+real calls are made to the Twilio API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven
+with an offline synthetic fallback.
 
 Parameters honored:
 
@@ -27,7 +30,11 @@ Behavior precedence for the API call:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the Twilio envelope.
-3. Offline synthetic response (Twilio-shaped):
+3. If a ``twilioApi`` credential resolves (``accountSid`` and
+   ``authToken`` present), a real ``POST`` call is made to the Twilio
+   API (``Messages.json`` for SMS, ``Calls.json`` for calls) and the
+   response envelope is used.
+4. Offline synthetic response (Twilio-shaped):
    - SMS  → ``{sid: "SM<32 hex>", status: 'queued', to, from, body,
      date_created, direction: 'outbound-api', price: None,
      error_code: None, error_message: None}``
@@ -45,13 +52,16 @@ Emitted per-item payload:
 
 from __future__ import annotations
 
+import base64
 import logging
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -192,7 +202,72 @@ def _twilio_response_from_http_mock(
     return None
 
 
-def _resolve_twilio_response(
+def _build_twilio_request(
+    cred: dict[str, Any],
+    operation: str,
+    from_num: str,
+    to: str,
+    body: str,
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Twilio API request config.
+
+    Returns ``None`` when the credential lacks ``accountSid`` or
+    ``authToken``.
+    """
+    account_sid = str(cred.get("accountSid") or cred.get("account_sid") or "")
+    auth_token = str(cred.get("authToken") or cred.get("auth_token") or "")
+    if not account_sid or not auth_token:
+        return None
+
+    raw = f"{account_sid}:{auth_token}".encode("utf-8")
+    auth_header = "Basic " + base64.b64encode(raw).decode("ascii")
+    headers = {"Authorization": auth_header}
+
+    if operation == "call":
+        options = params.get("options") if isinstance(params.get("options"), dict) else {}
+        voice_url = str(options.get("voiceUrl") or "")
+        form_body: dict[str, Any] = {"From": from_num, "To": to, "Url": voice_url}
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Calls.json"
+    else:
+        form_body = {"From": from_num, "To": to, "Body": body}
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+
+    return HttpRequestConfig(
+        url=url,
+        method="POST",
+        headers=headers,
+        body=form_body,
+        body_mode="form",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _envelope_from_twilio_api(
+    data: dict[str, Any],
+    operation: str,
+    to: str,
+    from_num: str,
+    body: str,
+) -> dict[str, Any]:
+    """Convert a real Twilio API response to the internal envelope
+    shape."""
+    return {
+        "sid": data.get("sid")
+        or (
+            f"SM{uuid.uuid4().hex[:32]}"
+            if operation == "send"
+            else f"CA{uuid.uuid4().hex[:32]}"
+        ),
+        "status": data.get("status") or "queued",
+        "to": data.get("to") or to,
+        "from": data.get("from") or from_num,
+        "body": data.get("body", body) if operation == "send" else "",
+    }
+
+
+async def _resolve_twilio_response(
     *,
     operation: str,
     from_num: str,
@@ -200,13 +275,14 @@ def _resolve_twilio_response(
     body: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"twilio_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"twilio_api"``, ``"offline"`` so downstream observers can tell
+    where the result came from.
     """
     mocks = ctx.mocks or {}
     tmock = mocks.get("twilio_response")
@@ -244,6 +320,28 @@ def _resolve_twilio_response(
         env = _twilio_response_from_http_mock(hmock, to, from_num, body)
         if env is not None:
             return env, "http_response"
+
+    cred = resolve_credential(node, ctx, "twilioApi")
+    if cred:
+        cfg = _build_twilio_request(cred, operation, from_num, to, body, params)
+        if cfg is not None:
+            logger.info(
+                "twilio real HTTP call operation=%s from=%s to=%s",
+                operation,
+                from_num[:24],
+                to[:24],
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_twilio_api(
+                            resp.body, operation, to, from_num, body
+                        ),
+                        "twilio_api",
+                    )
+            except Exception as exc:
+                logger.warning("twilio HTTP call failed: %s", exc)
 
     if operation == "call":
         return _synthesize_call(to, from_num), "offline"
@@ -296,13 +394,14 @@ async def exec_twilio(
             )
             continue
 
-        envelope, source = _resolve_twilio_response(
+        envelope, source = await _resolve_twilio_response(
             operation=operation,
             from_num=from_num,
             to=to,
             body=message,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
         )
 
@@ -319,7 +418,7 @@ async def exec_twilio(
             payload["body"] = envelope.get("body", message)
         if options:
             payload["options"] = options
-        if source != "twilio_response":
+        if source not in ("twilio_response", "twilio_api"):
             payload["mockSource"] = source
 
         ni = item.clone()

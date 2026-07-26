@@ -11,7 +11,10 @@ v1 supports the operations most commonly used in n8n templates:
 - ``delete`` — delete a post by id; emit one item per input with
   ``{postId, deleted, source: 'wordpress'}``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a ``wordpressApi`` credential is attached and no mock is present,
+real calls are made to the WordPress REST API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
 
 Parameters honored:
 
@@ -49,7 +52,9 @@ Behavior precedence:
    (``{status_code, body, headers}``); a JSON ``body`` dict is used as
    the response (a JSON ``body`` list is wrapped as ``{posts: body}``
    for list).
-3. Offline synthetic response with deterministic-looking ids and ISO
+3. If a ``wordpressApi`` credential resolves (``baseUrl`` present), a
+   real call to the WordPress REST API is made and the response is used.
+4. Offline synthetic response with deterministic-looking ids and ISO
    timestamps.
 
 Items with an empty resolved ``postId`` for get/update/delete are
@@ -64,7 +69,9 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -366,18 +373,175 @@ def _synthesize_delete(*, post_id: Any) -> dict[str, Any]:
 # ── Mock resolution ───────────────────────────────────────────────────
 
 
-def _resolve_wordpress_response(
+def _build_wordpress_request(
+    cred: dict[str, Any],
+    operation: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+    ctx: "EngineContext",
+) -> HttpRequestConfig | None:
+    """Build a real WordPress REST API request config.
+
+    Returns ``None`` when the credential has no ``baseUrl``.
+    """
+    base_url = str(cred.get("baseUrl") or "").rstrip("/")
+    if not base_url:
+        return None
+
+    token = str(cred.get("token") or "")
+    username = str(cred.get("username") or "")
+    password = str(cred.get("password") or "")
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    elif username and password:
+        import base64
+
+        raw = f"{username}:{password}".encode("utf-8")
+        headers["Authorization"] = "Basic " + base64.b64encode(raw).decode("ascii")
+
+    posts_url = f"{base_url}/wp-json/wp/v2/posts"
+    ectx = _ectx(item, ctx)
+
+    if operation == "create":
+        title = _resolve_str_param(params, "title", item, ectx, ("title",))
+        content = _resolve_str_param(
+            params, "content", item, ectx, ("content", "body")
+        )
+        status_raw = _resolve_str_param(params, "status", item, ectx, ("status",))
+        status = (
+            status_raw
+            if status_raw in WORDPRESS_STATUSES
+            else WORDPRESS_DEFAULT_STATUS_CREATE
+        )
+        author = _resolve_param(params, "author", item, ectx, ("author",))
+        excerpt = _resolve_str_param(params, "excerpt", item, ectx, ("excerpt",))
+        body: dict[str, Any] = {
+            "title": title,
+            "content": content,
+            "status": status,
+        }
+        if author:
+            body["author"] = author
+        if excerpt:
+            body["excerpt"] = excerpt
+        return HttpRequestConfig(
+            url=posts_url,
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "get":
+        post_id = _resolve_post_id(params, item, ectx)
+        return HttpRequestConfig(
+            url=f"{posts_url}/{post_id}",
+            method="GET",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "update":
+        post_id = _resolve_post_id(params, item, ectx)
+        title = _resolve_str_param(params, "title", item, ectx, ("title",))
+        content = _resolve_str_param(
+            params, "content", item, ectx, ("content", "body")
+        )
+        status_raw = _resolve_str_param(params, "status", item, ectx, ("status",))
+        status = (
+            status_raw
+            if status_raw in WORDPRESS_STATUSES
+            else WORDPRESS_DEFAULT_STATUS_UPDATE
+        )
+        author = _resolve_param(params, "author", item, ectx, ("author",))
+        excerpt = _resolve_str_param(params, "excerpt", item, ectx, ("excerpt",))
+        body = {
+            "title": title,
+            "content": content,
+            "status": status,
+        }
+        if author:
+            body["author"] = author
+        if excerpt:
+            body["excerpt"] = excerpt
+        return HttpRequestConfig(
+            url=f"{posts_url}/{post_id}",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "list":
+        per_page = _resolve_per_page(params, item, ectx)
+        page = _resolve_page(params, item, ectx)
+        status_raw = _resolve_str_param(params, "status", item, ectx, ("status",))
+        list_status = status_raw if status_raw else WORDPRESS_DEFAULT_STATUS_LIST
+        qs = f"per_page={per_page}&page={page}&status={list_status}"
+        return HttpRequestConfig(
+            url=f"{posts_url}?{qs}",
+            method="GET",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "delete":
+        post_id = _resolve_post_id(params, item, ectx)
+        return HttpRequestConfig(
+            url=f"{posts_url}/{post_id}",
+            method="DELETE",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+    return None
+
+
+def _envelope_from_wordpress_api(
+    data: Any,
+    operation: str,
+) -> dict[str, Any]:
+    """Convert a real WordPress REST API response to the internal
+    envelope shape."""
+    if operation == "list":
+        if isinstance(data, list):
+            return {
+                "posts": data,
+                "totalPosts": len(data),
+                "totalPages": 1,
+            }
+        if isinstance(data, dict) and "posts" not in data:
+            return {
+                "posts": [data],
+                "totalPosts": 1,
+                "totalPages": 1,
+            }
+        return (
+            data
+            if isinstance(data, dict)
+            else {"posts": [], "totalPosts": 0, "totalPages": 0}
+        )
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+async def _resolve_wordpress_response(
     *,
     operation: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
     synth: Any,
 ) -> tuple[dict[str, Any], str]:
     """Return ``(response, source)`` for the current call.
 
     ``source`` is one of ``"wordpress_response"``, ``"http_response"``,
-    ``"offline"``.
+    ``"wordpress_api"``, ``"offline"``.
     """
     mocks = ctx.mocks or {}
     wmock = mocks.get("wordpress_response")
@@ -400,6 +564,24 @@ def _resolve_wordpress_response(
                 {"posts": body, "totalPosts": len(body), "totalPages": 1},
                 "http_response",
             )
+
+    cred = resolve_credential(node, ctx, "wordpressApi")
+    if cred:
+        cfg = _build_wordpress_request(cred, operation, params, item, ctx)
+        if cfg is not None:
+            logger.info(
+                "wordpress real HTTP call operation=%s",
+                operation,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, (dict, list)):
+                    return (
+                        _envelope_from_wordpress_api(resp.body, operation),
+                        "wordpress_api",
+                    )
+            except Exception as exc:
+                logger.warning("wordpress HTTP call failed: %s", exc)
 
     return synth(), "offline"
 
@@ -460,9 +642,17 @@ async def exec_wordpress(
         ectx = _ectx(item, ctx)
 
         if operation == "create":
-            out.extend(_build_create_items(params=params, item=item, ectx=ectx, ctx=ctx))
+            out.extend(
+                await _build_create_items(
+                    params=params, item=item, ectx=ectx, ctx=ctx, node=node
+                )
+            )
         elif operation == "list":
-            out.extend(_build_list_items(params=params, item=item, ectx=ectx, ctx=ctx))
+            out.extend(
+                await _build_list_items(
+                    params=params, item=item, ectx=ectx, ctx=ctx, node=node
+                )
+            )
         elif operation == "delete":
             post_id = _resolve_post_id(params, item, ectx)
             if _is_empty_post_id(post_id):
@@ -473,7 +663,9 @@ async def exec_wordpress(
                 )
                 continue
             out.extend(
-                _build_delete_items(params=params, item=item, ctx=ctx, post_id=post_id)
+                await _build_delete_items(
+                    params=params, item=item, ctx=ctx, post_id=post_id, node=node
+                )
             )
         elif operation == "get":
             post_id = _resolve_post_id(params, item, ectx)
@@ -485,7 +677,9 @@ async def exec_wordpress(
                 )
                 continue
             out.extend(
-                _build_get_items(params=params, item=item, ctx=ctx, post_id=post_id)
+                await _build_get_items(
+                    params=params, item=item, ctx=ctx, post_id=post_id, node=node
+                )
             )
         else:  # update
             post_id = _resolve_post_id(params, item, ectx)
@@ -497,8 +691,13 @@ async def exec_wordpress(
                 )
                 continue
             out.extend(
-                _build_update_items(
-                    params=params, item=item, ectx=ectx, ctx=ctx, post_id=post_id
+                await _build_update_items(
+                    params=params,
+                    item=item,
+                    ectx=ectx,
+                    ctx=ctx,
+                    post_id=post_id,
+                    node=node,
                 )
             )
 
@@ -508,12 +707,13 @@ async def exec_wordpress(
 # ── Per-operation builders ────────────────────────────────────────────
 
 
-def _build_create_items(
+async def _build_create_items(
     *,
     params: dict[str, Any],
     item: ExecutionItem,
     ectx: ExpressionContext,
     ctx: "EngineContext",
+    node: "ExecNode",
 ) -> list[ExecutionItem]:
     title = _resolve_str_param(params, "title", item, ectx, ("title",))
     content = _resolve_str_param(
@@ -533,10 +733,11 @@ def _build_create_items(
             title=title, content=content, status=status, author=author, excerpt=excerpt
         )
 
-    response, source = _resolve_wordpress_response(
+    response, source = await _resolve_wordpress_response(
         operation="create",
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
         synth=_synth,
     )
@@ -559,7 +760,7 @@ def _build_create_items(
         payload["tags"] = tags
     if excerpt:
         payload["excerpt"] = excerpt
-    if source != "wordpress_response":
+    if source not in ("wordpress_response", "wordpress_api"):
         payload["mockSource"] = source
 
     ni = item.clone()
@@ -573,20 +774,22 @@ def _build_create_items(
     return [ni]
 
 
-def _build_get_items(
+async def _build_get_items(
     *,
     params: dict[str, Any],
     item: ExecutionItem,
     ctx: "EngineContext",
     post_id: Any,
+    node: "ExecNode",
 ) -> list[ExecutionItem]:
     def _synth() -> dict[str, Any]:
         return _synthesize_get(post_id=post_id)
 
-    response, source = _resolve_wordpress_response(
+    response, source = await _resolve_wordpress_response(
         operation="get",
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
         synth=_synth,
     )
@@ -603,7 +806,7 @@ def _build_get_items(
         "operation": "get",
         "source": "wordpress",
     }
-    if source != "wordpress_response":
+    if source not in ("wordpress_response", "wordpress_api"):
         payload["mockSource"] = source
 
     ni = item.clone()
@@ -616,13 +819,14 @@ def _build_get_items(
     return [ni]
 
 
-def _build_update_items(
+async def _build_update_items(
     *,
     params: dict[str, Any],
     item: ExecutionItem,
     ectx: ExpressionContext,
     ctx: "EngineContext",
     post_id: Any,
+    node: "ExecNode",
 ) -> list[ExecutionItem]:
     title = _resolve_str_param(params, "title", item, ectx, ("title",))
     content = _resolve_str_param(
@@ -642,10 +846,11 @@ def _build_update_items(
             post_id=post_id, title=title, content=content, status=status
         )
 
-    response, source = _resolve_wordpress_response(
+    response, source = await _resolve_wordpress_response(
         operation="update",
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
         synth=_synth,
     )
@@ -668,7 +873,7 @@ def _build_update_items(
         payload["tags"] = tags
     if excerpt:
         payload["excerpt"] = excerpt
-    if source != "wordpress_response":
+    if source not in ("wordpress_response", "wordpress_api"):
         payload["mockSource"] = source
 
     ni = item.clone()
@@ -682,12 +887,13 @@ def _build_update_items(
     return [ni]
 
 
-def _build_list_items(
+async def _build_list_items(
     *,
     params: dict[str, Any],
     item: ExecutionItem,
     ectx: ExpressionContext,
     ctx: "EngineContext",
+    node: "ExecNode",
 ) -> list[ExecutionItem]:
     per_page = _resolve_per_page(params, item, ectx)
     page = _resolve_page(params, item, ectx)
@@ -699,10 +905,11 @@ def _build_list_items(
     def _synth() -> dict[str, Any]:
         return _synthesize_list(per_page=per_page)
 
-    response, source = _resolve_wordpress_response(
+    response, source = await _resolve_wordpress_response(
         operation="list",
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
         synth=_synth,
     )
@@ -726,7 +933,7 @@ def _build_list_items(
         }
         if search:
             payload["search"] = search
-        if source != "wordpress_response":
+        if source not in ("wordpress_response", "wordpress_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -748,7 +955,7 @@ def _build_list_items(
             }
             if search:
                 payload["search"] = search
-            if source != "wordpress_response":
+            if source not in ("wordpress_response", "wordpress_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -764,20 +971,22 @@ def _build_list_items(
     return results
 
 
-def _build_delete_items(
+async def _build_delete_items(
     *,
     params: dict[str, Any],
     item: ExecutionItem,
     ctx: "EngineContext",
     post_id: Any,
+    node: "ExecNode",
 ) -> list[ExecutionItem]:
     def _synth() -> dict[str, Any]:
         return _synthesize_delete(post_id=post_id)
 
-    response, source = _resolve_wordpress_response(
+    response, source = await _resolve_wordpress_response(
         operation="delete",
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
         synth=_synth,
     )
@@ -789,7 +998,7 @@ def _build_delete_items(
         "operation": "delete",
         "source": "wordpress",
     }
-    if source != "wordpress_response":
+    if source not in ("wordpress_response", "wordpress_api"):
         payload["mockSource"] = source
 
     ni = item.clone()
