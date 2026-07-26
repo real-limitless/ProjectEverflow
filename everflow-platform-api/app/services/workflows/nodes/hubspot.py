@@ -7,7 +7,10 @@ v1 covers the operations most commonly used in n8n templates:
   one item per result for ``list`` in array mode) with operation-specific
   fields and ``source: 'hubspot'``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a ``hubspotApi`` credential is attached and no mock is present,
+real CRM API calls are made via :func:`execute_http_request`.
+Otherwise the executor is mock-driven with an offline synthetic
+fallback.
 
 Parameters honored by ``hubspot``:
 
@@ -15,6 +18,9 @@ Parameters honored by ``hubspot``:
   ``delete``; default ``get``)
 - ``resourceType``   (one of ``contact`` / ``company`` / ``deal`` /
   ``ticket``; default ``contact``)
+- ``objectType``     (optional CRM plural path segment; defaults from
+  ``resourceType`` → ``contacts`` / ``companies`` / ``deals`` /
+  ``tickets``)
 - ``objectId``       (string; ``$json.objectId`` / ``$json.id`` /
   ``$json.contactId`` fallback; required for ``get`` / ``update`` /
   ``delete``)
@@ -39,7 +45,10 @@ Behavior precedence:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is used as
    the response.
-3. Offline synthetic response with deterministic-looking ids and
+3. If a ``hubspotApi`` credential resolves (``accessToken``/``apiKey``/
+   ``token`` present), a real HubSpot CRM call is made and the JSON body
+   is used (source ``hubspot_api``).
+4. Offline synthetic response with deterministic-looking ids and
    timestamps.
 
 Items with an empty resolved ``objectId`` (for ``get`` / ``update`` /
@@ -52,15 +61,30 @@ import logging
 import random
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlencode
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
     from app.services.workflows.graph import ExecNode
 
 logger = logging.getLogger(__name__)
+
+HUBSPOT_API_BASE = "https://api.hubapi.com/crm/v3/objects"
+HUBSPOT_RESOURCE_TO_OBJECT_TYPE: dict[str, str] = {
+    "contact": "contacts",
+    "company": "companies",
+    "deal": "deals",
+    "ticket": "tickets",
+    "contacts": "contacts",
+    "companies": "companies",
+    "deals": "deals",
+    "tickets": "tickets",
+}
 
 
 HUBSPOT_OPERATIONS: tuple[str, ...] = (
@@ -319,22 +343,146 @@ def _synthesize_offline(
     return {}
 
 
-# ── Mock resolution ───────────────────────────────────────────────────
+# ── Real HTTP ─────────────────────────────────────────────────────────
 
 
-def _resolve_hubspot_response(
+def _hubspot_token(cred: dict[str, Any]) -> str:
+    return str(
+        cred.get("accessToken")
+        or cred.get("apiKey")
+        or cred.get("token")
+        or cred.get("access_token")
+        or ""
+    )
+
+
+def _resolve_object_type(
+    params: dict[str, Any],
+    resource_type: str,
+    item: ExecutionItem,
+    ectx: ExpressionContext,
+) -> str:
+    """Map ``objectType`` / ``resourceType`` to HubSpot CRM plural path."""
+    raw = params.get("objectType")
+    if raw is not None:
+        resolved = _coerce_str(evaluate(raw, ectx)).strip().lower()
+        if resolved:
+            return HUBSPOT_RESOURCE_TO_OBJECT_TYPE.get(resolved, resolved)
+    for fk in ("objectType", "object_type"):
+        if fk in item.json and item.json[fk] is not None:
+            resolved = _coerce_str(item.json[fk]).strip().lower()
+            if resolved:
+                return HUBSPOT_RESOURCE_TO_OBJECT_TYPE.get(resolved, resolved)
+    return HUBSPOT_RESOURCE_TO_OBJECT_TYPE.get(resource_type, "contacts")
+
+
+def _build_hubspot_request(
+    cred: dict[str, Any],
+    *,
+    operation: str,
+    object_type: str,
+    object_id: str,
+    properties: dict[str, Any],
+    limit: int,
+    list_properties: list[str],
+) -> HttpRequestConfig | None:
+    """Build a real HubSpot CRM v3 request config.
+
+    Returns ``None`` when the credential has no token.
+    """
+    token = _hubspot_token(cred)
+    if not token:
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    base = f"{HUBSPOT_API_BASE}/{object_type}"
+
+    if operation == "create":
+        return HttpRequestConfig(
+            url=base,
+            method="POST",
+            headers=headers,
+            body={"properties": properties or {}},
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "get":
+        if not object_id:
+            return None
+        return HttpRequestConfig(
+            url=f"{base}/{object_id}",
+            method="GET",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "update":
+        if not object_id:
+            return None
+        return HttpRequestConfig(
+            url=f"{base}/{object_id}",
+            method="PATCH",
+            headers=headers,
+            body={"properties": properties or {}},
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "list":
+        qs: dict[str, str] = {"limit": str(max(1, min(limit or 100, 100)))}
+        if list_properties:
+            qs["properties"] = ",".join(list_properties)
+        return HttpRequestConfig(
+            url=f"{base}?{urlencode(qs)}",
+            method="GET",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "delete":
+        if not object_id:
+            return None
+        return HttpRequestConfig(
+            url=f"{base}/{object_id}",
+            method="DELETE",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    return None
+
+
+# ── Mock / credential resolution ──────────────────────────────────────
+
+
+async def _resolve_hubspot_response(
     *,
     operation: str,
     resource_type: str,
+    object_type: str,
+    object_id: str,
+    properties: dict[str, Any],
+    limit: int,
+    list_properties: list[str],
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
     synth: Any,
 ) -> tuple[dict[str, Any], str]:
     """Return ``(response, source)`` for the current call.
 
     ``source`` is one of ``"hubspot_response"``, ``"http_response"``,
-    ``"offline"``.
+    ``"hubspot_api"``, ``"offline"``.
     """
     mocks = ctx.mocks or {}
     hmock = mocks.get("hubspot_response")
@@ -352,6 +500,38 @@ def _resolve_hubspot_response(
         body = gmock.get("body")
         if isinstance(body, dict):
             return body, "http_response"
+
+    cred = resolve_credential(node, ctx, "hubspotApi")
+    if cred:
+        cfg = _build_hubspot_request(
+            cred,
+            operation=operation,
+            object_type=object_type,
+            object_id=object_id,
+            properties=properties,
+            limit=limit,
+            list_properties=list_properties,
+        )
+        if cfg is not None:
+            logger.info(
+                "hubspot real HTTP call operation=%s objectType=%s objectId=%s",
+                operation,
+                object_type,
+                object_id,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return resp.body, "hubspot_api"
+                # DELETE often returns empty body — synthesize a minimal envelope
+                if operation == "delete" and resp.status_code in (200, 204):
+                    return {
+                        "id": object_id,
+                        "archived": True,
+                        "archivedAt": _now_iso(),
+                    }, "hubspot_api"
+            except Exception as exc:
+                logger.warning("hubspot HTTP call failed: %s", exc)
 
     return synth(), "offline"
 
@@ -432,6 +612,8 @@ async def exec_hubspot(
             )
             continue
 
+        object_type = _resolve_object_type(params, resource_type, item, ectx)
+
         def _synth() -> dict[str, Any]:
             return _synthesize_offline(
                 operation,
@@ -440,11 +622,17 @@ async def exec_hubspot(
                 limit=limit,
             )
 
-        response, source = _resolve_hubspot_response(
+        response, source = await _resolve_hubspot_response(
             operation=operation,
             resource_type=resource_type,
+            object_type=object_type,
+            object_id=object_id,
+            properties=properties,
+            limit=limit,
+            list_properties=list_properties,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
             synth=_synth,
         )
@@ -469,7 +657,7 @@ async def exec_hubspot(
                 "archivedAt": response.get("archivedAt") or _now_iso(),
                 "source": "hubspot",
             }
-            if source != "hubspot_response":
+            if source not in ("hubspot_response", "hubspot_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -489,7 +677,7 @@ async def exec_hubspot(
             updated_at = response.get("updatedAt")
             if updated_at is not None:
                 payload["updatedAt"] = updated_at
-            if source != "hubspot_response":
+            if source not in ("hubspot_response", "hubspot_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -532,7 +720,7 @@ def _build_list_items(
         }
         if list_properties:
             payload["properties"] = list_properties
-        if source != "hubspot_response":
+        if source not in ("hubspot_response", "hubspot_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -546,7 +734,7 @@ def _build_list_items(
                 "resourceType": resource_type,
                 "source": "hubspot",
             }
-            if source != "hubspot_response":
+            if source not in ("hubspot_response", "hubspot_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}

@@ -11,7 +11,10 @@ v1 covers the operations most commonly used in n8n templates:
   ``{event, ref, repository, pusher, headCommit, commits, compare,
   source: 'githubTrigger'}``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a ``githubApi`` credential is attached and no mock is present,
+real issue API calls are made via :func:`execute_http_request`.
+Otherwise the executor is mock-driven with an offline synthetic
+fallback.
 
 Parameters honored by ``github``:
 
@@ -52,7 +55,10 @@ Behavior precedence for ``github``:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is used as
    the response.
-3. Offline synthetic response with deterministic-looking numbers and
+3. If a ``githubApi`` credential resolves (``token``/``accessToken``
+   present), a real GitHub REST call is made for supported issue ops
+   and the JSON body is used (source ``github_api``).
+4. Offline synthetic response with deterministic-looking numbers and
    timestamps.
 
 Items with an empty resolved ``owner`` or ``repository`` are skipped
@@ -79,13 +85,17 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
     from app.services.workflows.graph import ExecNode
 
 logger = logging.getLogger(__name__)
+
+GITHUB_API_BASE = "https://api.github.com"
 
 
 GITHUB_OPERATIONS: tuple[str, ...] = (
@@ -407,23 +417,137 @@ def _construct_html_url(
     return ""
 
 
-# ── Mock resolution ───────────────────────────────────────────────────
+# ── Real HTTP ─────────────────────────────────────────────────────────
 
 
-def _resolve_github_response(
+def _github_token(cred: dict[str, Any]) -> str:
+    return str(cred.get("token") or cred.get("accessToken") or cred.get("access_token") or "")
+
+
+def _github_auth_header(token: str) -> str:
+    """Build Authorization value: prefer Bearer; honor pre-prefixed tokens."""
+    t = token.strip()
+    lower = t.lower()
+    if lower.startswith("bearer ") or lower.startswith("token "):
+        return t
+    # Classic PATs (ghp_*) historically use the "token" scheme; OAuth /
+    # fine-grained tokens use Bearer. Both are accepted by the API.
+    if t.startswith("ghp_"):
+        return f"token {t}"
+    return f"Bearer {t}"
+
+
+def _build_github_request(
+    cred: dict[str, Any],
+    *,
+    operation: str,
+    owner: str,
+    repo: str,
+    issue_number: Any,
+    title: str,
+    body: str,
+    labels: list[str],
+    assignees: list[str],
+    state: str,
+) -> HttpRequestConfig | None:
+    """Build a real GitHub REST request for supported issue operations.
+
+    Returns ``None`` when the credential has no token or the operation
+    is not mapped to a real HTTP call (PR/repo ops fall through offline).
+    """
+    token = _github_token(cred)
+    if not token:
+        return None
+
+    headers = {
+        "Authorization": _github_auth_header(token),
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    base = f"{GITHUB_API_BASE}/repos/{owner}/{repo}"
+
+    if operation == "createIssue":
+        payload: dict[str, Any] = {"title": title or "Untitled"}
+        if body:
+            payload["body"] = body
+        if labels:
+            payload["labels"] = labels
+        if assignees:
+            payload["assignees"] = assignees
+        return HttpRequestConfig(
+            url=f"{base}/issues",
+            method="POST",
+            headers=headers,
+            body=payload,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "getIssue":
+        num = _coerce_str(issue_number).strip()
+        if not num:
+            return None
+        return HttpRequestConfig(
+            url=f"{base}/issues/{num}",
+            method="GET",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "updateIssue":
+        num = _coerce_str(issue_number).strip()
+        if not num:
+            return None
+        payload = {}
+        if title:
+            payload["title"] = title
+        if body:
+            payload["body"] = body
+        if state:
+            payload["state"] = state
+        if labels:
+            payload["labels"] = labels
+        if assignees:
+            payload["assignees"] = assignees
+        return HttpRequestConfig(
+            url=f"{base}/issues/{num}",
+            method="PATCH",
+            headers=headers,
+            body=payload,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    return None
+
+
+# ── Mock / credential resolution ──────────────────────────────────────
+
+
+async def _resolve_github_response(
     *,
     operation: str,
     owner: str,
     repo: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
     synth: Any,
+    issue_number: Any = None,
+    title: str = "",
+    body: str = "",
+    labels: list[str] | None = None,
+    assignees: list[str] | None = None,
+    state: str = "",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(response, source)`` for the current call.
 
     ``source`` is one of ``"github_response"``, ``"http_response"``,
-    ``"offline"``.
+    ``"github_api"``, ``"offline"``.
     """
     mocks = ctx.mocks or {}
     gmock = mocks.get("github_response")
@@ -438,9 +562,37 @@ def _resolve_github_response(
 
     hmock = mocks.get("http_response")
     if hmock is not None and isinstance(hmock, dict):
-        body = hmock.get("body")
-        if isinstance(body, dict):
-            return body, "http_response"
+        body_mock = hmock.get("body")
+        if isinstance(body_mock, dict):
+            return body_mock, "http_response"
+
+    cred = resolve_credential(node, ctx, "githubApi")
+    if cred:
+        cfg = _build_github_request(
+            cred,
+            operation=operation,
+            owner=owner,
+            repo=repo,
+            issue_number=issue_number,
+            title=title,
+            body=body,
+            labels=labels or [],
+            assignees=assignees or [],
+            state=state,
+        )
+        if cfg is not None:
+            logger.info(
+                "github real HTTP call operation=%s owner=%s repo=%s",
+                operation,
+                owner,
+                repo,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return resp.body, "github_api"
+            except Exception as exc:
+                logger.warning("github HTTP call failed: %s", exc)
 
     return synth(), "offline"
 
@@ -563,14 +715,21 @@ async def exec_github(
                 private=private,
             )
 
-        response, source = _resolve_github_response(
+        response, source = await _resolve_github_response(
             operation=operation,
             owner=owner,
             repo=repository,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
             synth=_synth,
+            issue_number=issue_number,
+            title=title,
+            body=body,
+            labels=labels,
+            assignees=assignees,
+            state=state,
         )
 
         # Build htmlUrl
@@ -588,7 +747,7 @@ async def exec_github(
             "htmlUrl": html_url,
             "source": "github",
         }
-        if source != "github_response":
+        if source not in ("github_response", "github_api"):
             payload["mockSource"] = source
 
         # Echo optional resolved fields

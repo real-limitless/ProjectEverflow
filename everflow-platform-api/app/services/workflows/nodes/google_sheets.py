@@ -18,7 +18,10 @@ v1 supports the three operations most commonly used in n8n templates:
   ``{spreadsheetId, updatedRange, updatedRows, updatedColumns,
   updatedCells, source: 'googleSheets'}``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a ``googleSheetsOAuth2Api`` credential is attached and no mock is
+present, real calls are made to the Google Sheets API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
 
 Parameters honored:
 
@@ -47,7 +50,10 @@ Behavior precedence:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the Sheets envelope.
-3. Offline synthetic response:
+3. If a ``googleSheetsOAuth2Api`` credential resolves (``accessToken`` /
+   ``token`` present), a real Sheets API call is made and the response
+   envelope is used.
+4. Offline synthetic response:
    - ``read``:   ``{range, majorDimension: 'ROWS',
      values: [['mock', 'row1', 'data'], ['mock', 'row2', 'data']]}``
    - ``append``: ``{updates: {spreadsheetId: sheetId, updatedRange:
@@ -61,11 +67,13 @@ Items with an empty resolved ``sheetId`` are skipped (no item emitted).
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -385,24 +393,104 @@ def _sheets_response_from_http_mock(
     return None
 
 
-# ── Response resolution ────────────────────────────────────────────────
+# ── Real HTTP request builders ─────────────────────────────────────────
 
 
-def _resolve_sheets_response(
+def _sheets_token(cred: dict[str, Any]) -> str:
+    return str(cred.get("accessToken") or cred.get("token") or cred.get("access_token") or "")
+
+
+def _build_sheets_request(
+    cred: dict[str, Any],
     *,
     operation: str,
     sheet_id: str,
     range_str: str,
     major_dimension: str,
+    data: list[list[Any]],
+) -> HttpRequestConfig | None:
+    """Build a real Google Sheets API request config.
+
+    Returns ``None`` when the credential has no access token.
+    """
+    token = _sheets_token(cred)
+    if not token:
+        return None
+    encoded_range = quote(range_str, safe="")
+    base = f"https://sheets.googleapis.com/v4/spreadsheets/{quote(sheet_id, safe='')}/values"
+    headers = {"Authorization": f"Bearer {token}"}
+    if operation == "read":
+        url = f"{base}/{encoded_range}"
+        if major_dimension and major_dimension != "ROWS":
+            url = f"{url}?majorDimension={quote(major_dimension, safe='')}"
+        return HttpRequestConfig(
+            url=url,
+            method="GET",
+            headers=headers,
+            body_mode="none",
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "append":
+        return HttpRequestConfig(
+            url=f"{base}/{encoded_range}:append?valueInputOption=USER_ENTERED",
+            method="POST",
+            headers={**headers, "Content-Type": "application/json"},
+            body={"values": data},
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+    # update
+    return HttpRequestConfig(
+        url=f"{base}/{encoded_range}?valueInputOption=USER_ENTERED",
+        method="PUT",
+        headers={**headers, "Content-Type": "application/json"},
+        body={"values": data},
+        body_mode="json",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _envelope_from_sheets_api(
+    data: dict[str, Any],
+    *,
+    operation: str,
+    sheet_id: str,
+    range_str: str,
+    major_dimension: str,
+) -> dict[str, Any]:
+    """Normalize a real Sheets API response into the internal envelope shape."""
+    return _normalize_sheets_envelope(
+        data,
+        operation=operation,
+        sheet_id=sheet_id,
+        range_str=range_str,
+        major_dimension=major_dimension,
+    )
+
+
+# ── Response resolution ────────────────────────────────────────────────
+
+
+async def _resolve_sheets_response(
+    *,
+    operation: str,
+    sheet_id: str,
+    range_str: str,
+    major_dimension: str,
+    data: list[list[Any]],
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"sheets_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"google_sheets_api"``, ``"offline"`` so downstream observers can
+    tell where the result came from.
     """
     mocks = ctx.mocks or {}
     smock = mocks.get("sheets_response")
@@ -442,6 +530,39 @@ def _resolve_sheets_response(
         )
         if env is not None:
             return env, "http_response"
+
+    cred = resolve_credential(node, ctx, "googleSheetsOAuth2Api")
+    if cred:
+        cfg = _build_sheets_request(
+            cred,
+            operation=operation,
+            sheet_id=sheet_id,
+            range_str=range_str,
+            major_dimension=major_dimension,
+            data=data,
+        )
+        if cfg is not None:
+            logger.info(
+                "googleSheets real HTTP call op=%s sheet=%s range=%s",
+                operation,
+                sheet_id,
+                range_str,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_sheets_api(
+                            resp.body,
+                            operation=operation,
+                            sheet_id=sheet_id,
+                            range_str=range_str,
+                            major_dimension=major_dimension,
+                        ),
+                        "google_sheets_api",
+                    )
+            except Exception as exc:
+                logger.warning("googleSheets HTTP call failed: %s", exc)
 
     if operation == "read":
         return _synthesize_read_response(range_str, major_dimension), "offline"
@@ -549,13 +670,16 @@ async def exec_google_sheets(
             )
             continue
 
-        envelope, source = _resolve_sheets_response(
+        data = _resolve_data(params, item, ectx) if operation != "read" else []
+        envelope, source = await _resolve_sheets_response(
             operation=operation,
             sheet_id=sheet_id,
             range_str=range_str,
             major_dimension=major_dimension,
+            data=data,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
         )
 
@@ -573,7 +697,6 @@ async def exec_google_sheets(
             )
             continue
 
-        data = _resolve_data(params, item, ectx)
         if operation == "append":
             payload = _build_append_payload(
                 envelope=envelope,
@@ -637,7 +760,7 @@ def _build_read_items(
             "dataMode": data_mode,
             "source": "googleSheets",
         }
-        if source != "sheets_response":
+        if source not in ("sheets_response", "google_sheets_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -655,7 +778,7 @@ def _build_read_items(
             "dataMode": data_mode,
             "source": "googleSheets",
         }
-        if source != "sheets_response":
+        if source not in ("sheets_response", "google_sheets_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -689,7 +812,7 @@ def _build_append_payload(
         "updatedColumns": updates.get("updatedColumns", 0),
         "source": "googleSheets",
     }
-    if source != "sheets_response":
+    if source not in ("sheets_response", "google_sheets_api"):
         payload["mockSource"] = source
     return payload
 
@@ -728,7 +851,7 @@ def _build_update_payload(
     }
     if payload["updatedRows"] == 0:
         payload["updatedRows"] = 1
-    if source != "sheets_response":
+    if source not in ("sheets_response", "google_sheets_api"):
         payload["mockSource"] = source
     return payload
 
