@@ -18,11 +18,16 @@ from app.services.workflows.nodes import (
     agent_tools,
     ai_memory,
     ai_transform,
+    aws,
     binary,
     core,
+    crm,
     data_io,
+    data_platforms,
     devops,
     discord,
+    embeddings_extra,
+    ecommerce,
     email_extra,
     facebook,
     files,
@@ -43,6 +48,7 @@ from app.services.workflows.nodes import (
     llm_agent,
     mcp_trigger,
     messaging_extra,
+    messaging_infra,
     microsoft,
     microsoft_extra,
     mongodb,
@@ -63,12 +69,14 @@ from app.services.workflows.nodes import (
     whatsapp,
     wordpress,
     youtube,
+    ai_extras,
     transforms,
     vector_store_in_memory,
     vector_store_pinecone,
     vector_store_pgvector,
     vector_store_qdrant,
     vector_store_supabase,
+    vector_store_extra,
 )
 from app.services.workflows.registry import (
     NodeCategory,
@@ -155,6 +163,12 @@ _d(
     "trigger",
     telegram.exec_telegram_trigger,
     description="Telegram Trigger — emit one item per received Telegram update via a configured webhook (mockable via ctx.mocks['telegram_update'] / 'trigger_payload'; offline fallback synthesizes a {update_id, message:{...}} payload).",
+)
+_d(
+    "n8n-nodes-base.slackTrigger",
+    "trigger",
+    slack.exec_slack_trigger,
+    description="Slack Trigger — emit one item per received Slack Events API payload (mockable via ctx.mocks['slack_event'] / 'trigger_payload'; offline fallback synthesizes a {type, channel, user, text, ts, event_ts} payload). Honors parameters.event (default 'message').",
 )
 _d(
     "n8n-nodes-base.whatsAppTrigger",
@@ -1196,3 +1210,83 @@ _d("n8n-nodes-base.microsoftSharePoint", "action", microsoft_extra.exec_microsof
 _d("n8n-nodes-base.microsoftSql", "action", microsoft_extra.exec_microsoft_sql, description="Microsoft SQL — execute SQL queries.")
 _d("n8n-nodes-base.microsoftEntra", "action", microsoft_extra.exec_microsoft_entra, description="Microsoft Entra — Azure AD user/group operations.")
 _d("n8n-nodes-base.microsoftToDo", "action", microsoft_extra.exec_microsoft_todo, description="Microsoft To Do — task operations.")
+
+# ── CRM nodes (List B) ──────────────────────────────────────────────
+_d("n8n-nodes-base.salesforce", "action", crm.exec_salesforce, description="Salesforce — CRM record operations.")
+_d("n8n-nodes-base.pipedrive", "action", crm.exec_pipedrive, description="Pipedrive — deal/contact operations.")
+_d("n8n-nodes-base.zendesk", "action", crm.exec_zendesk, description="Zendesk — ticket operations.")
+_d("n8n-nodes-base.zohoCrm", "action", crm.exec_zoho_crm, description="Zoho CRM — record operations.")
+_d("n8n-nodes-base.highLevel", "action", crm.exec_highlevel, description="HighLevel — contact operations.")
+_d("n8n-nodes-base.odoo", "action", crm.exec_odoo, description="Odoo — ERP record operations.")
+_d("n8n-nodes-base.hubspotTrigger", "trigger", crm.exec_hubspot_trigger, description="HubSpot Trigger — fires on HubSpot events.")
+
+# ── E-commerce / finance nodes (List B) ─────────────────────────────
+_d("n8n-nodes-base.wooCommerce", "action", ecommerce.exec_woocommerce, description="WooCommerce — product/order operations.")
+_d("n8n-nodes-base.shopify", "action", ecommerce.exec_shopify, description="Shopify — product/order operations.")
+_d("n8n-nodes-base.stripe", "action", ecommerce.exec_stripe, description="Stripe — payment operations.")
+_d("n8n-nodes-base.stripeTrigger", "trigger", ecommerce.exec_stripe_trigger, description="Stripe Trigger — fires on Stripe events.")
+_d("n8n-nodes-base.quickbooks", "action", ecommerce.exec_quickbooks, description="QuickBooks — accounting operations.")
+_d("n8n-nodes-base.xero", "action", ecommerce.exec_xero, description="Xero — accounting operations.")
+_d("n8n-nodes-base.payPal", "action", ecommerce.exec_paypal, description="PayPal — payment operations.")
+_d("n8n-nodes-base.pagerDuty", "action", ecommerce.exec_pagerduty, description="PagerDuty — incident operations.")
+
+# ── Data platform nodes (List B) ────────────────────────────────────
+_d("n8n-nodes-base.baserow", "action", data_platforms.exec_baserow, description="Baserow — no-code database row operations.")
+_d("n8n-nodes-base.nocoDb", "action", data_platforms.exec_nocodb, description="NocoDB — no-code database row operations.")
+_d("n8n-nodes-base.dropbox", "action", data_platforms.exec_dropbox, description="Dropbox — file operations.")
+_d("n8n-nodes-base.nextCloud", "action", data_platforms.exec_nextcloud, description="Nextcloud — file operations.")
+
+# ── AWS / cloud infra nodes (List B) ────────────────────────────────
+_d("n8n-nodes-base.awsS3", "action", aws.exec_aws_s3, description="AWS S3 — object storage operations.")
+_d("n8n-nodes-base.awsLambda", "action", aws.exec_aws_lambda, description="AWS Lambda — invoke functions.")
+_d("n8n-nodes-base.awsSes", "action", aws.exec_aws_ses, description="AWS SES — send email.")
+_d("n8n-nodes-base.awsSqs", "action", aws.exec_aws_sqs, description="AWS SQS — queue operations.")
+_d("n8n-nodes-base.awsSns", "action", aws.exec_aws_sns, description="AWS SNS — publish notifications.")
+_d("n8n-nodes-base.snowflake", "action", aws.exec_snowflake, description="Snowflake — SQL query operations.")
+_d("n8n-nodes-base.elasticsearch", "action", aws.exec_elasticsearch, description="Elasticsearch — index/search operations.")
+
+# ── Messaging infrastructure nodes (List B) ─────────────────────────
+_d("n8n-nodes-base.mqtt", "action", messaging_infra.exec_mqtt, description="MQTT — publish/subscribe messages.")
+_d("n8n-nodes-base.kafka", "action", messaging_infra.exec_kafka, description="Kafka — produce/consume messages.")
+_d("n8n-nodes-base.rabbitmq", "action", messaging_infra.exec_rabbitmq, description="RabbitMQ — publish/consume messages.")
+_d("n8n-nodes-base.amqp", "action", messaging_infra.exec_amqp, description="AMQP — publish/consume messages.")
+_d("n8n-nodes-base.redisTrigger", "trigger", messaging_infra.exec_redis_trigger, description="Redis Trigger — fires on Redis keyspace events.")
+_d("n8n-nodes-base.postgresTrigger", "trigger", messaging_infra.exec_postgres_trigger, description="Postgres Trigger — fires on database row changes.")
+
+# ── AI extras / agent tools / CMS / misc (List B #196-200) ──────────
+_d("@n8n/n8n-nodes-langchain.code", "ai", ai_extras.exec_langchain_code, description="LangChain Code — fenced preview of a JS/Python snippet (never executed).")
+_d("@n8n/n8n-nodes-langchain.modelSelector", "ai", ai_extras.exec_model_selector, description="Model Selector — pass-through that records the selected model.")
+_d("@n8n/n8n-nodes-langchain.guardrails", "ai", ai_extras.exec_guardrails, description="Guardrails — validate/transform LLM output.")
+_d("@n8n/n8n-nodes-langchain.memoryPostgresChat", "ai", ai_extras.exec_memory_postgres_chat, description="Memory Postgres Chat — pass-through that records memory config.")
+_d("@n8n/n8n-nodes-langchain.memoryRedisChat", "ai", ai_extras.exec_memory_redis_chat, description="Memory Redis Chat — pass-through that records memory config.")
+_d("@n8n/n8n-nodes-langchain.memoryMongoDbChat", "ai", ai_extras.exec_memory_mongodb_chat, description="Memory MongoDb Chat — pass-through that records memory config.")
+_d("@n8n/n8n-nodes-langchain.memoryManager", "ai", ai_extras.exec_memory_manager, description="Memory Manager — manage conversation memory.")
+_d("@n8n/n8n-nodes-langchain.retrieverVectorStore", "ai", ai_extras.exec_retriever_vector_store, description="Retriever Vector Store — retrieve relevant docs.")
+_d("@n8n/n8n-nodes-langchain.outputParserItemList", "ai", ai_extras.exec_output_parser_item_list, description="Output Parser Item List — parse LLM output into items.")
+_d("@n8n/n8n-nodes-langchain.outputParserAutofixing", "ai", ai_extras.exec_output_parser_autofixing, description="Output Parser Autofixing — parse + auto-fix LLM output.")
+_d("@n8n/n8n-nodes-langchain.toolSearXng", "ai", ai_extras.exec_tool_searxng, description="SearXNG search tool (agent-callable).")
+_d("@n8n/n8n-nodes-langchain.toolWolframAlpha", "ai", ai_extras.exec_tool_wolfram_alpha, description="Wolfram Alpha tool (agent-callable).")
+_d("n8n-nodes-base.perplexity", "action", ai_extras.exec_perplexity, description="Perplexity AI — online LLM search.")
+_d("n8n-nodes-base.jinaAi", "action", ai_extras.exec_jina_ai, description="Jina AI — embeddings/reranker/reader.")
+_d("n8n-nodes-base.mistralAi", "action", ai_extras.exec_mistral_ai, description="Mistral AI — LLM chat.")
+_d("n8n-nodes-base.webflow", "action", ai_extras.exec_webflow, description="Webflow — CMS item operations.")
+_d("n8n-nodes-base.ghost", "action", ai_extras.exec_ghost, description="Ghost — CMS post operations.")
+_d("n8n-nodes-base.strapi", "action", ai_extras.exec_strapi, description="Strapi — CMS entry operations.")
+_d("n8n-nodes-base.contentful", "action", ai_extras.exec_contentful, description="Contentful — CMS entry operations.")
+_d("n8n-nodes-base.homeAssistant", "action", ai_extras.exec_home_assistant, description="Home Assistant — smart home operations.")
+_d("n8n-nodes-base.spotify", "action", ai_extras.exec_spotify, description="Spotify — music operations.")
+_d("n8n-nodes-base.zoom", "action", ai_extras.exec_zoom, description="Zoom — meeting operations.")
+_d("n8n-nodes-base.typeformTrigger", "trigger", ai_extras.exec_typeform_trigger, description="Typeform Trigger — fires on form submission.")
+_d("n8n-nodes-base.calendlyTrigger", "trigger", ai_extras.exec_calendly_trigger, description="Calendly Trigger — fires on event scheduled.")
+
+# ── Embeddings extras (200n) ────────────────────────────────────────
+_d("@n8n/n8n-nodes-langchain.embeddingsCohere", "ai", embeddings_extra.exec_embeddings_cohere, description="Cohere Embeddings — embed text via Cohere API.")
+_d("@n8n/n8n-nodes-langchain.embeddingsAzureOpenAi", "ai", embeddings_extra.exec_embeddings_azure_openai, description="Azure OpenAI Embeddings — embed text via Azure OpenAI.")
+_d("@n8n/n8n-nodes-langchain.embeddingsHuggingFace", "ai", embeddings_extra.exec_embeddings_huggingface, description="HuggingFace Embeddings — embed text via HF inference API.")
+_d("@n8n/n8n-nodes-langchain.embeddingsMistral", "ai", embeddings_extra.exec_embeddings_mistral, description="Mistral Embeddings — embed text via Mistral AI.")
+
+# ── Vector store extras (200o) ─────────────────────────────────────
+_d("@n8n/n8n-nodes-langchain.vectorStoreMilvus", "ai", vector_store_extra.exec_vector_store_milvus, description="Milvus Vector Store — insert/load/retrieve documents.")
+_d("@n8n/n8n-nodes-langchain.vectorStoreWeaviate", "ai", vector_store_extra.exec_vector_store_weaviate, description="Weaviate Vector Store — insert/load/retrieve documents.")
+_d("@n8n/n8n-nodes-langchain.vectorStoreRedis", "ai", vector_store_extra.exec_vector_store_redis, description="Redis Vector Store — insert/load/retrieve documents.")
+_d("@n8n/n8n-nodes-langchain.vectorStoreMongoDb", "ai", vector_store_extra.exec_vector_store_mongodb, description="MongoDB Atlas Vector Store — insert/load/retrieve documents.")

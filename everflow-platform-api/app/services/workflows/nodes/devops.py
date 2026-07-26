@@ -537,7 +537,7 @@ async def _exec_trigger(
     for f in config.fields:
         base[f.field] = _extract_trigger_field(payload, f)
     base["source"] = config.source
-    if source != "offline":
+    if source not in ("offline", config.mock_key):
         base["mockSource"] = source
 
     if items:

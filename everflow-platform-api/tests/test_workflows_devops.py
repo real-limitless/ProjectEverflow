@@ -162,7 +162,7 @@ async def test_mock_dict_used_verbatim(
     p = out[0].json
     assert p[id_field] == "X1"
     assert p[name_field] == "N"
-    assert p["operation"] == "get"
+    assert p["operation"] == default_op
     assert p["source"] == source
     assert "mockSource" not in p
 
@@ -194,13 +194,13 @@ async def test_mock_callable_receives_args(
         return {id_field: "C1", name_field: "from callable"}
 
     node = _node(
-        {"operation": "get", "hint": 1}, type_=type_, name=source.title()
+        {"operation": default_op, "hint": 1}, type_=type_, name=source.title()
     )
     ctx = _ctx({mock_key: _mock})
     item = ExecutionItem(json={"k": 1})
     out = _out_items(await fn(node, [item], ctx=ctx))
 
-    assert captured["operation"] == "get"
+    assert captured["operation"] == default_op
     assert captured["params"]["hint"] == 1
     assert captured["item"] is item
     assert captured["ctx"] is ctx
@@ -597,7 +597,7 @@ async def test_trigger_offline_valid_output(
         assert f in p
         assert p[f] is not None
     assert p["source"] == source
-    assert p["mockSource"] == "offline"
+    assert "mockSource" not in p
 
 
 # ── Trigger: emits exactly one item ──────────────────────────────────
