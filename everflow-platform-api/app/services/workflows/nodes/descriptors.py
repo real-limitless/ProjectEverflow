@@ -18,9 +18,12 @@ from app.services.workflows.nodes import (
     agent_tools,
     ai_memory,
     ai_transform,
+    binary,
     core,
     data_io,
+    devops,
     discord,
+    email_extra,
     facebook,
     files,
     flow,
@@ -31,6 +34,7 @@ from app.services.workflows.nodes import (
     google_drive,
     google_drive_trigger,
     google_calendar,
+    google_extra,
     google_sheets,
     http,
     hubspot,
@@ -38,7 +42,9 @@ from app.services.workflows.nodes import (
     jira,
     llm_agent,
     mcp_trigger,
+    messaging_extra,
     microsoft,
+    microsoft_extra,
     mongodb,
     mysql,
     notion,
@@ -51,7 +57,9 @@ from app.services.workflows.nodes import (
     supabase,
     telegram,
     text_ai,
-twilio,
+    trackers,
+    twilio,
+    utility_extra,
     whatsapp,
     wordpress,
     youtube,
@@ -147,12 +155,6 @@ _d(
     "trigger",
     telegram.exec_telegram_trigger,
     description="Telegram Trigger — emit one item per received Telegram update via a configured webhook (mockable via ctx.mocks['telegram_update'] / 'trigger_payload'; offline fallback synthesizes a {update_id, message:{...}} payload).",
-)
-_d(
-    "n8n-nodes-base.slackTrigger",
-    "trigger",
-    slack.exec_slack_trigger,
-    description="Slack Trigger — emit one item per received Slack Events API payload (mockable via ctx.mocks['slack_event'] / 'trigger_payload'; offline fallback synthesizes a {type, channel, user, text, ts, event_ts} payload). Honors parameters.event (default 'message').",
 )
 _d(
     "n8n-nodes-base.whatsAppTrigger",
@@ -864,3 +866,333 @@ _d(
     agent_tools.exec_agent_serpapi,
     description="Agent SerpApi — search returning 5 results (offline stub). Mockable via ctx.mocks['serp_output'] or ctx.mocks['serpapi_output'].",
 )
+
+# ── Binary / file utility nodes (List B) ────────────────────────────
+_d(
+    "n8n-nodes-base.itemLists",
+    "transform",
+    binary.exec_item_lists,
+    description="Item Lists (legacy) — split/aggregate/flatten item collections.",
+)
+_d(
+    "n8n-nodes-base.moveBinaryData",
+    "transform",
+    binary.exec_move_binary_data,
+    description="Move Binary Data — convert between JSON and binary representations.",
+)
+_d(
+    "n8n-nodes-base.readBinaryFile",
+    "transform",
+    binary.exec_read_binary_file,
+    description="Read Binary File — read a single file from disk into binary data.",
+)
+_d(
+    "n8n-nodes-base.readBinaryFiles",
+    "transform",
+    binary.exec_read_binary_files,
+    description="Read Binary Files — read multiple files from a directory into binary data.",
+)
+_d(
+    "n8n-nodes-base.writeBinaryFile",
+    "transform",
+    binary.exec_write_binary_file,
+    description="Write Binary File — write binary data to a file on disk.",
+)
+_d(
+    "n8n-nodes-base.spreadsheetFile",
+    "transform",
+    binary.exec_spreadsheet_file,
+    description="Spreadsheet File — read/write CSV and XLSX spreadsheet files.",
+)
+_d(
+    "n8n-nodes-base.readPDF",
+    "transform",
+    binary.exec_read_pdf,
+    description="Read PDF — extract text from a PDF file.",
+)
+
+# ── Utility / misc nodes (List B) ───────────────────────────────────
+_d(
+    "n8n-nodes-base.debugHelper",
+    "transform",
+    utility_extra.exec_debug_helper,
+    description="Debug Helper — pass-through with logging.",
+)
+_d(
+    "n8n-nodes-base.executeCommand",
+    "transform",
+    utility_extra.exec_execute_command,
+    description="Execute Command — run a shell command (mock-first, never executed).",
+)
+_d(
+    "n8n-nodes-base.n8n",
+    "transform",
+    utility_extra.exec_n8n,
+    description="n8n (meta API) — get workflow/execution metadata.",
+)
+_d(
+    "n8n-nodes-base.evaluation",
+    "transform",
+    utility_extra.exec_evaluation,
+    description="Evaluation — evaluate LLM output against expected output.",
+)
+_d(
+    "n8n-nodes-base.evaluationTrigger",
+    "trigger",
+    utility_extra.exec_evaluation_trigger,
+    description="Evaluation Trigger — emit evaluation test cases.",
+)
+_d(
+    "n8n-nodes-base.activationTrigger",
+    "trigger",
+    utility_extra.exec_activation_trigger,
+    description="Activation Trigger — fires when workflow is activated.",
+)
+_d(
+    "n8n-nodes-base.n8nTrigger",
+    "trigger",
+    utility_extra.exec_n8n_trigger,
+    description="n8n Trigger — generic n8n system trigger.",
+)
+_d(
+    "n8n-nodes-base.form",
+    "trigger",
+    utility_extra.exec_form,
+    description="n8n Form — form page trigger emitting submissions.",
+)
+_d(
+    "n8n-nodes-base.totp",
+    "transform",
+    utility_extra.exec_totp,
+    description="TOTP — generate/validate time-based one-time passwords.",
+)
+_d(
+    "n8n-nodes-base.ldap",
+    "transform",
+    utility_extra.exec_ldap,
+    description="LDAP — search/add/modify/delete LDAP entries.",
+)
+_d(
+    "n8n-nodes-base.iCalendar",
+    "transform",
+    utility_extra.exec_icalendar,
+    description="iCalendar — parse .ics calendar data into events.",
+)
+_d(
+    "n8n-nodes-base.quickChart",
+    "transform",
+    utility_extra.exec_quick_chart,
+    description="Quick Chart — generate chart URLs/images.",
+)
+_d(
+    "n8n-nodes-base.hackerNews",
+    "transform",
+    utility_extra.exec_hacker_news,
+    description="Hacker News — fetch HN stories.",
+)
+
+# ── Email service nodes (List B) ────────────────────────────────────
+_d(
+    "n8n-nodes-base.sendGrid",
+    "action",
+    email_extra.exec_sendgrid,
+    description="SendGrid — send email via SendGrid API.",
+)
+_d(
+    "n8n-nodes-base.sendInBlue",
+    "action",
+    email_extra.exec_brevo,
+    description="Brevo (Sendinblue) — send email via Brevo API.",
+)
+_d(
+    "n8n-nodes-base.mailgun",
+    "action",
+    email_extra.exec_mailgun,
+    description="Mailgun — send email via Mailgun API.",
+)
+_d(
+    "n8n-nodes-base.mailchimp",
+    "action",
+    email_extra.exec_mailchimp,
+    description="Mailchimp — newsletter / list member operations.",
+)
+_d(
+    "n8n-nodes-base.mailjet",
+    "action",
+    email_extra.exec_mailjet,
+    description="Mailjet — send email via Mailjet API.",
+)
+_d(
+    "n8n-nodes-base.postmarkTrigger",
+    "trigger",
+    email_extra.exec_postmark_trigger,
+    description="Postmark Trigger — fires on inbound Postmark email.",
+)
+_d(
+    "n8n-nodes-base.emailReadImap",
+    "trigger",
+    email_extra.exec_email_read_imap,
+    description="Email IMAP Trigger — polls an IMAP mailbox for new messages.",
+)
+
+# ── Messaging / notification nodes (List B) ─────────────────────────
+_d(
+    "n8n-nodes-base.mattermost",
+    "action",
+    messaging_extra.exec_mattermost,
+    description="Mattermost — send messages to Mattermost channels.",
+)
+_d(
+    "n8n-nodes-base.matrix",
+    "action",
+    messaging_extra.exec_matrix,
+    description="Matrix — send messages to Matrix rooms.",
+)
+_d(
+    "n8n-nodes-base.rocketchat",
+    "action",
+    messaging_extra.exec_rocket_chat,
+    description="Rocket.Chat — send messages to Rocket.Chat channels.",
+)
+_d(
+    "n8n-nodes-base.gotify",
+    "action",
+    messaging_extra.exec_gotify,
+    description="Gotify — send push notifications via Gotify.",
+)
+_d(
+    "n8n-nodes-base.pushover",
+    "action",
+    messaging_extra.exec_pushover,
+    description="Pushover — send push notifications via Pushover.",
+)
+_d(
+    "n8n-nodes-base.pushbullet",
+    "action",
+    messaging_extra.exec_pushbullet,
+    description="Pushbullet — send pushes via Pushbullet.",
+)
+_d(
+    "n8n-nodes-base.messageBird",
+    "action",
+    messaging_extra.exec_message_bird,
+    description="MessageBird — send SMS/messages via MessageBird.",
+)
+_d(
+    "n8n-nodes-base.sms77",
+    "action",
+    messaging_extra.exec_sms77,
+    description="SMS77 — send SMS via SMS77.",
+)
+
+# ── Google extra nodes (List B) ─────────────────────────────────────
+_d(
+    "n8n-nodes-base.googleAnalytics",
+    "action",
+    google_extra.exec_google_analytics,
+    description="Google Analytics — get GA reports.",
+)
+_d(
+    "n8n-nodes-base.googleSlides",
+    "action",
+    google_extra.exec_google_slides,
+    description="Google Slides — presentation operations.",
+)
+_d(
+    "n8n-nodes-base.googleTasks",
+    "action",
+    google_extra.exec_google_tasks,
+    description="Google Tasks — task operations.",
+)
+_d(
+    "n8n-nodes-base.googleContacts",
+    "action",
+    google_extra.exec_google_contacts,
+    description="Google Contacts — contact operations.",
+)
+_d(
+    "n8n-nodes-base.googleTranslate",
+    "action",
+    google_extra.exec_google_translate,
+    description="Google Translate — translate text.",
+)
+_d(
+    "n8n-nodes-base.googleAds",
+    "action",
+    google_extra.exec_google_ads,
+    description="Google Ads — ads query/report operations.",
+)
+_d(
+    "n8n-nodes-base.googleBigQuery",
+    "action",
+    google_extra.exec_google_bigquery,
+    description="Google BigQuery — query/insert/table operations.",
+)
+_d(
+    "n8n-nodes-base.googleCloudStorage",
+    "action",
+    google_extra.exec_google_cloud_storage,
+    description="Google Cloud Storage — GCS file operations.",
+)
+_d(
+    "n8n-nodes-base.googleBusinessProfile",
+    "action",
+    google_extra.exec_google_business_profile,
+    description="Google Business Profile — GBP operations.",
+)
+_d(
+    "n8n-nodes-base.googleChat",
+    "action",
+    google_extra.exec_google_chat,
+    description="Google Chat — chat message/space operations.",
+)
+_d(
+    "n8n-nodes-base.gSuiteAdmin",
+    "action",
+    google_extra.exec_g_suite_admin,
+    description="G Suite Admin — admin directory operations.",
+)
+
+# ── Project tracker nodes (List B) ──────────────────────────────────
+_d(
+    "n8n-nodes-base.clickUp",
+    "action",
+    trackers.exec_clickup,
+    description="ClickUp — task operations.",
+)
+_d("n8n-nodes-base.trello", "action", trackers.exec_trello, description="Trello — card operations.")
+_d("n8n-nodes-base.asana", "action", trackers.exec_asana, description="Asana — task operations.")
+_d(
+    "n8n-nodes-base.mondayCom",
+    "action",
+    trackers.exec_monday,
+    description="Monday.com — item operations.",
+)
+_d(
+    "n8n-nodes-base.todoist",
+    "action",
+    trackers.exec_todoist,
+    description="Todoist — task operations.",
+)
+_d(
+    "n8n-nodes-base.linear",
+    "action",
+    trackers.exec_linear,
+    description="Linear — issue operations.",
+)
+
+# ── DevOps integration nodes (List B) ───────────────────────────────
+_d("n8n-nodes-base.gitlab", "action", devops.exec_gitlab, description="GitLab — issue/MR operations.")
+_d("n8n-nodes-base.gitlabTrigger", "trigger", devops.exec_gitlab_trigger, description="GitLab Trigger — emit one item per received GitLab webhook event (mockable via ctx.mocks['gitlab_trigger_payload'] / 'trigger_payload'; offline fallback synthesizes a {event, projectId, objectKind, source: 'gitlab'} payload).")
+
+_d("n8n-nodes-base.bitbucketTrigger", "trigger", devops.exec_bitbucket_trigger, description="Bitbucket Trigger — emit one item per received Bitbucket webhook event (mockable via ctx.mocks['bitbucket_trigger_payload'] / 'trigger_payload'; offline fallback synthesizes a {event, repository, actor, source: 'bitbucket'} payload).")
+_d("n8n-nodes-base.jenkins", "action", devops.exec_jenkins, description="Jenkins — job/build operations.")
+_d("n8n-nodes-base.circleCi", "action", devops.exec_circleci, description="CircleCI — pipeline/workflow/job operations.")
+
+# ── Microsoft extra nodes (List B) ───────────────────────────────────
+_d("n8n-nodes-base.microsoftExcel", "action", microsoft_extra.exec_microsoft_excel, description="Microsoft Excel — read/append/update/delete Excel rows.")
+_d("n8n-nodes-base.microsoftOneDrive", "action", microsoft_extra.exec_microsoft_onedrive, description="Microsoft OneDrive — file operations.")
+_d("n8n-nodes-base.microsoftSharePoint", "action", microsoft_extra.exec_microsoft_sharepoint, description="Microsoft SharePoint — file/list operations.")
+_d("n8n-nodes-base.microsoftSql", "action", microsoft_extra.exec_microsoft_sql, description="Microsoft SQL — execute SQL queries.")
+_d("n8n-nodes-base.microsoftEntra", "action", microsoft_extra.exec_microsoft_entra, description="Microsoft Entra — Azure AD user/group operations.")
+_d("n8n-nodes-base.microsoftToDo", "action", microsoft_extra.exec_microsoft_todo, description="Microsoft To Do — task operations.")
