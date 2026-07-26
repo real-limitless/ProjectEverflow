@@ -13,7 +13,11 @@ v1 covers the operations most commonly used in n8n templates:
   ``{postId, title, text, subreddit, kind, author, createdAt, permalink,
   source: 'reddit'}``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a provider credential is attached (``twitterApi`` /
+``twitterOAuth2Api`` / ``linkedInApi`` / ``linkedInOAuth2Api`` /
+``redditApi`` / ``redditOAuth2Api``) and no mock is present, real calls
+are made to the provider API via :func:`execute_http_request`. Otherwise
+the executor is mock-driven with an offline synthetic fallback.
 
 Parameters honored by ``twitter``:
 
@@ -51,7 +55,9 @@ Behavior precedence (all three nodes):
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is used as the
    response.
-3. Offline synthetic response.
+3. If the provider credential resolves, a real API call is made and the
+   parsed response is used (tagged ``<provider>_api``).
+4. Offline synthetic response.
 
 Items with an empty resolved ``text`` (twitter tweet/reply, linkedIn) or
 empty ``title``/``subreddit`` (reddit) are skipped (no item emitted).
@@ -59,6 +65,7 @@ empty ``title``/``subreddit`` (reddit) are skipped (no item emitted).
 
 from __future__ import annotations
 
+import json
 import logging
 import random
 import time
@@ -67,7 +74,9 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -135,6 +144,10 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
+def _json_body(value: Any) -> str:
+    return json.dumps(value, default=str)
+
+
 def _resolve_mock(
     ctx: "EngineContext",
     mock_key: str,
@@ -162,8 +175,6 @@ def _http_fallback(ctx: "EngineContext") -> tuple[Any, str]:
     if isinstance(http, dict):
         body = http.get("body", http)
         if isinstance(body, str):
-            import json
-
             try:
                 body = json.loads(body)
             except (ValueError, TypeError):
@@ -192,6 +203,149 @@ def _synthesize_twitter(
         "operation": operation,
         "source": "twitter",
     }
+
+
+def _build_twitter_request(
+    cred: dict[str, Any],
+    *,
+    operation: str,
+    text: str,
+    tweet_id: str,
+) -> HttpRequestConfig | None:
+    """Build a real X (Twitter) API v2 request config.
+
+    Supports OAuth 2.0 user-context bearer tokens (``accessToken``).
+    Returns ``None`` when no bearer token is present.
+    """
+    bearer = str(
+        cred.get("accessToken")
+        or cred.get("access_token")
+        or cred.get("token")
+        or cred.get("bearerToken")
+        or ""
+    )
+    if not bearer:
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {bearer}",
+        "Content-Type": "application/json",
+    }
+
+    if operation == "tweet":
+        if not text:
+            return None
+        return HttpRequestConfig(
+            url="https://api.twitter.com/2/tweets",
+            method="POST",
+            headers=headers,
+            body=_json_body({"text": text}),
+            body_mode="raw",
+            timeout=30.0,
+            response_mode="json",
+        )
+
+    if operation == "reply":
+        if not text or not tweet_id:
+            return None
+        return HttpRequestConfig(
+            url="https://api.twitter.com/2/tweets",
+            method="POST",
+            headers=headers,
+            body=_json_body(
+                {"text": text, "reply": {"in_reply_to_tweet_id": str(tweet_id)}}
+            ),
+            body_mode="raw",
+            timeout=30.0,
+            response_mode="json",
+        )
+
+    if operation == "retweet":
+        if not tweet_id:
+            return None
+        return HttpRequestConfig(
+            url=f"https://api.twitter.com/2/tweets/{tweet_id}/retweets",
+            method="POST",
+            headers=headers,
+            body=_json_body({}),
+            body_mode="raw",
+            timeout=30.0,
+            response_mode="json",
+        )
+
+    return None
+
+
+def _envelope_from_twitter_api(
+    data: dict[str, Any], text: str
+) -> dict[str, Any]:
+    """Convert a real X (Twitter) API v2 response to the internal envelope."""
+    if not isinstance(data, dict):
+        return {}
+    inner = data.get("data")
+    if not isinstance(inner, dict):
+        inner = data
+    return {
+        "data": {
+            "id": inner.get("id"),
+            "text": inner.get("text", text),
+            "author_id": inner.get("author_id"),
+            "created_at": inner.get("created_at"),
+        }
+    }
+
+
+async def _resolve_twitter_response(
+    *,
+    operation: str,
+    text: str,
+    tweet_id_param: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+    node: "ExecNode",
+    ctx: "EngineContext",
+) -> tuple[Any, str]:
+    """Return ``(envelope, source)`` for the current call.
+
+    ``source`` is one of ``"twitter_response"``, ``"http_response"``,
+    ``"twitter_api"``, ``"offline"``.
+    """
+    mock_val, src = _resolve_mock(
+        ctx, "twitter_response", operation, text, params, item, ctx
+    )
+    if mock_val is None:
+        mock_val, src = _http_fallback(ctx)
+    if mock_val is not None:
+        return mock_val, src or "twitter_response"
+
+    cred = resolve_credential(node, ctx, "twitterApi")
+    if not cred:
+        cred = resolve_credential(node, ctx, "twitterOAuth2Api")
+    if cred:
+        cfg = _build_twitter_request(
+            cred,
+            operation=operation,
+            text=text,
+            tweet_id=tweet_id_param,
+        )
+        if cfg is not None:
+            logger.info(
+                "twitter real HTTP call op=%s text_len=%s",
+                operation,
+                len(text),
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_twitter_api(resp.body, text),
+                        "twitter_api",
+                    )
+            except Exception as exc:
+                logger.warning("twitter HTTP call failed: %s", exc)
+
+    tweet_id = str(random.randint(10**18, 10**19 - 1))
+    return _synthesize_twitter(operation, text, tweet_id), "offline"
 
 
 async def exec_twitter(
@@ -236,14 +390,15 @@ async def exec_twitter(
         author_id = "mock_user_id"
         created_at = _now_iso()
 
-        mock_val, src = _resolve_mock(
-            ctx, "twitter_response", operation, text, params, item, ctx
+        mock_val, src = await _resolve_twitter_response(
+            operation=operation,
+            text=text,
+            tweet_id_param=tweet_id_param,
+            params=params,
+            item=item,
+            node=node,
+            ctx=ctx,
         )
-        if mock_val is None:
-            mock_val, src = _http_fallback(ctx)
-        if mock_val is None:
-            mock_val = _synthesize_twitter(operation, text, tweet_id)
-            src = "offline"
 
         data = (
             mock_val.get("data", mock_val)
@@ -261,7 +416,7 @@ async def exec_twitter(
             "createdAt": data.get("created_at", created_at),
             "source": "twitter",
         }
-        if src and src != "twitter_response":
+        if src and src not in ("twitter_response", "twitter_api"):
             payload["mockSource"] = src
         if tweet_id_param and operation in ("retweet", "reply"):
             payload["replyToId"] = tweet_id_param
@@ -297,6 +452,133 @@ def _synthesize_linkedin(
         "created_at": _now_iso(),
         "source": "linkedIn",
     }
+
+
+def _build_linkedin_request(
+    cred: dict[str, Any],
+    *,
+    text: str,
+    visibility: str,
+    author: str,
+) -> HttpRequestConfig | None:
+    """Build a real LinkedIn Share API request config.
+
+    Uses the v2 ``ugcPosts`` endpoint with a bearer token.
+    Returns ``None`` when no bearer token is present.
+    """
+    access_token = str(
+        cred.get("accessToken")
+        or cred.get("access_token")
+        or cred.get("token")
+        or ""
+    )
+    if not access_token:
+        return None
+    if not author or not text:
+        return None
+    body: dict[str, Any] = {
+        "author": author,
+        "lifecycleState": "PUBLISHED",
+        "specificContent": {
+            "com.linkedin.ugc.ShareContent": {
+                "shareCommentary": {"text": text},
+                "shareMediaCategory": "NONE",
+            }
+        },
+        "visibility": {
+            "com.linkedin.ugc.MemberNetworkVisibility": visibility
+        },
+    }
+    return HttpRequestConfig(
+        url="https://api.linkedin.com/v2/ugcPosts",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "X-Restli-Protocol-Version": "2.0.0",
+        },
+        body=_json_body(body),
+        body_mode="raw",
+        timeout=30.0,
+        response_mode="json",
+    )
+
+
+def _envelope_from_linkedin_api(
+    data: dict[str, Any],
+    *,
+    text: str,
+    visibility: str,
+    author: str,
+) -> dict[str, Any]:
+    """Convert a real LinkedIn Share API response to the internal envelope."""
+    if not isinstance(data, dict):
+        return {}
+    post_id = str(data.get("id") or "")
+    return {
+        "id": post_id,
+        "activity": data.get("activity") or post_id,
+        "text": text,
+        "visibility": visibility,
+        "author": author,
+    }
+
+
+async def _resolve_linkedin_response(
+    *,
+    text: str,
+    visibility: str,
+    author: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+    node: "ExecNode",
+    ctx: "EngineContext",
+) -> tuple[Any, str]:
+    """Return ``(envelope, source)`` for the current call.
+
+    ``source`` is one of ``"linkedin_response"``, ``"http_response"``,
+    ``"linkedin_api"``, ``"offline"``.
+    """
+    mock_val, src = _resolve_mock(
+        ctx, "linkedin_response", text, params, item, ctx
+    )
+    if mock_val is None:
+        mock_val, src = _http_fallback(ctx)
+    if mock_val is not None:
+        return mock_val, src or "linkedin_response"
+
+    cred = resolve_credential(node, ctx, "linkedInApi")
+    if not cred:
+        cred = resolve_credential(node, ctx, "linkedInOAuth2Api")
+    if cred:
+        cfg = _build_linkedin_request(
+            cred,
+            text=text,
+            visibility=visibility,
+            author=author,
+        )
+        if cfg is not None:
+            logger.info(
+                "linkedIn real HTTP call visibility=%s text_len=%s",
+                visibility,
+                len(text),
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_linkedin_api(
+                            resp.body,
+                            text=text,
+                            visibility=visibility,
+                            author=author,
+                        ),
+                        "linkedin_api",
+                    )
+            except Exception as exc:
+                logger.warning("linkedIn HTTP call failed: %s", exc)
+
+    return _synthesize_linkedin(text, visibility, author), "offline"
 
 
 async def exec_linkedin(
@@ -338,14 +620,15 @@ async def exec_linkedin(
         share_id = f"urn:li:share:{random.randint(10**10, 10**11 - 1)}"
         created_at = _now_iso()
 
-        mock_val, src = _resolve_mock(
-            ctx, "linkedin_response", text, params, item, ctx
+        mock_val, src = await _resolve_linkedin_response(
+            text=text,
+            visibility=visibility,
+            author=author,
+            params=params,
+            item=item,
+            node=node,
+            ctx=ctx,
         )
-        if mock_val is None:
-            mock_val, src = _http_fallback(ctx)
-        if mock_val is None:
-            mock_val = _synthesize_linkedin(text, visibility, author)
-            src = "offline"
 
         if isinstance(mock_val, dict):
             share_id = mock_val.get("id", share_id)
@@ -362,7 +645,7 @@ async def exec_linkedin(
             "createdAt": created_at,
             "source": "linkedIn",
         }
-        if src and src != "linkedin_response":
+        if src and src not in ("linkedin_response", "linkedin_api"):
             payload["mockSource"] = src
 
         ni = item.clone()
@@ -404,6 +687,148 @@ def _synthesize_reddit(
         "url": url if kind == "link" else "",
         "source": "reddit",
     }
+
+
+def _build_reddit_request(
+    cred: dict[str, Any],
+    *,
+    title: str,
+    text: str,
+    subreddit: str,
+    kind: str,
+    url: str,
+) -> HttpRequestConfig | None:
+    """Build a real Reddit API request config.
+
+    Uses ``oauth.reddit.com`` for authenticated POSTs. Reddit requires a
+    ``User-Agent`` header; we default to ``everflow-bot/1.0`` if not
+    supplied by the credential.
+    Returns ``None`` when no bearer token is present.
+    """
+    access_token = str(
+        cred.get("accessToken")
+        or cred.get("access_token")
+        or cred.get("token")
+        or ""
+    )
+    if not access_token:
+        return None
+    if not subreddit or not title:
+        return None
+
+    user_agent = str(
+        cred.get("userAgent")
+        or cred.get("user_agent")
+        or "everflow-bot/1.0"
+    )
+
+    form: dict[str, Any] = {
+        "sr": subreddit,
+        "kind": "self" if kind == "self" else "link",
+        "title": title,
+    }
+    if kind == "link":
+        if url:
+            form["url"] = url
+    else:
+        if text:
+            form["text"] = text
+
+    return HttpRequestConfig(
+        url="https://oauth.reddit.com/api/submit",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": user_agent,
+        },
+        body=form,
+        body_mode="form",
+        timeout=30.0,
+        response_mode="json",
+    )
+
+
+def _envelope_from_reddit_api(data: dict[str, Any]) -> dict[str, Any]:
+    """Convert a real Reddit API response to the internal envelope."""
+    if not isinstance(data, dict):
+        return {}
+    inner: dict[str, Any] = {}
+    json_data = data.get("json")
+    if isinstance(json_data, dict):
+        inner = json_data
+    payload = inner.get("data") if isinstance(inner.get("data"), dict) else inner
+    if not isinstance(payload, dict):
+        payload = data
+    return {
+        "id": payload.get("id") or payload.get("name"),
+        "name": payload.get("name"),
+        "title": payload.get("title"),
+        "selftext": payload.get("selftext"),
+        "subreddit": payload.get("subreddit"),
+        "author": payload.get("author"),
+        "created_utc": payload.get("created_utc"),
+        "permalink": payload.get("permalink"),
+        "url": payload.get("url"),
+    }
+
+
+async def _resolve_reddit_response(
+    *,
+    title: str,
+    text: str,
+    subreddit: str,
+    kind: str,
+    url: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+    node: "ExecNode",
+    ctx: "EngineContext",
+) -> tuple[Any, str]:
+    """Return ``(envelope, source)`` for the current call.
+
+    ``source`` is one of ``"reddit_response"``, ``"http_response"``,
+    ``"reddit_api"``, ``"offline"``.
+    """
+    mock_val, src = _resolve_mock(
+        ctx, "reddit_response", title, text, subreddit, params, item, ctx
+    )
+    if mock_val is None:
+        mock_val, src = _http_fallback(ctx)
+    if mock_val is not None:
+        return mock_val, src or "reddit_response"
+
+    cred = resolve_credential(node, ctx, "redditApi")
+    if not cred:
+        cred = resolve_credential(node, ctx, "redditOAuth2Api")
+    if cred:
+        cfg = _build_reddit_request(
+            cred,
+            title=title,
+            text=text,
+            subreddit=subreddit,
+            kind=kind,
+            url=url,
+        )
+        if cfg is not None:
+            logger.info(
+                "reddit real HTTP call subreddit=%s kind=%s",
+                subreddit,
+                kind,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_reddit_api(resp.body),
+                        "reddit_api",
+                    )
+            except Exception as exc:
+                logger.warning("reddit HTTP call failed: %s", exc)
+
+    return (
+        _synthesize_reddit(title, text, subreddit, kind, url),
+        "offline",
+    )
 
 
 async def exec_reddit(
@@ -458,14 +883,17 @@ async def exec_reddit(
         permalink = f"/r/{subreddit}/comments/mock/{title[:20].replace(' ', '_')}/"
         post_id = f"t3_{uuid.uuid4().hex[:6]}"
 
-        mock_val, src = _resolve_mock(
-            ctx, "reddit_response", title, text, subreddit, params, item, ctx
+        mock_val, src = await _resolve_reddit_response(
+            title=title,
+            text=text,
+            subreddit=subreddit,
+            kind=kind,
+            url=url,
+            params=params,
+            item=item,
+            node=node,
+            ctx=ctx,
         )
-        if mock_val is None:
-            mock_val, src = _http_fallback(ctx)
-        if mock_val is None:
-            mock_val = _synthesize_reddit(title, text, subreddit, kind, url)
-            src = "offline"
 
         if isinstance(mock_val, dict):
             post_id = mock_val.get("id", post_id)
@@ -491,7 +919,7 @@ async def exec_reddit(
         }
         if kind == "link":
             payload["url"] = url
-        if src and src != "reddit_response":
+        if src and src not in ("reddit_response", "reddit_api"):
             payload["mockSource"] = src
 
         ni = item.clone()

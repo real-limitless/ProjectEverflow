@@ -14,7 +14,10 @@ v1 covers:
 - ``googleChat``           — Google Chat operations.
 - ``gSuiteAdmin``          — Admin directory operations.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a matching Google OAuth2 credential is attached and no mock is
+present, real calls are made to the corresponding Google REST API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
 
 Behavior precedence (all nodes):
 
@@ -22,7 +25,9 @@ Behavior precedence (all nodes):
    ``mock(operation, params, item, ctx)`` or dict used directly.
 2. ``ctx.mocks['http_response']`` — generic fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is used.
-3. Offline synthetic response.
+3. If a Google OAuth2 credential resolves (``accessToken`` present), a
+   real API call is made and the response envelope is used.
+4. Offline synthetic response.
 """
 
 from __future__ import annotations
@@ -34,7 +39,9 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -174,7 +181,7 @@ def _resolve_mock_response(
 
 
 def _add_mock_source(payload: dict[str, Any], src: str, mock_key: str) -> None:
-    if src and src != mock_key:
+    if src and src != mock_key and not src.endswith("_api"):
         payload["mockSource"] = src
 
 

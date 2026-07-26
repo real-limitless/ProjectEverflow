@@ -14,7 +14,10 @@ v1 covers the operations most commonly used in n8n templates:
   ``{messageId, internetMessageId, to, subject, body, bodyContentType,
   sentDateTime, ok, source: 'microsoftOutlook'}``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a ``microsoftTeamsOAuth2Api`` or ``microsoftOutlookOAuth2Api``
+credential is attached and no mock is present, real calls are made to
+the Microsoft Graph API via :func:`execute_http_request`. Otherwise the
+executor is mock-driven with an offline synthetic fallback.
 
 Parameters honored by ``microsoftTeams``:
 
@@ -34,7 +37,11 @@ Behavior precedence for ``microsoftTeams``:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the Teams envelope.
-3. Offline synthetic response with a random UUID ``id``, an
+3. If a ``microsoftTeamsOAuth2Api`` credential resolves (``accessToken``
+   present), a real ``POST /teams/{team-id}/channels/{channel-id}/messages``
+   call is made to the Microsoft Graph API and the chatMessage envelope is
+   used.
+4. Offline synthetic response with a random UUID ``id``, an
    ``createdDateTime`` ISO timestamp, and the resolved message echoed.
 
 Items with an empty resolved ``message`` are skipped (no item emitted).
@@ -59,7 +66,10 @@ Behavior precedence for ``microsoftOutlook``:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the Outlook envelope.
-3. Offline synthetic response with random UUIDs for ``id`` and
+3. If a ``microsoftOutlookOAuth2Api`` credential resolves (``accessToken``
+   present), a real ``POST /me/sendMail`` call is made to the Microsoft
+   Graph API and the response is used.
+4. Offline synthetic response with random UUIDs for ``id`` and
    ``conversationId``, a ``<…@outlook.com>`` ``internetMessageId``, and
    the resolved recipients/subject/body echoed.
 
@@ -75,7 +85,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -268,20 +280,78 @@ def _teams_response_from_http_mock(mock: Any) -> dict[str, Any] | None:
     return None
 
 
-def _resolve_teams_response(
+def _build_teams_request(
+    cred: dict[str, Any],
+    team_id: str,
+    channel_id: str,
+    message: str,
+    content_type: str,
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Microsoft Graph chatMessage request config.
+
+    Returns ``None`` when the credential has no ``accessToken``.
+    """
+    token = str(cred.get("accessToken") or cred.get("access_token") or "")
+    if not token:
+        return None
+    body: dict[str, Any] = {
+        "body": {"contentType": content_type, "content": message},
+    }
+    return HttpRequestConfig(
+        url=f"https://graph.microsoft.com/v1.0/teams/{team_id}/channels/{channel_id}/messages",
+        method="POST",
+        headers={"Authorization": f"Bearer {token}"},
+        body=body,
+        body_mode="json",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _envelope_from_teams_api(
+    data: dict[str, Any],
+    message: str,
+    content_type: str,
+    channel_id: str,
+) -> dict[str, Any]:
+    """Convert a real Graph API chatMessage response to the internal
+    envelope shape."""
+    return {
+        "id": data.get("id") or str(uuid.uuid4()),
+        "createdDateTime": data.get("createdDateTime") or _now_iso_z(),
+        "from": data.get("from")
+        or {
+            "user": {
+                "id": "MOCK_USER_ID",
+                "displayName": "Mock User",
+            }
+        },
+        "body": data.get("body")
+        or {
+            "contentType": content_type,
+            "content": message,
+        },
+        "channelId": data.get("channelId") or channel_id,
+    }
+
+
+async def _resolve_teams_response(
     *,
+    team_id: str,
     channel_id: str,
     message: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
     content_type: str,
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"teams_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"teams_api"``, ``"offline"`` so downstream observers can tell
+    where the result came from.
     """
     mocks = ctx.mocks or {}
     tmock = mocks.get("teams_response")
@@ -326,6 +396,25 @@ def _resolve_teams_response(
                     env["body"]["content"] = message
             return env, "http_response"
 
+    cred = resolve_credential(node, ctx, "microsoftTeamsOAuth2Api")
+    if cred:
+        cfg = _build_teams_request(cred, team_id, channel_id, message, content_type, params)
+        if cfg is not None:
+            logger.info(
+                "microsoftTeams real HTTP call team=%s channel=%s",
+                team_id,
+                channel_id,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_teams_api(resp.body, message, content_type, channel_id),
+                        "teams_api",
+                    )
+            except Exception as exc:
+                logger.warning("microsoftTeams HTTP call failed: %s", exc)
+
     return (
         _synthesize_teams_response(channel_id, message, content_type),
         "offline",
@@ -364,11 +453,13 @@ async def exec_microsoft_teams(
             )
             continue
 
-        envelope, source = _resolve_teams_response(
+        envelope, source = await _resolve_teams_response(
+            team_id=team_id,
             channel_id=channel_id,
             message=message,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
             content_type=content_type,
         )
@@ -389,7 +480,7 @@ async def exec_microsoft_teams(
             "ok": True,
             "source": "microsoftTeams",
         }
-        if source != "teams_response":
+        if source not in ("teams_response", "teams_api"):
             payload["mockSource"] = source
 
         ni = item.clone()
@@ -528,20 +619,103 @@ def _outlook_response_from_http_mock(mock: Any) -> dict[str, Any] | None:
     return None
 
 
-def _resolve_outlook_response(
+def _build_outlook_request(
+    cred: dict[str, Any],
+    to: str,
+    subject: str,
+    body: str,
+    body_content_type: str,
+    cc: str,
+    bcc: str,
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Microsoft Graph sendMail request config.
+
+    Returns ``None`` when the credential has no ``accessToken``.
+    """
+    token = str(cred.get("accessToken") or cred.get("access_token") or "")
+    if not token:
+        return None
+
+    def _recipients(csv: str) -> list[dict[str, Any]]:
+        return [
+            {"emailAddress": {"address": addr.strip()}}
+            for addr in csv.split(",")
+            if addr.strip()
+        ]
+
+    message: dict[str, Any] = {
+        "subject": subject,
+        "body": {"contentType": body_content_type, "content": body},
+        "toRecipients": _recipients(to),
+    }
+    if cc:
+        message["ccRecipients"] = _recipients(cc)
+    if bcc:
+        message["bccRecipients"] = _recipients(bcc)
+
+    payload = {"message": message, "saveToSentItems": True}
+    return HttpRequestConfig(
+        url="https://graph.microsoft.com/v1.0/me/sendMail",
+        method="POST",
+        headers={"Authorization": f"Bearer {token}"},
+        body=payload,
+        body_mode="json",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _envelope_from_outlook_api(
+    data: dict[str, Any],
+    to: str,
+    subject: str,
+    body: str,
+) -> dict[str, Any]:
+    """Convert a real Graph API sendMail response to the internal
+    envelope shape."""
+    return {
+        "id": data.get("id") or str(uuid.uuid4()),
+        "conversationId": data.get("conversationId") or str(uuid.uuid4()),
+        "internetMessageId": data.get("internetMessageId")
+        or f"<{uuid.uuid4().hex}@outlook.com>",
+        "from": data.get("from")
+        or {
+            "emailAddress": {
+                "name": "Mock User",
+                "address": "mock@outlook.com",
+            }
+        },
+        "toRecipients": data.get("toRecipients")
+        or [
+            {"emailAddress": {"name": addr.strip(), "address": addr.strip()}}
+            for addr in to.split(",")
+            if addr.strip()
+        ],
+        "subject": data.get("subject", subject),
+        "bodyPreview": data.get("bodyPreview", body[:100]),
+        "sentDateTime": data.get("sentDateTime") or _now_iso_z(),
+    }
+
+
+async def _resolve_outlook_response(
     *,
     to: str,
     subject: str,
     body: str,
+    body_content_type: str,
+    cc: str,
+    bcc: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"outlook_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"outlook_api"``, ``"offline"`` so downstream observers can tell
+    where the result came from.
     """
     mocks = ctx.mocks or {}
     omock = mocks.get("outlook_response")
@@ -594,6 +768,26 @@ def _resolve_outlook_response(
                     if addr.strip()
                 ]
             return env, "http_response"
+
+    cred = resolve_credential(node, ctx, "microsoftOutlookOAuth2Api")
+    if cred:
+        cfg = _build_outlook_request(cred, to, subject, body, body_content_type, cc, bcc, params)
+        if cfg is not None:
+            logger.info(
+                "microsoftOutlook real HTTP call to=%s subject=%s",
+                to[:80],
+                subject[:80],
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if resp.status_code < 400:
+                    data = resp.body if isinstance(resp.body, dict) else {}
+                    return (
+                        _envelope_from_outlook_api(data, to, subject, body),
+                        "outlook_api",
+                    )
+            except Exception as exc:
+                logger.warning("microsoftOutlook HTTP call failed: %s", exc)
 
     return _synthesize_outlook_response(to, subject, body), "offline"
 
@@ -648,12 +842,16 @@ async def exec_microsoft_outlook(
             else ""
         )
 
-        envelope, source = _resolve_outlook_response(
+        envelope, source = await _resolve_outlook_response(
             to=to,
             subject=subject,
             body=body,
+            body_content_type=body_content_type,
+            cc=cc,
+            bcc=bcc,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
         )
 
@@ -672,7 +870,7 @@ async def exec_microsoft_outlook(
             payload["cc"] = cc
         if bcc:
             payload["bcc"] = bcc
-        if source != "outlook_response":
+        if source not in ("outlook_response", "outlook_api"):
             payload["mockSource"] = source
 
         ni = item.clone()

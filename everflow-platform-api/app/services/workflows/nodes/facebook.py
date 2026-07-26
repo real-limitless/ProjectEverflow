@@ -6,7 +6,10 @@ v1 covers the operations most commonly used in n8n templates:
   Facebook/Meta endpoints. Emits one item per input with
   ``{operation, node, version, <response fields>, source: 'facebookGraphApi'}``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a ``facebookGraphApi`` credential is attached and no mock is present,
+real calls are made to the Facebook Graph API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
 
 Parameters honored by ``facebookGraphApi``:
 
@@ -29,7 +32,10 @@ Behavior precedence:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is used as
    the response.
-3. Offline synthetic response.
+3. If a ``facebookGraphApi`` credential resolves (``accessToken``
+   present), a real Graph API call is made and the parsed response is
+   used.
+4. Offline synthetic response.
 
 Items with an empty resolved ``node`` are skipped (no item emitted).
 """
@@ -41,7 +47,9 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -203,28 +211,123 @@ def _synthesize_offline(
     return _synthesize_delete(graph_node, version)
 
 
-# ── Mock resolution ───────────────────────────────────────────────────
+# ── Real HTTP ─────────────────────────────────────────────────────────
 
 
-def _resolve_facebook_response(
+def _build_facebook_request(
+    cred: dict[str, Any],
     *,
     operation: str,
     graph_node: str,
-    params: dict[str, Any],
+    version: str,
+    fields: list[str],
+    call_params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Facebook Graph API request config.
+
+    Returns ``None`` when the credential has no usable ``accessToken``.
+    """
+    access_token = str(
+        cred.get("accessToken")
+        or cred.get("access_token")
+        or cred.get("token")
+        or ""
+    )
+    if not access_token:
+        return None
+    if not graph_node:
+        return None
+    version_str = version or FACEBOOK_DEFAULT_VERSION
+    url = f"https://graph.facebook.com/{version_str}/{graph_node.lstrip('/')}"
+
+    method = "GET"
+    if operation == "post":
+        method = "POST"
+    elif operation == "delete":
+        method = "DELETE"
+
+    # Graph API accepts the token as either a query param or a bearer
+    # header; we use the form body / query param so it works for GET/POST
+    # uniformly. For POST we send form-encoded; for GET we send as a
+    # query string.
+    headers: dict[str, str] = {}
+    body_mode = "none"
+    body: Any = None
+    if method == "POST":
+        form: dict[str, Any] = {"access_token": access_token}
+        if isinstance(call_params, dict):
+            for k, v in call_params.items():
+                if v is not None:
+                    form[str(k)] = v
+        if operation == "get" and fields:
+            form["fields"] = ",".join(fields)
+        body = form
+        body_mode = "form"
+    else:
+        # GET / DELETE: append the token (and any extra params) as a
+        # query string.
+        from urllib.parse import urlencode
+
+        qs: dict[str, Any] = {"access_token": access_token}
+        if isinstance(call_params, dict):
+            for k, v in call_params.items():
+                if v is not None:
+                    qs[str(k)] = v
+        if method == "GET" and fields:
+            qs["fields"] = ",".join(fields)
+        url = f"{url}?{urlencode(qs)}"
+
+    return HttpRequestConfig(
+        url=url,
+        method=method,
+        headers=headers,
+        body=body,
+        body_mode=body_mode,
+        timeout=30.0,
+        response_mode="json",
+    )
+
+
+def _envelope_from_facebook_api(data: dict[str, Any], graph_node: str) -> dict[str, Any]:
+    """Convert a real Facebook Graph API response to the internal envelope."""
+    if not isinstance(data, dict):
+        return {}
+    # Facebook may return {"data": [...], "paging": {...}} for list calls.
+    return {
+        "id": data.get("id"),
+        "name": data.get("name"),
+        "data": data.get("data", []),
+        "paging": data.get("paging"),
+        "success": data.get("success"),
+        "node": graph_node,
+    }
+
+
+# ── Mock resolution ───────────────────────────────────────────────────
+
+
+async def _resolve_facebook_response(
+    *,
+    operation: str,
+    graph_node: str,
+    version: str,
+    fields: list[str],
+    call_params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
     synth: Any,
 ) -> tuple[dict[str, Any], str]:
     """Return ``(response, source)`` for the current call.
 
     ``source`` is one of ``"facebook_response"``, ``"http_response"``,
-    ``"offline"``.
+    ``"facebook_api"``, ``"offline"``.
     """
     mocks = ctx.mocks or {}
     fmock = mocks.get("facebook_response")
     if fmock is not None:
         if callable(fmock):
-            raw = fmock(operation, graph_node, params, item, ctx)
+            raw = fmock(operation, graph_node, call_params, item, ctx)
         else:
             raw = fmock
         if isinstance(raw, dict):
@@ -236,6 +339,35 @@ def _resolve_facebook_response(
         body = hmock.get("body")
         if isinstance(body, dict):
             return body, "http_response"
+
+    cred = resolve_credential(node, ctx, "facebookGraphApi")
+    if not cred:
+        # Fall back to the more general cred type too.
+        cred = resolve_credential(node, ctx, "facebookApi")
+    if cred:
+        cfg = _build_facebook_request(
+            cred,
+            operation=operation,
+            graph_node=graph_node,
+            version=version,
+            fields=fields,
+            call_params=call_params,
+        )
+        if cfg is not None:
+            logger.info(
+                "facebookGraphApi real HTTP call op=%s node=%s",
+                operation,
+                graph_node,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_facebook_api(resp.body, graph_node),
+                        "facebook_api",
+                    )
+            except Exception as exc:
+                logger.warning("facebookGraphApi HTTP call failed: %s", exc)
 
     return synth(), "offline"
 
@@ -301,11 +433,14 @@ async def exec_facebook_graph_api(
                 version=version,
             )
 
-        response, source = _resolve_facebook_response(
+        response, source = await _resolve_facebook_response(
             operation=operation,
             graph_node=graph_node,
-            params=call_params,
+            version=version,
+            fields=fields,
+            call_params=call_params,
             item=item,
+            node=node,
             ctx=ctx,
             synth=_synth,
         )
@@ -317,7 +452,7 @@ async def exec_facebook_graph_api(
             **response,
             "source": "facebookGraphApi",
         }
-        if source != "facebook_response":
+        if source not in ("facebook_response", "facebook_api"):
             payload["mockSource"] = source
 
         # Echo fields for GET when provided
