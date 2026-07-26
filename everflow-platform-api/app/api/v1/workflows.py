@@ -452,8 +452,17 @@ async def _execute_engine(
     mocks: dict[str, Any],
     trigger: str,
     pin_data: dict[str, list[dict[str, Any]]] | None,
-) -> None:
-    """Run engine and persist steps + data tables (used sync or background)."""
+) -> dict[str, Any]:
+    """Run engine and persist steps + data tables. Returns a result dict.
+
+    Returned shape:
+      ``status`` (success/error/cancelled)
+      ``error_message`` (str | None)
+      ``steps`` (list of step dicts)
+      ``final_items`` (list of public item dicts)
+      ``sent_emails`` (list of email dicts)
+      ``webhook_response`` (dict | None — set by respondToWebhook)
+    """
     rid = str(run_id)
     _run_cancel[rid] = False
     factory = get_session_factory()
@@ -481,39 +490,55 @@ async def _execute_engine(
         on_step=on_step,
         cancel_check=lambda: bool(_run_cancel.get(rid)),
     )
+    result_dict: dict[str, Any] = {
+        "status": "error",
+        "error_message": None,
+        "steps": [],
+        "final_items": [],
+        "sent_emails": [],
+        "webhook_response": None,
+    }
     try:
         result = await engine.run(trigger=trigger, pin_data=pin_data)
         status_final = result.status
         if result.error_message == "cancelled":
             status_final = "cancelled"
+        result_dict.update(
+            {
+                "status": status_final,
+                "error_message": result.error_message,
+                "steps": [s.to_dict() for s in result.steps],
+                "final_items": result.final_items,
+                "sent_emails": result.sent_emails,
+                "webhook_response": engine.last_webhook_response,
+            }
+        )
         async with factory() as s:
             row = await s.get(WorkflowRun, run_id)
-            if row is None:
-                return
-            row.status = status_final
-            row.error_message = result.error_message
-            row.log = _finalize_log(result)
-            row.finished_at = datetime.now(timezone.utc)
-            await s.commit()
-            # Persist data tables as left by the engine
-            await flush_project_tables(s, project_id, result.data_tables)
+            if row is not None:
+                row.status = status_final
+                row.error_message = result.error_message
+                row.log = _finalize_log(result)
+                row.finished_at = datetime.now(timezone.utc)
+                await s.commit()
+                await flush_project_tables(s, project_id, result.data_tables)
     except Exception as exc:
         logger.exception("Workflow execute failed run=%s", run_id)
+        result_dict["error_message"] = str(exc)
         async with factory() as s:
             row = await s.get(WorkflowRun, run_id)
-            if row is None:
-                return
-            row.status = "error"
-            row.error_message = str(exc)
-            row.finished_at = datetime.now(timezone.utc)
-            await s.commit()
-            # Still try to flush partial tables
-            try:
-                await flush_project_tables(s, project_id, engine.data_tables)
-            except Exception:
-                logger.exception("Failed to flush data tables after error")
+            if row is not None:
+                row.status = "error"
+                row.error_message = str(exc)
+                row.finished_at = datetime.now(timezone.utc)
+                await s.commit()
+                try:
+                    await flush_project_tables(s, project_id, engine.data_tables)
+                except Exception:
+                    logger.exception("Failed to flush data tables after error")
     finally:
         _run_cancel.pop(rid, None)
+    return result_dict
 
 
 @router.post(
@@ -680,6 +705,99 @@ async def cancel_run(
         await session.commit()
         await session.refresh(run)
     return run
+
+
+# ── Webhook ingress ──────────────────────────────────────────────────
+
+
+@router.api_route(
+    "/projects/{project_id}/workflows/{workflow_id}/webhook/{webhook_path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+)
+async def workflow_webhook_ingress(
+    project_id: UUID,
+    workflow_id: UUID,
+    webhook_path: str,
+    request: Any,  # fastapi.Request is provided via DI when imported
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """Inbound webhook — start a workflow run with the request payload.
+
+    Looks up the workflow, seeds the engine with the request body / headers
+    / query, and runs synchronously. The ``respondToWebhook`` node in the
+    workflow can populate the response that this endpoint returns; otherwise
+    a generic 200 with the final items is returned.
+    """
+    from fastapi import Request as _FastAPIRequest  # local import to avoid cycles
+
+    # request may be a FastAPI Request when the route is matched
+    body_bytes = b""
+    if isinstance(request, _FastAPIRequest):
+        try:
+            body_bytes = await request.body()
+        except Exception:
+            body_bytes = b""
+
+    headers: dict[str, str] = {}
+    query: dict[str, str] = {}
+    method = "POST"
+    path = f"/{webhook_path}"
+    if isinstance(request, _FastAPIRequest):
+        headers = {str(k): str(v) for k, v in request.headers.items()}
+        query = {str(k): str(v) for k, v in request.query_params.items()}
+        method = str(request.method)
+
+    body_json: Any = None
+    body_text = body_bytes.decode("utf-8", errors="replace") if body_bytes else ""
+    if body_bytes:
+        try:
+            import json as _json
+
+            body_json = _json.loads(body_text)
+        except (ValueError, TypeError):
+            body_json = body_text
+
+    wf = await _get_workflow(session, project_id, workflow_id)
+    doc = wf.n8n_document if isinstance(wf.n8n_document, dict) else {}
+    stored = await _load_project_credentials(session, project_id)
+
+    mocks = {
+        "webhook_request": {
+            "method": method,
+            "path": path,
+            "headers": headers,
+            "query": query,
+            "body": body_json if body_json is not None else body_text,
+        },
+    }
+
+    run = WorkflowRun(
+        workflow_id=wf.id,
+        project_id=project_id,
+        status="running",
+        trigger_type="webhook",
+        log=[],
+    )
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
+
+    result = await _execute_engine(
+        run_id=run.id,
+        project_id=project_id,
+        doc=doc,
+        stored=stored,
+        bindings={},
+        mocks=mocks,
+        trigger="webhook",
+    )
+    # If a Respond to Webhook node fired, the engine recorded the response.
+    if result.get("webhook_response"):
+        return result["webhook_response"]
+    return {
+        "status": result.get("status", "success"),
+        "items": [s for s in (result.get("steps") or []) if isinstance(s, dict)],
+    }
 
 
 # ── Credentials ──────────────────────────────────────────────────────

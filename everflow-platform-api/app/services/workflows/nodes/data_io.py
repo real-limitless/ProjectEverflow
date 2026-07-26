@@ -256,6 +256,192 @@ async def exec_data_table(
     return [(0, out)]
 
 
+# ── SSH ──────────────────────────────────────────────────────────────
+
+
+async def exec_ssh(
+    node: ExecNode,
+    items: list[ExecutionItem],
+    *,
+    ctx: EngineContext,
+) -> list[tuple[int, list[ExecutionItem]]]:
+    """``n8n-nodes-base.ssh`` executor — v1 supports ``executeCommand``.
+
+    Reads ``parameters.command`` (string or ``={{ ... }}``) and optional
+    ``parameters.cwd``; emits one item per call with
+    ``{stdout, stderr, exitCode, command}``.
+
+    Behavior precedence:
+
+    1. ``ctx.mocks['ssh']`` (dict keyed by command → ``{stdout, stderr,
+       exitCode}``) — used in tests and dry-runs.
+    2. Real SSH via :mod:`asyncssh` when installed and credentials supply
+       a host. Falls back to a clear ``RuntimeError`` otherwise so the
+       engine can report a sensible failure instead of silently timing
+       out.
+
+    Credentials are resolved from ``ctx.credentials`` keyed by:
+
+    - ``ssh`` — username/password (also accepts ``sshPassword``)
+    - ``sshPrivateKey`` — private key auth (with optional ``passphrase``)
+    """
+    params = node.parameters or {}
+    operation = str(params.get("operation") or "executeCommand")
+    if operation != "executeCommand":
+        raise ValueError(
+            f"ssh: unsupported operation {operation!r} "
+            "(v1 only supports 'executeCommand')"
+        )
+
+    mock_ssh: dict[str, Any] | None = None
+    if ctx.mocks and isinstance(ctx.mocks.get("ssh"), dict):
+        mock_ssh = ctx.mocks["ssh"]
+
+    cred = _cred(ctx, node, "ssh") or _cred(ctx, node, "sshPassword") or {}
+    if not cred:
+        cred = _cred(ctx, node, "sshPrivateKey") or {}
+
+    out: list[ExecutionItem] = []
+    for item in items:
+        ectx = _ectx(item, ctx)
+        command = str(evaluate(params.get("command"), ectx) or "")
+        cwd_raw = params.get("cwd")
+        cwd = str(evaluate(cwd_raw, ectx)) if cwd_raw is not None else ""
+
+        if not command:
+            raise ValueError(
+                f"ssh: missing parameters.command on node {node.name!r}"
+            )
+
+        result = await _ssh_run(
+            command=command,
+            cwd=cwd,
+            cred=cred,
+            mock_ssh=mock_ssh,
+        )
+
+        ni = item.clone()
+        ni.json = {
+            **item.json,
+            "command": command,
+            "cwd": cwd,
+            "stdout": result["stdout"],
+            "stderr": result["stderr"],
+            "exitCode": result["exitCode"],
+        }
+        out.append(ni)
+        logger.info(
+            "ssh executeCommand cmd=%r exitCode=%s",
+            command[:120],
+            result["exitCode"],
+        )
+    return [(0, out)]
+
+
+async def _ssh_run(
+    *,
+    command: str,
+    cwd: str,
+    cred: dict[str, Any],
+    mock_ssh: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Run a single SSH command and return ``{stdout, stderr, exitCode}``.
+
+    Mock lookup is by exact command match, then by basename-key
+    (e.g. ``"ls"`` matches ``"ls -la /tmp"``) for convenience.
+    """
+    if mock_ssh is not None:
+        if command in mock_ssh and isinstance(mock_ssh[command], dict):
+            entry = mock_ssh[command]
+            return {
+                "stdout": str(entry.get("stdout") or ""),
+                "stderr": str(entry.get("stderr") or ""),
+                "exitCode": int(entry.get("exitCode") or 0),
+            }
+        # basename fallback for dry-runs: key like "ls" matches "ls -la"
+        head = command.split(None, 1)[0] if command else ""
+        if head and head in mock_ssh and isinstance(mock_ssh[head], dict):
+            entry = mock_ssh[head]
+            return {
+                "stdout": str(entry.get("stdout") or ""),
+                "stderr": str(entry.get("stderr") or ""),
+                "exitCode": int(entry.get("exitCode") or 0),
+            }
+        # mocked but no entry — fail loud so the test notices
+        raise RuntimeError(
+            f"ssh: mock present but no entry for command {command!r}"
+        )
+
+    host = cred.get("host") or cred.get("server") or cred.get("hostname")
+    if not host:
+        raise RuntimeError(
+            "ssh: no mock and no credential host "
+            "(set ctx.mocks['ssh'] or provide an 'ssh' / 'sshPrivateKey' "
+            "credential with a host)"
+        )
+
+    # Defer the asyncssh import + real call to the async executor so we
+    # can `await` it cleanly without juggling event loops.
+    return await _ssh_real_run(command=command, cwd=cwd, cred=cred)
+
+
+async def _ssh_real_run(
+    *, command: str, cwd: str, cred: dict[str, Any]
+) -> dict[str, Any]:
+    """Open a real SSH connection via :mod:`asyncssh` and run ``command``.
+
+    Raises :class:`RuntimeError` if :mod:`asyncssh` is not installed or
+    the credential is missing required fields (username, password or
+    private key). The caller must already have verified that no mock is
+    in effect and that a host was supplied.
+    """
+    try:
+        import asyncssh  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError(
+            "ssh: no mock and asyncssh not installed "
+            "(install asyncssh or set ctx.mocks['ssh'] for dry-runs)"
+        ) from exc
+
+    host = str(cred.get("host") or cred.get("server") or cred.get("hostname") or "")
+    port = int(cred.get("port") or 22)
+    user = str(cred.get("user") or cred.get("username") or "")
+    password = str(cred.get("password") or cred.get("pass") or "")
+    private_key = str(
+        cred.get("privateKey") or cred.get("key") or cred.get("keyData") or ""
+    )
+    passphrase = str(cred.get("passphrase") or "")
+
+    if not user:
+        raise RuntimeError("ssh: credential missing username")
+    if not password and not private_key:
+        raise RuntimeError(
+            "ssh: credential missing both password and privateKey"
+        )
+
+    connect_kwargs: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "username": user,
+        "known_hosts": None,
+    }
+    if private_key:
+        connect_kwargs["client_keys"] = [private_key]
+        if passphrase:
+            connect_kwargs["passphrase"] = passphrase
+    else:
+        connect_kwargs["password"] = password
+
+    async with asyncssh.connect(**connect_kwargs) as conn:
+        full_cmd = command if not cwd else f"cd {cwd} && {command}"
+        completed = await conn.run(full_cmd, check=False)
+        return {
+            "stdout": (completed.stdout or ""),
+            "stderr": (completed.stderr or ""),
+            "exitCode": int(completed.exit_status or 0),
+        }
+
+
 # ── Email ────────────────────────────────────────────────────────────
 
 
