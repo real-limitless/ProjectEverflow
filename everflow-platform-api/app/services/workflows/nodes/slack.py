@@ -10,6 +10,11 @@ v1 covers the operations most commonly used in n8n templates:
 
 All API calls are mock-driven — no real network I/O is performed.
 
+When a ``slackApi`` credential is attached and no mock is present, real
+calls are made to the Slack Web API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
+
 Parameters honored by ``slack``:
 
 - ``channel``   (string; ``$json.channel`` / ``$json.channelId`` fallback;
@@ -30,7 +35,10 @@ Behavior precedence for ``slack``:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the Slack envelope.
-3. Offline synthetic response with a floating-point ``ts`` timestamp and
+3. If a ``slackApi`` credential resolves (``botToken``/``token``
+   present), a real ``POST /api/chat.postMessage`` call is made to the
+   Slack Web API and the response envelope is used.
+4. Offline synthetic response with a floating-point ``ts`` timestamp and
    the resolved channel/text echoed back.
 
 Items with an empty resolved ``text`` and no ``blocks`` are skipped
@@ -53,7 +61,9 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -96,9 +106,7 @@ def _coerce_channel(value: Any) -> str:
     if isinstance(value, (int, float)):
         return str(int(value))
     if isinstance(value, (list, tuple)):
-        return ", ".join(
-            _coerce_channel(v) for v in value if v is not None
-        )
+        return ", ".join(_coerce_channel(v) for v in value if v is not None)
     if isinstance(value, dict):
         for key in ("id", "value", "name", "channel", "channelId", "channel_id"):
             if key in value and value[key] is not None:
@@ -111,9 +119,7 @@ def _now_ts() -> str:
     return f"{time.time():.6f}"
 
 
-def _resolve_channel(
-    params: dict[str, Any], item: ExecutionItem, ectx: ExpressionContext
-) -> str:
+def _resolve_channel(params: dict[str, Any], item: ExecutionItem, ectx: ExpressionContext) -> str:
     raw = params.get("channel")
     if raw is not None:
         resolved = evaluate(raw, ectx)
@@ -125,9 +131,7 @@ def _resolve_channel(
     )
 
 
-def _resolve_text(
-    params: dict[str, Any], item: ExecutionItem, ectx: ExpressionContext
-) -> str:
+def _resolve_text(params: dict[str, Any], item: ExecutionItem, ectx: ExpressionContext) -> str:
     raw = params.get("text")
     if raw is not None:
         resolved = evaluate(raw, ectx)
@@ -137,9 +141,7 @@ def _resolve_text(
     return _coerce_str(item.json.get("text") or item.json.get("message"))
 
 
-def _resolve_blocks(
-    params: dict[str, Any], item: ExecutionItem, ectx: ExpressionContext
-) -> Any:
+def _resolve_blocks(params: dict[str, Any], item: ExecutionItem, ectx: ExpressionContext) -> Any:
     raw = params.get("blocks")
     if raw is None:
         return None
@@ -154,9 +156,7 @@ def _resolve_blocks(
     return None
 
 
-def _resolve_bool(
-    params: dict[str, Any], key: str, default: bool = False
-) -> bool:
+def _resolve_bool(params: dict[str, Any], key: str, default: bool = False) -> bool:
     raw = params.get(key)
     if raw is None:
         return default
@@ -236,19 +236,63 @@ def _slack_response_from_http_mock(mock: Any) -> dict[str, Any] | None:
     return None
 
 
-def _resolve_slack_response(
+def _build_slack_request(
+    cred: dict[str, Any],
+    channel: str,
+    text: str,
+    blocks: Any,
+    as_user: bool,
+    link_names: bool,
+) -> HttpRequestConfig | None:
+    """Build a real Slack Web API ``chat.postMessage`` request config.
+
+    Returns ``None`` when the credential has no token.
+    """
+    token = str(cred.get("botToken") or cred.get("token") or cred.get("accessToken") or "")
+    if not token:
+        return None
+    body: dict[str, Any] = {"channel": channel}
+    if blocks is not None:
+        body["blocks"] = blocks
+        if text:
+            body["text"] = text
+    else:
+        body["text"] = text
+    if as_user:
+        body["as_user"] = True
+    if link_names:
+        body["link_names"] = True
+    return HttpRequestConfig(
+        url="https://slack.com/api/chat.postMessage",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        body=body,
+        body_mode="json",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+async def _resolve_slack_response(
     *,
     channel: str,
     text: str,
+    blocks: Any,
+    as_user: bool,
+    link_names: bool,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"slack_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"slack_api"``, ``"offline"`` so downstream observers can tell
+    where the result came from.
     """
     mocks = ctx.mocks or {}
     smock = mocks.get("slack_response")
@@ -294,6 +338,18 @@ def _resolve_slack_response(
         if env is not None:
             return env, "http_response"
 
+    cred = resolve_credential(node, ctx, "slackApi")
+    if cred:
+        cfg = _build_slack_request(cred, channel, text, blocks, as_user, link_names)
+        if cfg is not None:
+            logger.info("slack real HTTP call channel=%s", channel)
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return resp.body, "slack_api"
+            except Exception as exc:
+                logger.warning("slack HTTP call failed: %s", exc)
+
     return _synthesize_response(channel, text), "offline"
 
 
@@ -327,11 +383,15 @@ async def exec_slack(
             )
             continue
 
-        envelope, source = _resolve_slack_response(
+        envelope, source = await _resolve_slack_response(
             channel=channel,
             text=text,
+            blocks=blocks,
+            as_user=as_user,
+            link_names=link_names,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
         )
 
@@ -352,7 +412,9 @@ async def exec_slack(
             "channel": envelope.get("channel", channel) if isinstance(envelope, dict) else channel,
             "text": message_text or text,
             "ts": message_ts,
-            "message": message if isinstance(message, dict) else {
+            "message": message
+            if isinstance(message, dict)
+            else {
                 "type": "message",
                 "text": text,
                 "user": message_user,
@@ -364,7 +426,7 @@ async def exec_slack(
         }
         if blocks is not None:
             payload["blocks"] = blocks
-        if source != "slack_response":
+        if source not in ("slack_response", "slack_api"):
             payload["mockSource"] = source
 
         ni = item.clone()
@@ -415,9 +477,7 @@ def _resolve_event(node: "ExecNode", ctx: "EngineContext", event: str) -> dict[s
     return _synthesize_event(event)
 
 
-def _resolve_event_name(
-    params: dict[str, Any], ectx: ExpressionContext
-) -> str:
+def _resolve_event_name(params: dict[str, Any], ectx: ExpressionContext) -> str:
     raw = params.get("event")
     if raw is None:
         return "message"

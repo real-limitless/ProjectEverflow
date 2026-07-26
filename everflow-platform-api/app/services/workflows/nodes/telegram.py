@@ -9,7 +9,10 @@ v1 covers the operations most commonly used in n8n templates:
   configured webhook; items carry ``{updateId, messageId, fromId,
   fromName, chatId, text, source}``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a ``telegramBotApi`` credential is attached and no mock is present,
+real calls are made to the Telegram Bot API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
 
 Parameters honored by ``telegram``:
 
@@ -29,7 +32,10 @@ Behavior precedence for ``telegram``:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the Telegram envelope.
-3. Offline synthetic response with a random ``message_id`` and current
+3. If a ``telegramBotApi`` credential resolves (``token`` present), a
+   real ``POST /bot<token>/sendMessage`` call is made to the Telegram
+   Bot API and the ``result`` envelope is used.
+4. Offline synthetic response with a random ``message_id`` and current
    ``date``/``chat`` echo.
 
 Items with an empty resolved ``text`` are skipped (no item emitted).
@@ -52,7 +58,9 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -118,9 +126,7 @@ def _chat_id_to_int(chat_id: str) -> int:
         return 0
 
 
-def _resolve_chat_id(
-    params: dict[str, Any], item: ExecutionItem, ectx: ExpressionContext
-) -> str:
+def _resolve_chat_id(params: dict[str, Any], item: ExecutionItem, ectx: ExpressionContext) -> str:
     raw = params.get("chatId")
     if raw is not None:
         resolved = evaluate(raw, ectx)
@@ -130,9 +136,7 @@ def _resolve_chat_id(
     return _coerce_chat_id(item.json.get("chatId") or item.json.get("chat_id"))
 
 
-def _resolve_text(
-    params: dict[str, Any], item: ExecutionItem, ectx: ExpressionContext
-) -> str:
+def _resolve_text(params: dict[str, Any], item: ExecutionItem, ectx: ExpressionContext) -> str:
     raw = params.get("text")
     if raw is not None:
         resolved = evaluate(raw, ectx)
@@ -183,10 +187,8 @@ def _response_from_http_mock(mock: Any) -> dict[str, Any] | None:
     if isinstance(body, dict):
         if "message_id" in body or "chat" in body or "text" in body:
             return {
-                "message_id": body.get("message_id")
-                or random.randint(1, 10**9),
-                "chat": body.get("chat")
-                or {"id": body.get("chat_id", 0), "type": "private"},
+                "message_id": body.get("message_id") or random.randint(1, 10**9),
+                "chat": body.get("chat") or {"id": body.get("chat_id", 0), "type": "private"},
                 "date": body.get("date") or int(time.time()),
                 "text": body.get("text") or "",
             }
@@ -208,19 +210,73 @@ def _response_from_http_mock(mock: Any) -> dict[str, Any] | None:
     return None
 
 
-def _resolve_telegram_response(
+def _build_telegram_request(
+    cred: dict[str, Any],
+    chat_id: str,
+    text: str,
+    parse_mode: str,
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Telegram Bot API ``sendMessage`` request config.
+
+    Returns ``None`` when the credential has no ``token``.
+    """
+    token = str(cred.get("token") or cred.get("apiToken") or cred.get("access_token") or "")
+    if not token:
+        return None
+    body: dict[str, Any] = {"chat_id": chat_id, "text": text}
+    if parse_mode:
+        body["parse_mode"] = parse_mode
+    for passthrough in (
+        "disable_notification",
+        "reply_to_message_id",
+        "reply_markup",
+        "disable_web_page_preview",
+    ):
+        if passthrough in params and params[passthrough] is not None:
+            body[passthrough] = params[passthrough]
+    return HttpRequestConfig(
+        url=f"https://api.telegram.org/bot{token}/sendMessage",
+        method="POST",
+        body=body,
+        body_mode="json",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _envelope_from_telegram_api(
+    data: dict[str, Any],
+    text: str,
+) -> dict[str, Any]:
+    """Convert a real Telegram Bot API ``sendMessage`` response to the
+    internal envelope shape."""
+    result = data.get("result")
+    if not isinstance(result, dict):
+        result = data
+    return {
+        "message_id": result.get("message_id") or random.randint(1, 10**9),
+        "chat": result.get("chat") or {"id": 0, "type": "private"},
+        "date": result.get("date") or int(time.time()),
+        "text": result.get("text") or text,
+    }
+
+
+async def _resolve_telegram_response(
     *,
     chat_id: str,
     text: str,
+    parse_mode: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"telegram_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"telegram_api"``, ``"offline"`` so downstream observers can tell
+    where the result came from.
     """
     mocks = ctx.mocks or {}
     tmock = mocks.get("telegram_response")
@@ -232,10 +288,8 @@ def _resolve_telegram_response(
         if isinstance(raw, dict):
             return (
                 {
-                    "message_id": raw.get("message_id")
-                    or random.randint(1, 10**9),
-                    "chat": raw.get("chat")
-                    or {"id": _chat_id_to_int(chat_id), "type": "private"},
+                    "message_id": raw.get("message_id") or random.randint(1, 10**9),
+                    "chat": raw.get("chat") or {"id": _chat_id_to_int(chat_id), "type": "private"},
                     "date": raw.get("date") or int(time.time()),
                     "text": raw.get("text", text),
                 },
@@ -258,6 +312,25 @@ def _resolve_telegram_response(
         env = _response_from_http_mock(hmock)
         if env is not None:
             return env, "http_response"
+
+    cred = resolve_credential(node, ctx, "telegramBotApi")
+    if cred:
+        cfg = _build_telegram_request(cred, chat_id, text, parse_mode, params)
+        if cfg is not None:
+            logger.info(
+                "telegram real HTTP call chatId=%s parseMode=%s",
+                chat_id,
+                parse_mode,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_telegram_api(resp.body, text),
+                        "telegram_api",
+                    )
+            except Exception as exc:
+                logger.warning("telegram HTTP call failed: %s", exc)
 
     return _synthesize_response(chat_id, text), "offline"
 
@@ -285,16 +358,16 @@ async def exec_telegram(
 
         # Empty text → skip emitting any item
         if not text.strip():
-            logger.info(
-                "telegram skipped: empty text on node %r", node.name
-            )
+            logger.info("telegram skipped: empty text on node %r", node.name)
             continue
 
-        envelope, source = _resolve_telegram_response(
+        envelope, source = await _resolve_telegram_response(
             chat_id=chat_id,
             text=text,
+            parse_mode=parse_mode,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
         )
 
@@ -308,7 +381,7 @@ async def exec_telegram(
         }
         if isinstance(envelope.get("chat"), dict):
             payload["chat"] = envelope["chat"]
-        if source != "telegram_response":
+        if source not in ("telegram_response", "telegram_api"):
             payload["mockSource"] = source
 
         ni = item.clone()
@@ -416,9 +489,7 @@ def _extract_chat_id_str(message: dict[str, Any]) -> str:
     return _coerce_str(val)
 
 
-def _resolve_webhook_url(
-    params: dict[str, Any], ectx: ExpressionContext
-) -> str:
+def _resolve_webhook_url(params: dict[str, Any], ectx: ExpressionContext) -> str:
     raw = params.get("webhookUrl")
     if raw is None:
         return ""
@@ -463,10 +534,7 @@ async def exec_telegram_trigger(
     from_user = _extract_from(message)
     from_id = from_user.get("id")
     from_name = (
-        from_user.get("first_name")
-        or from_user.get("username")
-        or from_user.get("name")
-        or ""
+        from_user.get("first_name") or from_user.get("username") or from_user.get("name") or ""
     )
     chat_id = _extract_chat_id_str(message)
     text = _extract_text(message)
