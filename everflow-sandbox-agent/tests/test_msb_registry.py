@@ -10,10 +10,13 @@ import pytest
 from app.msb_registry import (
     ensure_msb_insecure_registries,
     image_needs_insecure_pull,
+    mark_sandbox_create_insecure_kwarg_unsupported,
     parse_image_registry_host,
     parse_insecure_hosts_env,
     registry_pull_error_hint,
     resolve_insecure_registry_hosts,
+    sandbox_create,
+    sandbox_create_insecure_kwarg_supported,
 )
 
 
@@ -125,3 +128,71 @@ def test_registry_pull_error_hint_appends_once() -> None:
 def test_registry_pull_error_hint_ignores_unrelated() -> None:
     detail = "named-volume: /dev/kvm is not available"
     assert registry_pull_error_hint(detail) == detail
+
+
+@pytest.fixture(autouse=True)
+def _reset_insecure_kwarg_cache() -> None:
+    import app.msb_registry as mod
+
+    mod._INSECURE_CREATE_KWARG_SUPPORTED = None
+    yield
+    mod._INSECURE_CREATE_KWARG_SUPPORTED = None
+
+
+@pytest.mark.asyncio
+async def test_sandbox_create_falls_back_when_insecure_kwarg_unsupported(monkeypatch) -> None:
+    import sys
+    import types
+
+    calls: list[dict[str, object]] = []
+
+    class FakeSandbox:
+        @staticmethod
+        async def create(name: str, **kwargs):
+            calls.append({"name": name, **kwargs})
+            if kwargs.get("insecure"):
+                raise TypeError("unexpected keyword argument 'insecure'")
+            return f"sb:{name}"
+
+    fake_mod = types.ModuleType("microsandbox")
+    fake_mod.Sandbox = FakeSandbox  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "microsandbox", fake_mod)
+
+    sb = await sandbox_create(
+        "proj-1",
+        use_insecure=True,
+        image="registry:5000/everflow/guest:latest",
+        cpus=1,
+        memory=512,
+        detached=True,
+    )
+    assert sb == "sb:proj-1"
+    assert len(calls) == 2
+    assert calls[0]["insecure"] is True
+    assert "insecure" not in calls[1]
+    assert sandbox_create_insecure_kwarg_supported() is False
+
+
+@pytest.mark.asyncio
+async def test_sandbox_create_skips_insecure_after_cache_marked(monkeypatch) -> None:
+    import sys
+    import types
+
+    calls: list[dict[str, object]] = []
+
+    class FakeSandbox:
+        @staticmethod
+        async def create(name: str, **kwargs):
+            calls.append(kwargs)
+            if kwargs.get("insecure"):
+                raise TypeError("unexpected keyword argument 'insecure'")
+            return name
+
+    fake_mod = types.ModuleType("microsandbox")
+    fake_mod.Sandbox = FakeSandbox  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "microsandbox", fake_mod)
+    mark_sandbox_create_insecure_kwarg_unsupported()
+
+    await sandbox_create("proj-2", use_insecure=True, image="registry:5000/g:latest")
+    assert len(calls) == 1
+    assert "insecure" not in calls[0]
