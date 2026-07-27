@@ -112,6 +112,14 @@ async def ensure_guest_desktop(exec_fn: ExecFn, name: str) -> bool:
     async with _lock_for(name):
         if await desktop_listening(exec_fn, name):
             return True
+        # Guest exec port probes flake under memory pressure while ports stay up.
+        # A false negative here reinstalls/restarts the stack and drops noVNC clients.
+        await asyncio.sleep(0.2)
+        if await desktop_listening(exec_fn, name):
+            return True
+        await asyncio.sleep(0.3)
+        if await desktop_listening(exec_fn, name):
+            return True
 
         await _install_desktop_script(exec_fn, name)
 
@@ -193,9 +201,13 @@ async def ensure_guest_desktop_for_proxy(
 
 
 def clamp_desktop_size(width: int, height: int) -> tuple[int, int]:
-    """Clamp and snap to even dimensions for xrandr/Xvfb."""
-    w = max(640, min(3840, int(width)))
-    h = max(480, min(2160, int(height)))
+    """Clamp and snap to even dimensions for xrandr/Xvfb.
+
+    Upper bound matches everflow_desktop.sh MAX_GEOMETRY (2560x1440) so the
+    panel cannot request a framebuffer larger than Xvfb was started with.
+    """
+    w = max(640, min(2560, int(width)))
+    h = max(480, min(1440, int(height)))
     w -= w % 2
     h -= h % 2
     return w, h
@@ -215,9 +227,11 @@ async def resize_guest_desktop(
     Returns ``(ok, width, height, message)``.
     """
     w, h = clamp_desktop_size(width, height)
-    # Push latest script (adds --resize) and ensure stack is up.
-    await _install_desktop_script(exec_fn, name)
-    await ensure_guest_desktop(exec_fn, name)
+    # Resize must not reinstall/ensure the stack — ensure's repair path used to
+    # _stop_stack when WM probes flaked, dropping live noVNC clients mid-session.
+    if not await desktop_listening(exec_fn, name):
+        await _install_desktop_script(exec_fn, name)
+        await ensure_guest_desktop(exec_fn, name)
     try:
         code, stdout, stderr = await exec_fn(
             name,

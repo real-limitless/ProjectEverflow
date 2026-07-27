@@ -15,7 +15,7 @@ DISPLAY_NUM="${EF_DISPLAY:-99}"
 export DISPLAY=":${DISPLAY_NUM}"
 # Preferred initial size (WxHxDepth). Xvfb starts at MAX so the panel can grow.
 GEOMETRY="${EF_DESKTOP_GEOMETRY:-1280x800x24}"
-MAX_GEOMETRY="${EF_DESKTOP_MAX_GEOMETRY:-3840x2160x24}"
+MAX_GEOMETRY="${EF_DESKTOP_MAX_GEOMETRY:-2560x1440x24}"
 VNC_PORT="${EF_VNC_PORT:-5900}"
 NOVNC_PORT="${EF_NOVNC_PORT:-6080}"
 NOVNC_WEB="${NOVNC_WEB:-/usr/share/novnc}"
@@ -324,11 +324,21 @@ fi
 
 if [[ "${1:-}" == "--restart" ]]; then
   _stop_stack
-elif _stack_healthy && _wm_alive; then
+elif _stack_healthy; then
+  # X + VNC + noVNC are accepting connections. Never tear them down just because
+  # the WM probe failed — that drops live noVNC clients (Client gone / WS 1006).
+  if ! _wm_alive || ! _desktop_core_alive; then
+    echo "everflow-desktop: stack listening; repairing WM/chrome only" >&2
+    if ! _wm_alive; then
+      _start_session
+    else
+      _start_xfce_clients
+    fi
+  fi
   echo "everflow-desktop: already up on :${NOVNC_PORT} (vnc :${VNC_PORT})"
   exit 0
 elif _port_open "$NOVNC_PORT" || _port_open "$VNC_PORT" || [[ -S "$XSOCK" ]]; then
-  # Partial / zombie-confused stack — repair
+  # Truly partial / zombie-confused stack — repair
   echo "everflow-desktop: repairing partial stack" >&2
   _stop_stack
 fi

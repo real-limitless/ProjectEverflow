@@ -17,6 +17,7 @@ import base64
 import json
 import logging
 import re
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 from urllib.parse import urljoin
@@ -32,6 +33,12 @@ logger = logging.getLogger(__name__)
 DESKTOP_NOVNC_PORT = 6080
 
 ExecFn = Callable[..., Awaitable[tuple[int, str, str]]]
+
+# Cache noVNC static GETs so they never share the guest TCP mux with websockify WS.
+_desktop_http_cache: dict[str, tuple[float, int, str, bytes]] = {}
+_desktop_http_inflight: dict[str, asyncio.Future[tuple[int, str, bytes]]] = {}
+_DESKTOP_HTTP_CACHE_TTL_S = 120.0
+_DESKTOP_HTTP_CACHE_MAX = 256
 
 HOP_BY_HOP = {
     "connection",
@@ -389,6 +396,97 @@ async def proxy_http_to_port(
     )
 
 
+async def proxy_desktop_static_via_guest(
+    request: Request,
+    *,
+    exec_fn: ExecFn,
+    sandbox_name: str,
+    path: str,
+) -> Response:
+    """Fetch noVNC static assets via guest exec — never via the 6080 TCP mux.
+
+    Sharing the multiplexed exec_stream between dozens of asset GETs and the
+    long-lived websockify WebSocket correlates with upstream WS 1006 drops.
+    """
+    method = request.method.upper()
+    if method not in {"GET", "HEAD"}:
+        return await proxy_http_via_guest_exec(
+            request,
+            exec_fn=exec_fn,
+            sandbox_name=sandbox_name,
+            port=DESKTOP_NOVNC_PORT,
+            path=path,
+            body=await request.body(),
+            method=method,
+            guest_port=DESKTOP_NOVNC_PORT,
+        )
+
+    rel = path.lstrip("/") if path else ""
+    cache_key = f"{sandbox_name}:{rel}"
+    now = time.monotonic()
+    hit = _desktop_http_cache.get(cache_key)
+    if hit is not None:
+        expires, status, ctype, content = hit
+        if expires > now:
+            body = b"" if method == "HEAD" else content
+            return Response(content=body, status_code=status, media_type=ctype or None)
+
+    inflight = _desktop_http_inflight.get(cache_key)
+    if inflight is None:
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[tuple[int, str, bytes]] = loop.create_future()
+        _desktop_http_inflight[cache_key] = fut
+
+        async def _fetch() -> None:
+            try:
+                resp = await proxy_http_via_guest_exec(
+                    request,
+                    exec_fn=exec_fn,
+                    sandbox_name=sandbox_name,
+                    port=DESKTOP_NOVNC_PORT,
+                    path=path,
+                    body=b"",
+                    method="GET",
+                    guest_port=DESKTOP_NOVNC_PORT,
+                )
+                raw = getattr(resp, "body", None)
+                if not isinstance(raw, (bytes, bytearray)):
+                    raw = b""
+                status = int(resp.status_code)
+                ctype = str(resp.media_type or "")
+                if status == 200:
+                    if len(_desktop_http_cache) >= _DESKTOP_HTTP_CACHE_MAX:
+                        _desktop_http_cache.pop(next(iter(_desktop_http_cache)), None)
+                    _desktop_http_cache[cache_key] = (
+                        time.monotonic() + _DESKTOP_HTTP_CACHE_TTL_S,
+                        status,
+                        ctype,
+                        bytes(raw),
+                    )
+                if not fut.done():
+                    fut.set_result((status, ctype, bytes(raw)))
+            except Exception as exc:  # noqa: BLE001
+                if not fut.done():
+                    fut.set_exception(exc)
+            finally:
+                _desktop_http_inflight.pop(cache_key, None)
+
+        asyncio.create_task(_fetch())
+        inflight = fut
+
+    try:
+        status, ctype, content = await inflight
+    except Exception as exc:  # noqa: BLE001
+        return Response(
+            content=json.dumps({"detail": f"Desktop asset fetch failed: {exc}"}),
+            status_code=502,
+            media_type="application/json",
+        )
+
+    body = b"" if method == "HEAD" else content
+    return Response(content=body, status_code=status, media_type=ctype or None)
+
+
 async def proxy_http_via_guest_exec(
     request: Request,
     *,
@@ -588,6 +686,18 @@ async def proxy_websocket_to_port(
         "additional_headers": extra_headers,
         "compression": None,
     }
+    # noVNC/websockify streams large binary frames; default ping_timeout=20 and
+    # max_queue=16 drop the bridge under guest load (Chrome + OpenCode + FB updates).
+    is_desktop = guest_port == DESKTOP_NOVNC_PORT or port == DESKTOP_NOVNC_PORT
+    if is_desktop:
+        connect_kwargs["ping_interval"] = None
+        connect_kwargs["ping_timeout"] = None
+        connect_kwargs["max_queue"] = None
+    else:
+        # Vite HMR can stall briefly during rebuilds; keep pings but be patient.
+        connect_kwargs["ping_interval"] = 30
+        connect_kwargs["ping_timeout"] = 120
+        connect_kwargs["max_queue"] = 64
     if upstream_subs:
         connect_kwargs["subprotocols"] = upstream_subs
 
@@ -595,7 +705,6 @@ async def proxy_websocket_to_port(
     try:
         upstream = await websockets.connect(url, **connect_kwargs)
     except TypeError:
-        # Older websockets: no compression= kw
         connect_kwargs.pop("compression", None)
         try:
             upstream = await websockets.connect(url, **connect_kwargs)
@@ -604,7 +713,6 @@ async def proxy_websocket_to_port(
             await _reject_websocket(websocket, 1011)
             return
     except Exception as exc:  # noqa: BLE001
-        # Retry without subprotocol for non-Vite apps
         if upstream_subs:
             try:
                 connect_kwargs.pop("subprotocols", None)

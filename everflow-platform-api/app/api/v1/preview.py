@@ -482,6 +482,16 @@ async def _handle_preview_websocket(
         "max_size": 8 * 1024 * 1024,
         "compression": None,
     }
+    # Desktop noVNC: disable keepalive kills + unbounded receive queue (binary FB stream).
+    # Default ping_timeout=20 / max_queue=16 drops the edge hop under guest load.
+    if int(endpoint.port) == 6080:
+        connect_kwargs["ping_interval"] = None
+        connect_kwargs["ping_timeout"] = None
+        connect_kwargs["max_queue"] = None
+    else:
+        connect_kwargs["ping_interval"] = 30
+        connect_kwargs["ping_timeout"] = 120
+        connect_kwargs["max_queue"] = 64
     # Forward vite-hmr (or whatever the browser asked for) to the agent hop
     if accept_sub:
         connect_kwargs["subprotocols"] = [accept_sub]

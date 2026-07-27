@@ -741,6 +741,7 @@ async def opencode_ensure(
     mcp_status: dict[str, Any] | None = None
     cfg = settings
 
+
     async def _configure_everflow_mcp(*, guest: bool, host_ws: Path | None) -> None:
         nonlocal mcp_status, force
         if not body:
@@ -777,12 +778,9 @@ async def opencode_ensure(
                     "mode": "guest",
                 }
                 return
-            # Package content changed → OpenCode must restart to re-spawn MCP
-            # (env/token can stay; only the python package changed).
-            if package_status.get("upgraded") or package_status.get("source") in (
-                "vendor",
-                "upgraded",
-            ):
+            # Restart only when package bytes actually changed (or first install).
+            # source=="existing" must never force-restart a healthy OpenCode.
+            if package_status.get("upgraded") or package_status.get("source") == "vendor":
                 force = True
 
         if guest and agent_platform_url:
@@ -1295,11 +1293,25 @@ async def sandbox_port_proxy(
     from app.desktop import ensure_guest_desktop_for_proxy
 
     await ensure_guest_desktop_for_proxy(backend.exec, name, port)
+
+    # noVNC static assets must NOT share the guest TCP mux with websockify WS.
+    # Asset floods on that mux correlate with upstream WS 1006 / x11vnc Client gone.
+    if port == 6080 and request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
+        from app.preview_proxy import proxy_desktop_static_via_guest
+
+        return await proxy_desktop_static_via_guest(
+            request,
+            exec_fn=backend.exec,
+            sandbox_name=name,
+            path=path or "",
+        )
+
     try:
         dial_host, dial_port, mode = await resolve_dial_target(name, port, backend=backend)
     except Exception as exc:  # noqa: BLE001
         logger.warning("resolve dial target failed name=%s port=%s: %s", name, port, exc)
         dial_host, dial_port, mode = "127.0.0.1", port, "unreachable"
+
 
     # Prefer real TCP (host or tunnel). Fall back to guest-exec HTTP when dial fails.
     return await proxy_http_to_port(
