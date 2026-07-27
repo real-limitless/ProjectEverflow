@@ -1,6 +1,11 @@
 """Unit tests for knowledge web-read extraction (no network)."""
 
-from app.services.web_read import WebReadError, html_to_reader_markdown, validate_public_http_url
+from app.services.web_read import (
+    WebReadError,
+    html_to_reader_markdown,
+    is_thin_markdown,
+    validate_public_http_url,
+)
 
 
 def test_validate_blocks_localhost() -> None:
@@ -44,3 +49,28 @@ def test_html_extracts_article_body() -> None:
     assert "Copyright" not in md
     assert "Home Ads" not in md
     assert "https://news.example.com/more" in md
+
+
+def test_is_thin_markdown_short() -> None:
+    assert is_thin_markdown("short")
+    assert is_thin_markdown("")
+    long_ok = "x" * 500
+    assert not is_thin_markdown(long_ok)
+
+
+def test_is_thin_markdown_soft_block() -> None:
+    body = (
+        "Please enable JavaScript to continue. " + ("padding text here. " * 40)
+    )
+    assert is_thin_markdown(body)
+
+
+def test_payload_method_defaults_on_http_shape() -> None:
+    # fetch_reader_content is network-bound; just ensure helpers compose
+    title, md = html_to_reader_markdown(
+        "<html><head><title>T</title></head><body><article><p>"
+        + ("word " * 200)
+        + "</p></article></body></html>"
+    )
+    assert title == "T"
+    assert not is_thin_markdown(md)

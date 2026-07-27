@@ -32,6 +32,62 @@ def generate_raw_token() -> str:
     return TOKEN_PREFIX + secrets.token_urlsafe(32)
 
 
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _absolute_expiry_cap(
+    *,
+    created_at: datetime | None,
+    now: datetime,
+    settings: Settings,
+) -> datetime | None:
+    """Latest expires_at allowed for continuous use (None = no hard cap)."""
+    max_life = int(getattr(settings, "sandbox_token_max_lifetime_seconds", 0) or 0)
+    if max_life <= 0:
+        return None
+    created = _as_utc(created_at) if created_at is not None else now
+    return created + timedelta(seconds=max_life)
+
+
+def _slide_expiry(
+    row: SandboxAccessToken,
+    *,
+    now: datetime,
+    settings: Settings,
+) -> bool:
+    """Extend expires_at when remaining life is short. Returns True if changed.
+
+    Long-running OpenCode/MCP sessions keep the same raw token in guest mcp.env;
+    without sliding they hit 401 after sandbox_token_ttl_seconds of wall time.
+    """
+    exp = _as_utc(row.expires_at)
+    remaining = (exp - now).total_seconds()
+    if remaining <= 0:
+        return False
+
+    ttl = max(60, int(settings.sandbox_token_ttl_seconds))
+    slide_if = int(
+        getattr(settings, "sandbox_token_slide_if_remaining_seconds", 0) or 0
+    )
+    if slide_if <= 0:
+        slide_if = max(60, ttl // 2)
+    if remaining > slide_if:
+        return False
+
+    new_exp = now + timedelta(seconds=ttl)
+    cap = _absolute_expiry_cap(created_at=row.created_at, now=now, settings=settings)
+    if cap is not None and new_exp > cap:
+        new_exp = cap
+    # Already at/ past hard cap with little room left — do not extend.
+    if new_exp <= exp:
+        return False
+    row.expires_at = new_exp
+    return True
+
+
 async def mint_sandbox_token(
     session: AsyncSession,
     *,
@@ -78,9 +134,13 @@ async def mint_sandbox_token(
 async def verify_sandbox_token(
     session: AsyncSession,
     raw: str,
+    *,
+    settings: Settings | None = None,
 ) -> SandboxAccessToken | None:
+    """Validate bearer token; slide expires_at on active use so long sessions survive."""
     if not raw or not raw.startswith(TOKEN_PREFIX):
         return None
+    settings = settings or get_settings()
     digest = _hash_token(raw)
     result = await session.execute(
         select(SandboxAccessToken).where(SandboxAccessToken.token_hash == digest)
@@ -91,12 +151,16 @@ async def verify_sandbox_token(
     now = datetime.now(timezone.utc)
     if row.revoked_at is not None:
         return None
-    exp = row.expires_at
-    if exp.tzinfo is None:
-        exp = exp.replace(tzinfo=timezone.utc)
+    exp = _as_utc(row.expires_at)
     if exp <= now:
         return None
+    # Absolute max lifetime: reject even if expires_at was extended past the cap
+    # (defensive; slide already clamps).
+    cap = _absolute_expiry_cap(created_at=row.created_at, now=now, settings=settings)
+    if cap is not None and now >= cap:
+        return None
     row.last_used_at = now
+    _slide_expiry(row, now=now, settings=settings)
     await session.commit()
     await session.refresh(row)
     return row

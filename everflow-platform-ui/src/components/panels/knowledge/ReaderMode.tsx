@@ -5,13 +5,15 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@patternfly/react-core'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { getProject } from '@/data/projects'
 import {
   ApiError,
   fetchKnowledgeWebRead,
   isDemoMode,
   promoteResearchToCanvas,
+  type ApiWebReadMethod,
+  type ApiWebReadMode,
 } from '@/lib/api'
 import { markdownToHtml } from '@/lib/chatMarkdown'
 import {
@@ -21,7 +23,7 @@ import {
   summarizeArticleWithOpenCode,
 } from '@/lib/knowledge/researchChat'
 import { pushToast } from '@/lib/studioToast'
-import type { WebSearchHit } from '@/types/studio'
+import type { WebReadMethod, WebSearchHit } from '@/types/studio'
 import { researchReply, summarizeReader } from './demoKnowledge'
 
 interface ReaderModeProps {
@@ -30,7 +32,12 @@ interface ReaderModeProps {
   onBack: () => void
   onAddToKnowledge: (hit: WebSearchHit) => void
   /** Persist extracted markdown onto the hit in the parent list */
-  onContentLoaded?: (hitId: string, markdown: string, title?: string) => void
+  onContentLoaded?: (
+    hitId: string,
+    markdown: string,
+    title?: string,
+    method?: WebReadMethod,
+  ) => void
 }
 
 interface ChatLine {
@@ -40,6 +47,21 @@ interface ChatLine {
 
 type ViewMode = 'reader' | 'website'
 
+interface ReaderFrame {
+  url: string
+  title: string
+  markdown: string
+  method?: WebReadMethod
+  warnings?: string[]
+}
+
+function methodLabel(m?: WebReadMethod): string {
+  if (m === 'browser') return 'Browser'
+  if (m === 'ocr') return 'OCR'
+  if (m === 'http') return 'HTTP'
+  return '…'
+}
+
 export function ReaderMode({
   hit,
   projectId,
@@ -48,8 +70,17 @@ export function ReaderMode({
   onContentLoaded,
 }: ReaderModeProps) {
   const [view, setView] = useState<ViewMode>('reader')
-  const [markdown, setMarkdown] = useState(hit.readerMarkdown || '')
-  const [title, setTitle] = useState(hit.title)
+  const [history, setHistory] = useState<ReaderFrame[]>([
+    {
+      url: hit.url,
+      title: hit.title,
+      markdown: hit.readerMarkdown || '',
+      method: hit.extractMethod,
+    },
+  ])
+  const [histIndex, setHistIndex] = useState(0)
+  const frame = history[histIndex] ?? history[0]
+  const [urlDraft, setUrlDraft] = useState(hit.url)
   const [loading, setLoading] = useState(!hit.readerMarkdown)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [summary, setSummary] = useState<string | null>(null)
@@ -61,43 +92,116 @@ export function ReaderMode({
   const [iframeFailed, setIframeFailed] = useState(false)
   const [promoting, setPromoting] = useState(false)
   const researchSessionRef = useRef<string | null>(null)
+  const loadGenRef = useRef(0)
+  const histIndexRef = useRef(0)
   const project = getProject(projectId === 'default' ? null : projectId)
   const useApi = Boolean(project?.fromApi) && !isDemoMode()
 
+  const title = frame?.title || hit.title
+  const markdown = frame?.markdown || ''
+  const currentUrl = frame?.url || hit.url
+  const extractMethod = frame?.method
+
   useEffect(() => {
-    setTitle(hit.title)
-    setSummary(null)
-    setChat([])
-    setDraft('')
-    setIframeFailed(false)
-    setView('reader')
-    const prevSession = researchSessionRef.current
-    researchSessionRef.current = null
-    if (prevSession && useApi) {
-      void endResearchSession(projectId, prevSession)
-    }
+    histIndexRef.current = histIndex
+  }, [histIndex])
 
-    if (hit.readerMarkdown) {
-      setMarkdown(hit.readerMarkdown)
-      setLoading(false)
+  const loadUrl = useCallback(
+    async (
+      url: string,
+      opts?: {
+        mode?: ApiWebReadMode
+        /** Replace current history entry instead of pushing */
+        replace?: boolean
+        /** Jump to existing index without pushing */
+        goIndex?: number
+      },
+    ) => {
+      const target = url.trim()
+      if (!target) return
+      const gen = ++loadGenRef.current
+      setLoading(true)
       setLoadError(null)
-      return
-    }
+      setSummary(null)
+      setIframeFailed(false)
+      setUrlDraft(target)
 
-    let cancelled = false
-    setLoading(true)
-    setLoadError(null)
-    setMarkdown('')
+      const applyFrame = (next: ReaderFrame) => {
+        if (opts?.goIndex != null) {
+          const idx = opts.goIndex
+          histIndexRef.current = idx
+          setHistIndex(idx)
+          setHistory((h) => {
+            const copy = [...h]
+            copy[idx] = next
+            return copy
+          })
+          return
+        }
+        if (opts?.replace) {
+          setHistory((h) => {
+            const copy = [...h]
+            const idx = Math.min(histIndexRef.current, Math.max(0, copy.length - 1))
+            copy[idx] = next
+            return copy
+          })
+          return
+        }
+        setHistory((h) => {
+          const idx = Math.min(histIndexRef.current, Math.max(0, h.length - 1))
+          const truncated = h.slice(0, idx + 1)
+          return [...truncated, next]
+        })
+        setHistIndex((i) => {
+          const nextIdx = i + 1
+          histIndexRef.current = nextIdx
+          return nextIdx
+        })
+      }
 
-    void (async () => {
+      // Cached entry hit for the seed URL
+      if (
+        target === hit.url &&
+        hit.readerMarkdown &&
+        (!opts?.mode || opts.mode === 'auto' || opts.mode === 'http')
+      ) {
+        applyFrame({
+          url: target,
+          title: hit.title,
+          markdown: hit.readerMarkdown,
+          method: hit.extractMethod || 'http',
+        })
+        setLoading(false)
+        return
+      }
+
       try {
-        const result = await fetchKnowledgeWebRead(projectId, hit.url)
-        if (cancelled) return
-        setMarkdown(result.markdown)
-        if (result.title) setTitle(result.title)
-        onContentLoaded?.(hit.id, result.markdown, result.title)
+        const result = await fetchKnowledgeWebRead(projectId, target, {
+          mode: opts?.mode ?? 'auto',
+        })
+        if (gen !== loadGenRef.current) return
+        const method = (result.method || 'http') as ApiWebReadMethod
+        const next: ReaderFrame = {
+          url: result.url || target,
+          title: result.title || target,
+          markdown: result.markdown,
+          method,
+          warnings: result.warnings,
+        }
+        setUrlDraft(next.url)
+        applyFrame(next)
+        // Only cache onto parent list when still on the original search hit URL
+        if (next.url === hit.url || target === hit.url) {
+          onContentLoaded?.(hit.id, next.markdown, next.title, method)
+        }
+        if (result.warnings?.length) {
+          // Soft notice — do not spam toasts on every thin escalate
+          if (opts?.mode === 'browser' || opts?.mode === 'ocr') {
+            pushToast(result.warnings.slice(-1)[0], { kind: 'info' })
+          }
+        }
       } catch (e) {
-        if (cancelled) return
+        if (gen !== loadGenRef.current) return
         const msg =
           e instanceof ApiError
             ? e.message
@@ -105,18 +209,55 @@ export function ReaderMode({
               ? e.message
               : 'Failed to load page content'
         setLoadError(msg)
-        setMarkdown(
-          `# ${hit.title}\n\n${hit.snippet}\n\n_Could not extract full page text._\n\n[Open original](${hit.url})\n`,
-        )
+        applyFrame({
+          url: target,
+          title: target === hit.url ? hit.title : target,
+          markdown:
+            target === hit.url
+              ? `# ${hit.title}\n\n${hit.snippet}\n\n_Could not extract full page text._\n\n[Open original](${hit.url})\n`
+              : `# ${target}\n\n_Could not extract full page text._\n\n[Open original](${target})\n`,
+        })
       } finally {
-        if (!cancelled) setLoading(false)
+        if (gen === loadGenRef.current) setLoading(false)
       }
-    })()
+    },
+    [hit, onContentLoaded, projectId],
+  )
 
-    return () => {
-      cancelled = true
+  // Initial load when opening a hit
+  useEffect(() => {
+    setView('reader')
+    setSummary(null)
+    setChat([])
+    setDraft('')
+    setIframeFailed(false)
+    histIndexRef.current = 0
+    setHistory([
+      {
+        url: hit.url,
+        title: hit.title,
+        markdown: hit.readerMarkdown || '',
+        method: hit.extractMethod,
+      },
+    ])
+    setHistIndex(0)
+    setUrlDraft(hit.url)
+    const prevSession = researchSessionRef.current
+    researchSessionRef.current = null
+    if (prevSession && useApi) {
+      void endResearchSession(projectId, prevSession)
     }
-  }, [hit.id, hit.url, hit.title, hit.snippet, hit.readerMarkdown, projectId, onContentLoaded, useApi])
+
+    if (hit.readerMarkdown) {
+      setLoading(false)
+      setLoadError(null)
+      return
+    }
+
+    void loadUrl(hit.url, { replace: true, goIndex: 0 })
+    // Only re-init when the entry hit changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional seed load
+  }, [hit.id, hit.url, projectId, useApi])
 
   useEffect(() => {
     return () => {
@@ -129,6 +270,55 @@ export function ReaderMode({
     markdown ||
     `# ${title}\n\n${hit.snippet}\n\n_No full reader text for this result._`
 
+  const canBack = histIndex > 0
+  const canForward = histIndex < history.length - 1
+
+  const goBack = () => {
+    if (!canBack) return
+    const next = histIndex - 1
+    histIndexRef.current = next
+    setHistIndex(next)
+    setUrlDraft(history[next]?.url || '')
+    setLoadError(null)
+    setSummary(null)
+  }
+
+  const goForward = () => {
+    if (!canForward) return
+    const next = histIndex + 1
+    histIndexRef.current = next
+    setHistIndex(next)
+    setUrlDraft(history[next]?.url || '')
+    setLoadError(null)
+    setSummary(null)
+  }
+
+  const navigateTo = (url: string, mode?: ApiWebReadMode) => {
+    void loadUrl(url, { mode })
+  }
+
+  const onReaderLinkClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = (e.target as HTMLElement | null)?.closest?.('a')
+    if (!el) return
+    const href = el.getAttribute('href')
+    if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('javascript:')) {
+      return
+    }
+    let absolute: string
+    try {
+      absolute = new URL(href, currentUrl).toString()
+    } catch {
+      return
+    }
+    if (!absolute.startsWith('http://') && !absolute.startsWith('https://')) {
+      return
+    }
+    e.preventDefault()
+    e.stopPropagation()
+    setView('reader')
+    navigateTo(absolute)
+  }
+
   const runSummarize = async () => {
     if (loading || !markdown) return
     setSummarizing(true)
@@ -140,7 +330,6 @@ export function ReaderMode({
         setSummary(summarizeReader(title, body))
       }
     } catch (e) {
-      // Fallback demo summary if OpenCode unavailable
       setSummary(summarizeReader(title, body))
       pushToast(e instanceof Error ? e.message : 'Summary used offline fallback', {
         kind: 'warning',
@@ -193,7 +382,9 @@ export function ReaderMode({
   const enrichedHit: WebSearchHit = {
     ...hit,
     title,
+    url: currentUrl,
     readerMarkdown: markdown || hit.readerMarkdown,
+    extractMethod,
   }
 
   const promoteResearch = async (mode: 'thread' | 'claims') => {
@@ -219,7 +410,7 @@ export function ReaderMode({
           200,
         ),
         mode,
-        source_url: hit.url,
+        source_url: currentUrl,
         article_title: title,
         thread: chat,
         article_markdown: markdown || hit.readerMarkdown || '',
@@ -351,18 +542,90 @@ export function ReaderMode({
         </div>
       </div>
 
+      <div className="reader-mode-chrome" aria-label="Reader navigation">
+        <Button
+          size="sm"
+          variant="secondary"
+          isDisabled={!canBack || loading}
+          onClick={goBack}
+          aria-label="Back"
+        >
+          ←
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          isDisabled={!canForward || loading}
+          onClick={goForward}
+          aria-label="Forward"
+        >
+          →
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          isDisabled={loading}
+          onClick={() => void loadUrl(currentUrl, { replace: true, mode: 'auto' })}
+          aria-label="Reload"
+        >
+          ↻
+        </Button>
+        <TextInput
+          className="reader-mode-url-input"
+          value={urlDraft}
+          onChange={(_e, v) => setUrlDraft(v)}
+          aria-label="Page URL"
+          isDisabled={loading}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              navigateTo(urlDraft.trim())
+            }
+          }}
+        />
+        <Button
+          size="sm"
+          variant="primary"
+          isDisabled={loading || !urlDraft.trim()}
+          onClick={() => navigateTo(urlDraft.trim())}
+        >
+          Go
+        </Button>
+        <span
+          className={`reader-mode-method-badge method-${extractMethod || 'unknown'}`}
+          title={frame?.warnings?.join('\n') || 'Extraction method'}
+        >
+          {methodLabel(extractMethod)}
+        </span>
+        <Button
+          size="sm"
+          variant="secondary"
+          isDisabled={loading}
+          onClick={() => void loadUrl(currentUrl, { replace: true, mode: 'browser' })}
+        >
+          Browser extract
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          isDisabled={loading}
+          onClick={() => void loadUrl(currentUrl, { replace: true, mode: 'ocr' })}
+        >
+          OCR
+        </Button>
+      </div>
+
       <div className="reader-mode-main">
         {view === 'website' ? (
           <div className="reader-mode-website">
             <div className="reader-mode-website-bar">
-              <a className="reader-mode-url" href={hit.url} target="_blank" rel="noreferrer">
-                {hit.url}
+              <a className="reader-mode-url" href={currentUrl} target="_blank" rel="noreferrer">
+                {currentUrl}
               </a>
               <Button
                 size="sm"
                 variant="link"
                 isInline
-                onClick={() => window.open(hit.url, '_blank', 'noopener,noreferrer')}
+                onClick={() => window.open(currentUrl, '_blank', 'noopener,noreferrer')}
               >
                 Open in new tab
               </Button>
@@ -375,7 +638,7 @@ export function ReaderMode({
                 <p>This site could not be shown in an iframe (often blocked by the publisher).</p>
                 <Button
                   variant="primary"
-                  onClick={() => window.open(hit.url, '_blank', 'noopener,noreferrer')}
+                  onClick={() => window.open(currentUrl, '_blank', 'noopener,noreferrer')}
                 >
                   Open original
                 </Button>
@@ -386,7 +649,7 @@ export function ReaderMode({
             ) : (
               <iframe
                 title={title}
-                src={hit.url}
+                src={currentUrl}
                 className="reader-mode-iframe"
                 referrerPolicy="no-referrer-when-downgrade"
                 sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-popups-to-escape-sandbox"
@@ -398,11 +661,14 @@ export function ReaderMode({
           <article className="reader-mode-article">
             <header className="reader-mode-header">
               <h2 className="reader-mode-title">{title}</h2>
-              <a className="reader-mode-url" href={hit.url} target="_blank" rel="noreferrer">
-                {hit.url}
+              <a className="reader-mode-url" href={currentUrl} target="_blank" rel="noreferrer">
+                {currentUrl}
               </a>
               <p className="reader-mode-badge">
-                Reader · extracted article text (ads/chrome removed)
+                Reader · extracted article text
+                {extractMethod ? ` · via ${methodLabel(extractMethod)}` : ''}
+                {' '}
+                (click links to surf)
               </p>
             </header>
             {loading ? (
@@ -417,6 +683,14 @@ export function ReaderMode({
                 <Button variant="link" isInline onClick={() => setView('website')}>
                   View website
                 </Button>
+                {' · '}
+                <Button
+                  variant="link"
+                  isInline
+                  onClick={() => void loadUrl(currentUrl, { replace: true, mode: 'browser' })}
+                >
+                  Retry with browser
+                </Button>
               </div>
             ) : null}
             {summary && (
@@ -428,6 +702,7 @@ export function ReaderMode({
             {!loading ? (
               <div
                 className="knowledge-md reader-mode-body"
+                onClick={onReaderLinkClick}
                 dangerouslySetInnerHTML={{ __html: markdownToHtml(body) }}
               />
             ) : null}

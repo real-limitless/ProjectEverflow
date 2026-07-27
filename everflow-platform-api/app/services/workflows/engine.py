@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from app.services.workflows.graph import ExecGraph, ExecNode, build_exec_graph
 from app.services.workflows.items import ExecutionItem
@@ -106,6 +107,25 @@ class EngineContext:
     fatal_error: str | None = None
     on_step: OnStep | None = None
     cancel_check: CancelCheck | None = None
+    # Multi-input merge buffering: target_id -> source_id -> items
+    pending_inputs: dict[str, dict[str, list[ExecutionItem]]] = field(default_factory=dict)
+    # source_id -> list of (input_index, items) for merge-aware executors
+    pending_inputs_indexed: dict[str, list[tuple[int, list[ExecutionItem]]]] = field(
+        default_factory=dict
+    )
+    # Wait-node bookkeeping: node_id -> {mode, resume_url, items}
+    wait_states: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Run identifier used to mint resume URLs.
+    run_id: str | None = None
+    # Webhook bookkeeping
+    webhook_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
+    webhook_response: dict[str, Any] | None = None
+    # AI memory sub-nodes: node_id -> {type, contextWindowLength, sessionId}
+    memory_configs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Mutable memory state shared across nodes in a run.
+    memory_state: dict[str, Any] = field(default_factory=dict)
+    # Output parser sub-nodes: node_id -> {type, schema}
+    output_parsers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def resolve_credential(self, node: ExecNode, cred_type: str) -> dict[str, Any] | None:
         if cred_type in self.credentials:
@@ -150,6 +170,11 @@ class WorkflowEngine:
         self.max_steps = max_steps
         self.on_step = on_step
         self.cancel_check = cancel_check
+        # Set by the respondToWebhook executor; read after run() for the
+        # platform API to return on the inbound HTTP request.
+        self.last_webhook_response: dict[str, Any] | None = None
+        # Run identifier used to mint resume URLs.
+        self.run_id: str | None = str(uuid4()) if hasattr(uuid4, "__call__") else None
 
     async def run(
         self,
@@ -166,6 +191,7 @@ class WorkflowEngine:
             max_steps=self.max_steps,
             on_step=self.on_step,
             cancel_check=self.cancel_check,
+            run_id=getattr(self, "run_id", None),
         )
 
         if pin_data:
@@ -217,6 +243,11 @@ class WorkflowEngine:
                     data_tables=ctx.data_tables,
                     sent_emails=list((ctx.mocks or {}).get("sent_emails") or []),
                 )
+
+            # Persist the webhook response (set by respondToWebhook) for the
+            # platform API to return on the inbound HTTP request.
+            if ctx.webhook_response is not None:
+                self.last_webhook_response = dict(ctx.webhook_response)
 
             return RunResult(
                 status="success",
@@ -350,7 +381,14 @@ class WorkflowEngine:
                 is_return = "splitInBatches" in target.type and self._is_loop_body_return(
                     target.id, node.id
                 )
-                await self._run_node(ctx, target, out_items, from_loop=is_return)
+                await self._enqueue_or_run(
+                    ctx,
+                    target,
+                    source=node,
+                    out_items=out_items,
+                    source_out_index=out_idx,
+                    from_loop=is_return,
+                )
                 if ctx.fatal_error:
                     return main_stored
 
@@ -377,6 +415,170 @@ class WorkflowEngine:
             return 20
 
         return sorted(edges, key=rank)
+
+    def _expected_main_sources(self, target_id: str) -> set[str]:
+        """Set of source node ids with a main edge into target_id.
+
+        Cached on the graph object for the lifetime of the engine instance.
+        """
+        cache = getattr(self, "_expected_main_sources_cache", None)
+        if cache is None:
+            cache = {}
+            for nid in self.graph.nodes_by_id:
+                cache[nid] = {
+                    e.source_id
+                    for in_edges in self.graph.in_main.get(nid, [])
+                    for e in [in_edges]
+                }
+                # Use a set comprehension for clarity
+                cache[nid] = {e.source_id for e in self.graph.in_main.get(nid, [])}
+            self._expected_main_sources_cache = cache
+        return cache.get(target_id, set())
+
+    async def _enqueue_or_run(
+        self,
+        ctx: EngineContext,
+        target: ExecNode,
+        source: ExecNode,
+        out_items: list[ExecutionItem],
+        *,
+        source_out_index: int = 0,
+        from_loop: bool = False,
+    ) -> None:
+        """Multi-input aware fan-out: buffer items until all sources arrive.
+
+        If the target expects only one main input, this is equivalent to a
+        direct :meth:`_run_node` call. If the target has multiple incoming
+        main edges, items are buffered per source; the target runs only when
+        every *expected non-trigger* source has delivered. Trigger sources
+        run immediately (only one trigger fires per run in v1).
+        """
+        expected = self._expected_main_sources(target.id)
+        source_is_trigger = (
+            "trigger" in source.type.lower() or source.type.endswith("Trigger")
+        )
+
+        if len(expected) <= 1:
+            # Common path: single-input target.
+            await self._run_node(
+                ctx,
+                target,
+                out_items,
+                from_loop=from_loop,
+            )
+            return
+
+        if source_is_trigger:
+            # Triggers are the entry point: don't wait for other triggers.
+            # Just run directly with this trigger's items.
+            ctx.pending_inputs.pop(target.id, None)
+            ctx.pending_inputs_indexed.pop(target.id, None)
+            await self._run_node(
+                ctx,
+                target,
+                out_items,
+                from_loop=from_loop,
+            )
+            return
+
+        # Skip buffering for back-edges (feedback in loops). An edge
+        # source → target is a back-edge when the target can reach back
+        # to source (i.e. they're in a cycle). For example, the loop body
+        # of a splitInBatches node feeds its last node back to the batch
+        # node — that final edge is a back-edge.
+        if self._is_reachable_from(target.id, source.id):
+            await self._run_node(
+                ctx,
+                target,
+                out_items,
+                from_loop=from_loop,
+            )
+            return
+
+        # Multi-input, non-trigger source: buffer and dispatch when ready.
+        pending = ctx.pending_inputs.setdefault(target.id, {})
+        pending[source.id] = out_items
+        indexed = ctx.pending_inputs_indexed.setdefault(target.id, [])
+        indexed.append((source_out_index, out_items))
+
+        # Non-trigger expected sources. If any expected source is reachable
+        # from the target itself (i.e. part of a feedback loop), it cannot
+        # fire until the target runs once. Treat that source as already
+        # "self-supplied" — do not wait for it.
+        non_trigger_expected = set()
+        for src_id in expected:
+            if self._is_trigger_node_id(src_id):
+                continue
+            if self._is_reachable_from(target.id, src_id):
+                continue
+            non_trigger_expected.add(src_id)
+
+        if not non_trigger_expected.issubset(set(pending.keys())):
+            # Not all non-trigger sources have arrived yet; wait.
+            return
+
+        # All non-trigger sources delivered. Combine and dispatch.
+        combined: list[ExecutionItem] = []
+        for src_id in sorted(pending.keys()):
+            for it in pending[src_id]:
+                combined.append(it)
+        # Clear pending for this target so re-entry can start fresh.
+        ctx.pending_inputs.pop(target.id, None)
+        ctx.pending_inputs_indexed.pop(target.id, None)
+
+        await self._run_node(
+            ctx,
+            target,
+            combined,
+            from_loop=from_loop,
+        )
+
+    def _is_trigger_node_id(self, node_id: str) -> bool:
+        n = self.graph.nodes_by_id.get(node_id)
+        if n is None:
+            return False
+        t = n.type.lower()
+        return "trigger" in t or n.type.endswith("Trigger")
+
+    def _is_reachable_from(
+        self,
+        start_id: str,
+        goal_id: str,
+        *,
+        max_depth: int = 64,
+    ) -> bool:
+        """BFS from ``start_id`` over main edges; True if ``goal_id`` found.
+
+        Used to detect feedback cycles: if any other expected source of a
+        multi-input target is reachable from the target itself, that source
+        cannot fire until the target runs at least once. We must not wait
+        for it (would deadlock).
+        """
+        if start_id == goal_id:
+            return True
+        cache = getattr(self, "_reach_cache", None)
+        if cache is None:
+            cache = {}
+            self._reach_cache = cache
+        cache_key = (start_id, goal_id)
+        if cache_key in cache:
+            return cache[cache_key]
+        seen = {start_id}
+        stack = [(start_id, 0)]
+        while stack:
+            cur, depth = stack.pop()
+            if depth >= max_depth:
+                continue
+            for idx in (0, 1, 2):
+                for e in self.graph.main_successors(cur, idx):
+                    if e.target_id == goal_id:
+                        cache[cache_key] = True
+                        return True
+                    if e.target_id not in seen:
+                        seen.add(e.target_id)
+                        stack.append((e.target_id, depth + 1))
+        cache[cache_key] = False
+        return False
 
     def _has_explicit_feedback(self, batch_node_id: str) -> bool:
         """True if any node reachable from loop output has a main edge back to the batch node."""

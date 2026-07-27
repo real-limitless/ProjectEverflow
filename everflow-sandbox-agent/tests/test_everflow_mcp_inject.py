@@ -13,6 +13,7 @@ from app.everflow_mcp_inject import (
     agent_mcp_fingerprint,
     build_everflow_mcp_config,
     ensure_everflow_mcp_package,
+    existing_token_needs_refresh,
     mcp_identity_matches,
     merge_knowledge_policy_markdown,
     merge_opencode_mcp,
@@ -108,8 +109,15 @@ def test_parse_mcp_env_and_identity() -> None:
     )
 
 
-def test_write_host_reuses_identity_without_token_churn(tmp_path: Path) -> None:
+def test_write_host_reuses_identity_without_token_churn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     pid = "22222222-2222-2222-2222-222222222222"
+    # Avoid real HTTP probe; treat stored token as still valid.
+    monkeypatch.setattr(
+        "app.everflow_mcp_inject.probe_sandbox_token_sync",
+        lambda **_kw: True,
+    )
     first = write_everflow_mcp_host(
         tmp_path,
         api_url="http://127.0.0.1:18765",
@@ -145,6 +153,79 @@ def test_write_host_reuses_identity_without_token_churn(tmp_path: Path) -> None:
     assert forced["reused"] is False
     env3 = (tmp_path / ".everflow" / "mcp.env").read_text(encoding="utf-8")
     assert "ef_sbox_forced" in env3
+
+
+def test_write_host_rewrites_when_token_probe_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Expired/invalid guest token must be replaced on ensure (recovery path)."""
+    pid = "22222222-2222-2222-2222-222222222222"
+    monkeypatch.setattr(
+        "app.everflow_mcp_inject.probe_sandbox_token_sync",
+        lambda **_kw: True,
+    )
+    write_everflow_mcp_host(
+        tmp_path,
+        api_url="http://127.0.0.1:18765",
+        token="ef_sbox_old",
+        project_id=pid,
+    )
+    monkeypatch.setattr(
+        "app.everflow_mcp_inject.probe_sandbox_token_sync",
+        lambda **_kw: False,  # 401/403
+    )
+    status = write_everflow_mcp_host(
+        tmp_path,
+        api_url="http://127.0.0.1:18765",
+        token="ef_sbox_new",
+        project_id=pid,
+        force_credentials=False,
+        probe_api_url="http://backend:8000",
+    )
+    assert status["credentials_written"] is True
+    assert status.get("reused") is False
+    env = (tmp_path / ".everflow" / "mcp.env").read_text(encoding="utf-8")
+    assert "ef_sbox_new" in env
+    assert "ef_sbox_old" not in env
+
+
+def test_existing_token_needs_refresh_only_on_auth_failure() -> None:
+    env = {
+        "EVERFLOW_API_URL": "http://127.0.0.1:18765",
+        "EVERFLOW_TOKEN": "ef_sbox_x",
+        "EVERFLOW_PROJECT_ID": "22222222-2222-2222-2222-222222222222",
+    }
+    pid = "22222222-2222-2222-2222-222222222222"
+    assert (
+        existing_token_needs_refresh(
+            env, api_url="http://127.0.0.1:18765", project_id=pid, probe=False
+        )
+        is True
+    )
+    assert (
+        existing_token_needs_refresh(
+            env, api_url="http://127.0.0.1:18765", project_id=pid, probe=True
+        )
+        is False
+    )
+    # Missing token with matching identity → refresh
+    no_tok = {**env, "EVERFLOW_TOKEN": ""}
+    assert (
+        existing_token_needs_refresh(
+            no_tok, api_url="http://127.0.0.1:18765", project_id=pid, probe=True
+        )
+        is True
+    )
+    # Different project → not a refresh candidate (identity rewrite path)
+    assert (
+        existing_token_needs_refresh(
+            env,
+            api_url="http://127.0.0.1:18765",
+            project_id="33333333-3333-3333-3333-333333333333",
+            probe=False,
+        )
+        is False
+    )
 
 
 def test_merge_knowledge_policy_idempotent() -> None:

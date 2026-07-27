@@ -114,6 +114,26 @@ class SandboxAgentClient:
             json={"mode": mode, "restart_opencode": restart_opencode},
         )
 
+    async def browser_read(
+        self,
+        name: str,
+        *,
+        url: str,
+        include_screenshot: bool = False,
+        timeout_ms: int = 35000,
+    ) -> dict[str, Any]:
+        """Headless Playwright page read in the guest (text + optional screenshot)."""
+        return await self._request(
+            "POST",
+            f"/v1/sandboxes/{name}/browser/read",
+            json={
+                "url": url,
+                "include_screenshot": include_screenshot,
+                "timeout_ms": timeout_ms,
+            },
+            # Browser navigation can be slow
+        )
+
     async def bootstrap(self, name: str, harnesses: list[str]) -> dict[str, Any]:
         return await self._request(
             "POST",

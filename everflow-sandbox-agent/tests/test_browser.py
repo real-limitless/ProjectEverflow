@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.browser import (
     apply_browser_stamps_host,
     is_playwright_mcp_entry,
     normalize_mode,
     playwright_mcp_config,
     sync_browser_stamps_from_pack,
+    validate_public_http_url,
 )
 
 
@@ -56,3 +59,15 @@ def test_apply_browser_stamps_preserves_mode(tmp_path: Path) -> None:
     apply_browser_stamps_host(tmp_path, enabled=True, mode="headed")
     apply_browser_stamps_host(tmp_path, enabled=True)  # should not clobber mode
     assert (tmp_path / ".everflow" / "browser.mode").read_text(encoding="utf-8").strip() == "headed"
+
+
+def test_validate_public_http_url_blocks_private() -> None:
+    assert validate_public_http_url("https://example.com/a") == "https://example.com/a"
+    for bad in (
+        "http://localhost/",
+        "http://127.0.0.1/",
+        "http://10.0.0.1/",
+        "file:///etc/passwd",
+    ):
+        with pytest.raises(ValueError):
+            validate_public_http_url(bad)

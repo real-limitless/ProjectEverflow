@@ -1257,29 +1257,50 @@ export type ApiWebSearchHit = {
   reader_markdown?: string | null
 }
 
+export type ApiWebSearchResponse = {
+  query: string
+  page: number
+  page_size: number
+  has_more: boolean
+  results: ApiWebSearchHit[]
+}
+
+export type ApiWebReadMode = 'auto' | 'http' | 'browser' | 'ocr'
+export type ApiWebReadMethod = 'http' | 'browser' | 'ocr'
+
 export type ApiWebReadResult = {
   url: string
   title: string
   markdown: string
   content_type: string
+  method?: ApiWebReadMethod
+  warnings?: string[]
 }
 
 export async function searchKnowledgeWeb(
   projectId: string,
   q: string,
-): Promise<ApiWebSearchHit[]> {
+  opts?: { page?: number; pageSize?: number },
+): Promise<ApiWebSearchResponse> {
   const params = new URLSearchParams({ q })
+  if (opts?.page != null) params.set('page', String(opts.page))
+  if (opts?.pageSize != null) params.set('page_size', String(opts.pageSize))
   return apiFetch(`/api/v1/projects/${projectId}/knowledge/web-search?${params}`)
 }
 
-/** Fetch a public page and extract clean Markdown for Reader mode. */
+/** Fetch a public page and extract clean Markdown for Reader mode (HTTP → browser → OCR). */
 export async function fetchKnowledgeWebRead(
   projectId: string,
   url: string,
+  opts?: { mode?: ApiWebReadMode; maxOcrPages?: number },
 ): Promise<ApiWebReadResult> {
   return apiFetch(`/api/v1/projects/${projectId}/knowledge/web-read`, {
     method: 'POST',
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({
+      url,
+      mode: opts?.mode ?? 'auto',
+      max_ocr_pages: opts?.maxOcrPages ?? 3,
+    }),
   })
 }
 
