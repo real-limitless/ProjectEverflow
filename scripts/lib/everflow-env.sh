@@ -79,8 +79,14 @@ ensure_env_file() {
   local u a
   u="$(env_get FRONTEND_URL || true)"
   a="$(env_get PUBLIC_API_URL || true)"
-  [[ -n "${u}" ]] && UI_URL="${u}" && FRONTEND_URL="${u}"
-  [[ -n "${a}" ]] && API_URL="${a}" && PUBLIC_API_URL="${a}"
+  if [[ -n "${u}" ]]; then
+    UI_URL="${u}"
+    FRONTEND_URL="${u}"
+  fi
+  if [[ -n "${a}" ]]; then
+    API_URL="${a}"
+    PUBLIC_API_URL="${a}"
+  fi
 }
 
 apply_install_toggles() {

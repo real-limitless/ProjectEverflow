@@ -9,7 +9,8 @@ fails with:
 Official fix: $MSB_HOME/config.json → registries.hosts.<host>.insecure = true
   https://docs.microsandbox.dev/configuration.md
 
-Also: msb pull --insecure <ref> and Sandbox.create(..., insecure=True).
+Also: msb pull --insecure <ref>. Newer SDKs may accept Sandbox.create(...,
+insecure=True); older builds rely on config.json only (see sandbox_create()).
 """
 
 from __future__ import annotations
@@ -259,6 +260,47 @@ def prepull_default_image(
     except OSError as exc:
         logger.warning("pre-pull could not run msb: %s", exc)
         return False
+
+
+# Tri-state: None = untested, True/False after first Sandbox.create with insecure=.
+_INSECURE_CREATE_KWARG_SUPPORTED: bool | None = None
+
+
+def sandbox_create_insecure_kwarg_supported() -> bool | None:
+    """Whether microsandbox.Sandbox.create accepts insecure= (cached after first probe)."""
+    return _INSECURE_CREATE_KWARG_SUPPORTED
+
+
+def mark_sandbox_create_insecure_kwarg_unsupported() -> None:
+    global _INSECURE_CREATE_KWARG_SUPPORTED
+    _INSECURE_CREATE_KWARG_SUPPORTED = False
+
+
+async def sandbox_create(name: str, *, use_insecure: bool, **kwargs: Any) -> Any:
+    """Call microsandbox Sandbox.create.
+
+    Plain-HTTP registries are configured via $MSB_HOME/config.json (see
+    ensure_msb_insecure_registries). Some microsandbox builds also accept
+    insecure= on create; older builds (e.g. 0.6.x) do not — we probe once and
+    fall back to config.json-only.
+    """
+    from microsandbox import Sandbox
+
+    global _INSECURE_CREATE_KWARG_SUPPORTED
+
+    if use_insecure and _INSECURE_CREATE_KWARG_SUPPORTED is not False:
+        try:
+            sb = await Sandbox.create(name, insecure=True, **kwargs)
+            _INSECURE_CREATE_KWARG_SUPPORTED = True
+            return sb
+        except TypeError as exc:
+            if "insecure" not in str(exc):
+                raise
+            mark_sandbox_create_insecure_kwarg_unsupported()
+            logger.info(
+                "Sandbox.create does not accept insecure=; relying on MSB_HOME config.json"
+            )
+    return await Sandbox.create(name, **kwargs)
 
 
 def registry_pull_error_hint(detail: str) -> str:

@@ -33,8 +33,14 @@ everflow_init_engine
 if [[ -f "${ROOT}/.env" ]]; then
   _u="$(env_get FRONTEND_URL || true)"
   _a="$(env_get PUBLIC_API_URL || true)"
-  [[ -n "${_u}" ]] && UI_URL="${_u}" && FRONTEND_URL="${_u}"
-  [[ -n "${_a}" ]] && API_URL="${_a}" && PUBLIC_API_URL="${_a}"
+  if [[ -n "${_u}" ]]; then
+    UI_URL="${_u}"
+    FRONTEND_URL="${_u}"
+  fi
+  if [[ -n "${_a}" ]]; then
+    API_URL="${_a}"
+    PUBLIC_API_URL="${_a}"
+  fi
   unset _u _a
 fi
 

@@ -697,6 +697,7 @@ class MicrosandboxBackend(SandboxBackend):
             image_needs_insecure_pull,
             registry_pull_error_hint,
             resolve_insecure_registry_hosts,
+            sandbox_create,
         )
 
         insecure_hosts = resolve_insecure_registry_hosts(
@@ -723,9 +724,7 @@ class MicrosandboxBackend(SandboxBackend):
                     "replace": True,
                     **extra,
                 }
-                if use_insecure:
-                    create_kwargs["insecure"] = True
-                sb = await Sandbox.create(name, **create_kwargs)
+                sb = await sandbox_create(name, use_insecure=use_insecure, **create_kwargs)
                 await sb.detach()
                 logger.info("Sandbox.create succeeded attempt=%s name=%s", label, name)
                 won_label = label
