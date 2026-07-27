@@ -13,16 +13,22 @@ Each executor honors ``parameters.operation`` (default ``create``) and
 emits one item per input carrying the operation-specific fields and
 ``source: '<service>'``.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a service credential is attached and no mock is present, real calls
+are made to the service REST/GraphQL API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
 
-Mock precedence (per node):
+Resolution precedence (per node):
 
 1. ``ctx.mocks['<node>_response']`` — callable invoked as
    ``mock(operation, params, item, ctx)`` or dict used directly.
 2. ``ctx.mocks['http_response']`` — generic fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is used as
    the response.
-3. Offline synthetic response with deterministic-looking ids.
+3. If a service credential resolves, a real API call is made via
+   :func:`execute_http_request`; the response is converted to the
+   internal envelope and ``source`` is set to ``'<service>_api'``.
+4. Offline synthetic response with deterministic-looking ids.
 """
 
 from __future__ import annotations
@@ -31,10 +37,12 @@ import logging
 import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -163,6 +171,426 @@ def _resolve_str_param(
     return s or default
 
 
+# ── HTTP request helpers ─────────────────────────────────────────────
+
+
+def _req(
+    url: str,
+    method: str,
+    *,
+    headers: dict[str, str] | None = None,
+    body: Any = None,
+    auth: str = "none",
+    auth_credential: dict[str, Any] | None = None,
+) -> HttpRequestConfig:
+    return HttpRequestConfig(
+        url=url,
+        method=method,
+        headers=headers or {},
+        body=body,
+        body_mode="json" if body is not None else "none",
+        auth=auth,  # type: ignore[arg-type]
+        auth_credential=auth_credential or {},
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _build_clickup_request(
+    cred: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    token = str(cred.get("accessToken") or "")
+    if not token:
+        return None
+    base = "https://api.clickup.com/api/v2/"
+    headers = {"Authorization": token}
+    task_id = resolved.get("taskId", "")
+    list_id = _coerce_str(params.get("listId")) or resolved.get("listId", "")
+    name = resolved.get("name", "")
+    status = resolved.get("status", "")
+    if operation == "create":
+        body: dict[str, Any] = {"name": name}
+        if status:
+            body["status"] = status
+        return _req(f"{base}list/{list_id}/task", "POST", headers=headers, body=body)
+    if operation == "get":
+        return _req(f"{base}task/{task_id}", "GET", headers=headers)
+    if operation == "update":
+        body = {"name": name}
+        if status:
+            body["status"] = status
+        return _req(f"{base}task/{task_id}", "PUT", headers=headers, body=body)
+    if operation == "delete":
+        return _req(f"{base}task/{task_id}", "DELETE", headers=headers)
+    if operation == "list":
+        return _req(f"{base}list/{list_id}/task", "GET", headers=headers)
+    if operation == "createList":
+        folder_id = _coerce_str(params.get("folderId"))
+        return _req(
+            f"{base}folder/{folder_id}/list", "POST", headers=headers, body={"name": name}
+        )
+    return None
+
+
+def _envelope_from_clickup_api(
+    data: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+) -> dict[str, Any]:
+    if operation == "list" and isinstance(data.get("tasks"), list):
+        tasks = data["tasks"]
+        if not tasks:
+            return {"taskId": "", "name": "", "status": "", "items": []}
+        first = tasks[0] if isinstance(tasks[0], dict) else {}
+        return {
+            "taskId": str(first.get("id") or ""),
+            "name": first.get("name") or "",
+            "status": first.get("status") or "",
+            "items": tasks,
+        }
+    return {
+        "taskId": str(data.get("id") or resolved.get("taskId", "")),
+        "name": data.get("name") or resolved.get("name", ""),
+        "status": data.get("status") or resolved.get("status", ""),
+    }
+
+
+def _build_trello_request(
+    cred: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    api_key = str(cred.get("apiKey") or "")
+    api_token = str(cred.get("apiToken") or "")
+    if not api_key or not api_token:
+        return None
+    base = "https://api.trello.com/1/"
+    auth_qs = f"?key={api_key}&token={api_token}"
+    card_id = resolved.get("cardId", "")
+    list_id = _coerce_str(params.get("listId")) or resolved.get("listId", "")
+    board_id = _coerce_str(params.get("boardId"))
+    name = resolved.get("name", "")
+    if operation == "create":
+        body: dict[str, Any] = {"name": name}
+        if list_id:
+            body["idList"] = list_id
+        return _req(f"{base}cards{auth_qs}", "POST", body=body)
+    if operation == "get":
+        return _req(f"{base}cards/{card_id}{auth_qs}", "GET")
+    if operation == "update":
+        return _req(f"{base}cards/{card_id}{auth_qs}", "PUT", body={"name": name})
+    if operation == "delete":
+        return _req(f"{base}cards/{card_id}{auth_qs}", "DELETE")
+    if operation == "list":
+        return _req(f"{base}lists/{list_id}/cards{auth_qs}", "GET")
+    if operation == "createBoard":
+        return _req(f"{base}boards{auth_qs}", "POST", body={"name": name})
+    if operation == "createList":
+        body = {"name": name}
+        if board_id:
+            body["idBoard"] = board_id
+        return _req(f"{base}lists{auth_qs}", "POST", body=body)
+    return None
+
+
+def _envelope_from_trello_api(
+    data: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+) -> dict[str, Any]:
+    if operation == "list" and isinstance(data, list):
+        if not data:
+            return {"cardId": "", "name": "", "listId": "", "items": []}
+        first = data[0] if isinstance(data[0], dict) else {}
+        return {
+            "cardId": str(first.get("id") or ""),
+            "name": first.get("name") or "",
+            "listId": str(first.get("idList") or ""),
+            "items": data,
+        }
+    return {
+        "cardId": str(data.get("id") or resolved.get("cardId", "")),
+        "name": data.get("name") or resolved.get("name", ""),
+        "listId": str(data.get("idList") or resolved.get("listId", "")),
+    }
+
+
+def _build_asana_request(
+    cred: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    token = str(cred.get("accessToken") or "")
+    if not token:
+        return None
+    base = "https://app.asana.com/api/1.0/"
+    headers = {"Authorization": f"Bearer {token}"}
+    task_id = resolved.get("taskId", "")
+    project_id = _coerce_str(params.get("projectId")) or resolved.get("projectId", "")
+    name = resolved.get("name", "")
+    if operation == "create":
+        data: dict[str, Any] = {"name": name}
+        if project_id:
+            data["projects"] = [project_id]
+        return _req(f"{base}tasks", "POST", headers=headers, body={"data": data})
+    if operation == "get":
+        return _req(f"{base}tasks/{task_id}", "GET", headers=headers)
+    if operation == "update":
+        return _req(
+            f"{base}tasks/{task_id}", "PUT", headers=headers, body={"data": {"name": name}}
+        )
+    if operation == "delete":
+        return _req(f"{base}tasks/{task_id}", "DELETE", headers=headers)
+    if operation == "list":
+        return _req(f"{base}projects/{project_id}/tasks", "GET", headers=headers)
+    if operation == "createProject":
+        return _req(
+            f"{base}projects", "POST", headers=headers, body={"data": {"name": name}}
+        )
+    return None
+
+
+def _envelope_from_asana_api(
+    data: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+) -> dict[str, Any]:
+    if operation == "list" and isinstance(data.get("data"), list):
+        items = data["data"]
+        if not items:
+            return {"taskId": "", "name": "", "projectId": "", "items": []}
+        first = items[0] if isinstance(items[0], dict) else {}
+        return {
+            "taskId": str(first.get("gid") or ""),
+            "name": first.get("name") or "",
+            "projectId": resolved.get("projectId", ""),
+            "items": items,
+        }
+    inner = data.get("data") if isinstance(data.get("data"), dict) else data
+    return {
+        "taskId": str(inner.get("gid") or inner.get("id") or resolved.get("taskId", "")),
+        "name": inner.get("name") or resolved.get("name", ""),
+        "projectId": resolved.get("projectId", ""),
+    }
+
+
+def _build_monday_request(
+    cred: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    token = str(cred.get("apiToken") or "")
+    if not token:
+        return None
+    url = "https://api.monday.com/v2"
+    headers = {"Authorization": token, "Content-Type": "application/json"}
+    item_id = resolved.get("itemId", "")
+    board_id = _coerce_str(params.get("boardId")) or resolved.get("boardId", "")
+    item_name = resolved.get("itemName", "")
+    if operation == "create":
+        query = f'mutation {{ create_item (board_id: {board_id}, item_name: "{item_name}") {{ id }} }}'
+    elif operation == "get":
+        query = f"query {{ items (ids: [{item_id}]) {{ id name }} }}"
+    elif operation == "update":
+        query = f'mutation {{ update_item (board_id: {board_id}, item_id: {item_id}, column_values: "{{\\"name\\": \\"{item_name}\\"}}") {{ id }} }}'
+    elif operation == "delete":
+        query = f"mutation {{ delete_item (item_id: {item_id}) {{ id }} }}"
+    elif operation == "list":
+        query = f"query {{ boards (ids: [{board_id}]) {{ items {{ id name }} }} }}"
+    elif operation == "createBoard":
+        query = f'mutation {{ create_board (board_name: "{item_name}") {{ id }} }}'
+    else:
+        return None
+    return _req(url, "POST", headers=headers, body={"query": query})
+
+
+def _envelope_from_monday_api(
+    data: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+) -> dict[str, Any]:
+    inner = data.get("data") if isinstance(data.get("data"), dict) else data
+    for key in ("create_item", "delete_item", "update_item", "create_board"):
+        node = inner.get(key)
+        if isinstance(node, dict):
+            return {
+                "itemId": str(node.get("id") or resolved.get("itemId", "")),
+                "itemName": resolved.get("itemName", ""),
+                "boardId": resolved.get("boardId", ""),
+            }
+    items = inner.get("items")
+    if isinstance(items, list) and items:
+        first = items[0] if isinstance(items[0], dict) else {}
+        return {
+            "itemId": str(first.get("id") or ""),
+            "itemName": first.get("name") or "",
+            "boardId": resolved.get("boardId", ""),
+            "items": items,
+        }
+    boards = inner.get("boards")
+    if isinstance(boards, list) and boards:
+        board = boards[0] if isinstance(boards[0], dict) else {}
+        bitems = board.get("items") if isinstance(board, dict) else None
+        if isinstance(bitems, list) and bitems:
+            first = bitems[0] if isinstance(bitems[0], dict) else {}
+            return {
+                "itemId": str(first.get("id") or ""),
+                "itemName": first.get("name") or "",
+                "boardId": str(board.get("id") or resolved.get("boardId", "")),
+                "items": bitems,
+            }
+    return {
+        "itemId": resolved.get("itemId", ""),
+        "itemName": resolved.get("itemName", ""),
+        "boardId": resolved.get("boardId", ""),
+    }
+
+
+def _build_todoist_request(
+    cred: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    token = str(cred.get("apiToken") or "")
+    if not token:
+        return None
+    base = "https://api.todoist.com/rest/v2/"
+    headers = {"Authorization": f"Bearer {token}"}
+    task_id = resolved.get("taskId", "")
+    project_id = _coerce_str(params.get("projectId")) or resolved.get("projectId", "")
+    content = resolved.get("content", "")
+    if operation == "create":
+        body: dict[str, Any] = {"content": content}
+        if project_id:
+            body["project_id"] = project_id
+        return _req(f"{base}tasks", "POST", headers=headers, body=body)
+    if operation == "get":
+        return _req(f"{base}tasks/{task_id}", "GET", headers=headers)
+    if operation == "update":
+        return _req(f"{base}tasks/{task_id}", "POST", headers=headers, body={"content": content})
+    if operation == "delete":
+        return _req(f"{base}tasks/{task_id}", "DELETE", headers=headers)
+    if operation == "list":
+        url = f"{base}tasks"
+        if project_id:
+            url += f"?project_id={project_id}"
+        return _req(url, "GET", headers=headers)
+    if operation == "createProject":
+        return _req(f"{base}projects", "POST", headers=headers, body={"name": content})
+    return None
+
+
+def _envelope_from_todoist_api(
+    data: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+) -> dict[str, Any]:
+    if operation == "list" and isinstance(data, list):
+        if not data:
+            return {"taskId": "", "content": "", "projectId": "", "items": []}
+        first = data[0] if isinstance(data[0], dict) else {}
+        return {
+            "taskId": str(first.get("id") or ""),
+            "content": first.get("content") or "",
+            "projectId": str(first.get("project_id") or resolved.get("projectId", "")),
+            "items": data,
+        }
+    return {
+        "taskId": str(data.get("id") or resolved.get("taskId", "")),
+        "content": data.get("content") or resolved.get("content", ""),
+        "projectId": str(data.get("project_id") or resolved.get("projectId", "")),
+    }
+
+
+def _build_linear_request(
+    cred: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    key = str(cred.get("apiKey") or "")
+    if not key:
+        return None
+    url = "https://api.linear.app/graphql"
+    headers = {"Authorization": key, "Content-Type": "application/json"}
+    issue_id = resolved.get("issueId", "")
+    team_id = _coerce_str(params.get("teamId"))
+    title = resolved.get("title", "")
+    if operation == "create":
+        query = f'team {{ issueCreate(input: {{ teamId: "{team_id}", title: "{title}" }}) {{ success issue {{ id title }} }} }}'
+    elif operation == "get":
+        query = f'issue(id: "{issue_id}") {{ id title state {{ name }} }}'
+    elif operation == "update":
+        query = f'issueUpdate(id: "{issue_id}", input: {{ title: "{title}" }}) {{ success issue {{ id title }} }}'
+    elif operation == "delete":
+        query = f'issueDelete(id: "{issue_id}") {{ success deletedIssueId }}'
+    elif operation == "list":
+        query = "issues { nodes { id title state { name } } }"
+    elif operation == "createProject":
+        query = f'projectCreate(input: {{ name: "{title}" }}) {{ success project {{ id name }} }}'
+    else:
+        return None
+    return _req(url, "POST", headers=headers, body={"query": query})
+
+
+def _envelope_from_linear_api(
+    data: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+) -> dict[str, Any]:
+    inner = data.get("data") if isinstance(data.get("data"), dict) else data
+    for key in ("issueCreate", "issueUpdate", "projectCreate"):
+        node = inner.get(key)
+        if isinstance(node, dict):
+            issue = node.get("issue") or node.get("project") or {}
+            if isinstance(issue, dict):
+                return {
+                    "issueId": str(issue.get("id") or resolved.get("issueId", "")),
+                    "title": issue.get("title") or issue.get("name") or resolved.get("title", ""),
+                    "status": resolved.get("status", ""),
+                }
+    if isinstance(inner.get("issueDelete"), dict):
+        return {
+            "issueId": str(inner["issueDelete"].get("deletedIssueId") or resolved.get("issueId", "")),
+            "title": resolved.get("title", ""),
+            "status": resolved.get("status", ""),
+        }
+    if isinstance(inner.get("issue"), dict):
+        issue = inner["issue"]
+        state = issue.get("state")
+        return {
+            "issueId": str(issue.get("id") or resolved.get("issueId", "")),
+            "title": issue.get("title") or resolved.get("title", ""),
+            "status": state.get("name") if isinstance(state, dict) else resolved.get("status", ""),
+        }
+    issues_node = inner.get("issues")
+    if isinstance(issues_node, dict):
+        nodes = issues_node.get("nodes")
+        if isinstance(nodes, list):
+            if not nodes:
+                return {"issueId": "", "title": "", "status": "", "items": []}
+            first = nodes[0] if isinstance(nodes[0], dict) else {}
+            state = first.get("state")
+            return {
+                "issueId": str(first.get("id") or ""),
+                "title": first.get("title") or "",
+                "status": state.get("name") if isinstance(state, dict) else "",
+                "items": nodes,
+            }
+    return {
+        "issueId": resolved.get("issueId", ""),
+        "title": resolved.get("title", ""),
+        "status": resolved.get("status", ""),
+    }
+
+
 @dataclass(frozen=True)
 class _Field:
     field: str
@@ -181,6 +609,9 @@ class _TrackerConfig:
     default_name: str
     default_status: str
     fields: tuple[_Field, ...]
+    cred_type: str
+    build_request: Callable[..., HttpRequestConfig | None]
+    convert_response: Callable[..., dict[str, Any]]
 
 
 _CONFIGS: dict[str, _TrackerConfig] = {
@@ -196,6 +627,9 @@ _CONFIGS: dict[str, _TrackerConfig] = {
             _Field("name", "name", ("name", "title"), role="name"),
             _Field("status", "status", ("status",), role="status"),
         ),
+        cred_type="clickUpApi",
+        build_request=_build_clickup_request,
+        convert_response=_envelope_from_clickup_api,
     ),
     "trello": _TrackerConfig(
         source="trello",
@@ -209,6 +643,9 @@ _CONFIGS: dict[str, _TrackerConfig] = {
             _Field("name", "name", ("name", "title"), role="name"),
             _Field("listId", "listId", ("listId",), role="container"),
         ),
+        cred_type="trelloApi",
+        build_request=_build_trello_request,
+        convert_response=_envelope_from_trello_api,
     ),
     "asana": _TrackerConfig(
         source="asana",
@@ -222,6 +659,9 @@ _CONFIGS: dict[str, _TrackerConfig] = {
             _Field("name", "name", ("name", "title"), role="name"),
             _Field("projectId", "projectId", ("projectId",), role="container"),
         ),
+        cred_type="asanaApi",
+        build_request=_build_asana_request,
+        convert_response=_envelope_from_asana_api,
     ),
     "monday": _TrackerConfig(
         source="monday",
@@ -235,6 +675,9 @@ _CONFIGS: dict[str, _TrackerConfig] = {
             _Field("itemName", "itemName", ("itemName", "name"), role="name"),
             _Field("boardId", "boardId", ("boardId",), role="container"),
         ),
+        cred_type="mondayApi",
+        build_request=_build_monday_request,
+        convert_response=_envelope_from_monday_api,
     ),
     "todoist": _TrackerConfig(
         source="todoist",
@@ -248,6 +691,9 @@ _CONFIGS: dict[str, _TrackerConfig] = {
             _Field("content", "content", ("content", "name", "title"), role="name"),
             _Field("projectId", "projectId", ("projectId",), role="container"),
         ),
+        cred_type="todoistApi",
+        build_request=_build_todoist_request,
+        convert_response=_envelope_from_todoist_api,
     ),
     "linear": _TrackerConfig(
         source="linear",
@@ -261,6 +707,9 @@ _CONFIGS: dict[str, _TrackerConfig] = {
             _Field("title", "title", ("title", "name"), role="name"),
             _Field("status", "status", ("status",), role="status"),
         ),
+        cred_type="linearApi",
+        build_request=_build_linear_request,
+        convert_response=_envelope_from_linear_api,
     ),
 }
 
@@ -289,13 +738,15 @@ def _synthesize(
     return out
 
 
-def _resolve_response(
+async def _resolve_response(
     *,
     config: _TrackerConfig,
     operation: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
+    resolved: dict[str, str],
     synth: Any,
 ) -> tuple[dict[str, Any], str]:
     mocks = ctx.mocks or {}
@@ -314,6 +765,25 @@ def _resolve_response(
         body = hmock.get("body")
         if isinstance(body, dict):
             return body, "http_response"
+
+    cred = resolve_credential(node, ctx, config.cred_type)
+    if cred:
+        cfg = config.build_request(cred, operation, resolved, params)
+        if cfg is not None:
+            logger.info(
+                "%s real HTTP call operation=%s",
+                config.source,
+                operation,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        config.convert_response(resp.body, operation, resolved),
+                        f"{config.source}_api",
+                    )
+            except Exception as exc:
+                logger.warning("%s HTTP call failed: %s", config.source, exc)
 
     return synth(), "offline"
 
@@ -336,7 +806,7 @@ def _build_payload(
             payload[k] = v
     payload["operation"] = operation
     payload["source"] = config.source
-    if source != config.mock_key:
+    if source not in (config.mock_key, f"{config.source}_api"):
         payload["mockSource"] = source
     return payload
 
@@ -370,12 +840,14 @@ async def _exec_tracker(
         def _synth() -> dict[str, Any]:
             return _synthesize(config, operation, resolved)
 
-        response, source = _resolve_response(
+        response, source = await _resolve_response(
             config=config,
             operation=operation,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
+            resolved=resolved,
             synth=_synth,
         )
 

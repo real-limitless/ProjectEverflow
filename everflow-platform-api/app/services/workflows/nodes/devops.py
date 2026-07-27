@@ -15,18 +15,24 @@ per input carrying the operation-specific fields and
 
 Each trigger executor emits one item per received webhook event.
 
-All API calls are mock-driven — no real network I/O is performed.
+When a service credential is attached and no mock is present, real calls
+are made to the service REST API via :func:`execute_http_request`.
+Otherwise the executor is mock-driven with an offline synthetic
+fallback.
 
-Mock precedence for action nodes:
+Resolution precedence for action nodes:
 
 1. ``ctx.mocks['<node>_response']`` — callable invoked as
    ``mock(operation, params, item, ctx)`` or dict used directly.
 2. ``ctx.mocks['http_response']`` — generic fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is used as
    the response.
-3. Offline synthetic response with deterministic-looking ids.
+3. If a service credential resolves, a real API call is made via
+   :func:`execute_http_request`; the response is converted to the
+   internal envelope and ``source`` is set to ``'<service>_api'``.
+4. Offline synthetic response with deterministic-looking ids.
 
-Mock precedence for trigger nodes:
+Resolution precedence for trigger nodes:
 
 1. ``ctx.mocks['<node>_trigger_payload']`` — dict used directly or
    callable invoked as ``mock(node, ctx)``.
@@ -40,10 +46,12 @@ import logging
 import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -141,6 +149,199 @@ def _resolve_str_param(
     return s or default
 
 
+# ── HTTP request helpers ─────────────────────────────────────────────
+
+
+def _req(
+    url: str,
+    method: str,
+    *,
+    headers: dict[str, str] | None = None,
+    body: Any = None,
+    auth: str = "none",
+    auth_credential: dict[str, Any] | None = None,
+) -> HttpRequestConfig:
+    return HttpRequestConfig(
+        url=url,
+        method=method,
+        headers=headers or {},
+        body=body,
+        body_mode="json" if body is not None else "none",
+        auth=auth,  # type: ignore[arg-type]
+        auth_credential=auth_credential or {},
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _build_gitlab_request(
+    cred: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    token = str(cred.get("accessToken") or "")
+    base = str(cred.get("baseUrl") or "https://gitlab.com").rstrip("/")
+    if not token:
+        return None
+    api = f"{base}/api/v4/"
+    headers = {"Authorization": f"Bearer {token}"}
+    issue_iid = resolved.get("issueIid", "")
+    project_id = resolved.get("projectId", "")
+    title = resolved.get("title", "")
+    mr_iid = _coerce_str(params.get("mergeRequestIid"))
+    if operation == "create":
+        return _req(
+            f"{api}projects/{project_id}/issues", "POST", headers=headers, body={"title": title}
+        )
+    if operation == "get":
+        return _req(f"{api}projects/{project_id}/issues/{issue_iid}", "GET", headers=headers)
+    if operation == "update":
+        return _req(
+            f"{api}projects/{project_id}/issues/{issue_iid}", "PUT", headers=headers, body={"title": title}
+        )
+    if operation == "delete":
+        return _req(f"{api}projects/{project_id}/issues/{issue_iid}", "DELETE", headers=headers)
+    if operation == "list":
+        return _req(f"{api}projects/{project_id}/issues", "GET", headers=headers)
+    if operation == "createMergeRequest":
+        return _req(
+            f"{api}projects/{project_id}/merge_requests", "POST", headers=headers, body={"title": title}
+        )
+    if operation == "getMergeRequest":
+        return _req(
+            f"{api}projects/{project_id}/merge_requests/{mr_iid}", "GET", headers=headers
+        )
+    return None
+
+
+def _envelope_from_gitlab_api(
+    data: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+) -> dict[str, Any]:
+    if operation == "list" and isinstance(data, list):
+        if not data:
+            return {"issueIid": "", "title": "", "projectId": "", "items": []}
+        first = data[0] if isinstance(data[0], dict) else {}
+        return {
+            "issueIid": str(first.get("iid") or ""),
+            "title": first.get("title") or "",
+            "projectId": str(first.get("project_id") or resolved.get("projectId", "")),
+            "items": data,
+        }
+    return {
+        "issueIid": str(data.get("iid") or resolved.get("issueIid", "")),
+        "title": data.get("title") or resolved.get("title", ""),
+        "projectId": str(data.get("project_id") or resolved.get("projectId", "")),
+    }
+
+
+def _build_jenkins_request(
+    cred: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    base = str(cred.get("baseUrl") or "").rstrip("/")
+    username = str(cred.get("username") or "")
+    api_token = str(cred.get("apiToken") or "")
+    if not base or not username or not api_token:
+        return None
+    auth_cred = {"username": username, "password": api_token}
+    job_name = resolved.get("jobName", "")
+    build_id = resolved.get("buildId", "")
+    if operation == "trigger":
+        return _req(f"{base}/job/{job_name}/build", "POST", auth="basic", auth_credential=auth_cred)
+    if operation == "getJob":
+        return _req(f"{base}/job/{job_name}/api/json", "GET", auth="basic", auth_credential=auth_cred)
+    if operation == "getBuild":
+        return _req(
+            f"{base}/job/{job_name}/{build_id}/api/json", "GET", auth="basic", auth_credential=auth_cred
+        )
+    if operation == "listJobs":
+        return _req(
+            f"{base}/api/json?tree=jobs[name]", "GET", auth="basic", auth_credential=auth_cred
+        )
+    return None
+
+
+def _envelope_from_jenkins_api(
+    data: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+) -> dict[str, Any]:
+    if operation == "listJobs" and isinstance(data.get("jobs"), list):
+        jobs = data["jobs"]
+        if not jobs:
+            return {"jobName": "", "buildId": "", "status": "", "items": []}
+        first = jobs[0] if isinstance(jobs[0], dict) else {}
+        return {
+            "jobName": first.get("name") or "",
+            "buildId": "",
+            "status": "",
+            "items": jobs,
+        }
+    return {
+        "jobName": data.get("name") or resolved.get("jobName", ""),
+        "buildId": str(data.get("number") or data.get("id") or resolved.get("buildId", "")),
+        "status": data.get("result") or data.get("building") or resolved.get("status", ""),
+    }
+
+
+def _build_circleci_request(
+    cred: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    token = str(cred.get("apiToken") or "")
+    if not token:
+        return None
+    base = "https://circleci.com/api/v2/"
+    headers = {"Circle-Token": token}
+    pipeline_id = resolved.get("pipelineId", "")
+    project_slug = _coerce_str(params.get("projectSlug"))
+    job_id = _coerce_str(params.get("jobId"))
+    if operation == "trigger":
+        body: dict[str, Any] = {}
+        if project_slug:
+            return _req(
+                f"{base}project/{project_slug}/pipeline", "POST", headers=headers, body=body
+            )
+        return None
+    if operation == "getPipeline":
+        return _req(f"{base}pipeline/{pipeline_id}", "GET", headers=headers)
+    if operation == "getWorkflow":
+        return _req(f"{base}pipeline/{pipeline_id}/workflow", "GET", headers=headers)
+    if operation == "getJob":
+        if job_id:
+            return _req(f"{base}job/{job_id}", "GET", headers=headers)
+        return None
+    return None
+
+
+def _envelope_from_circleci_api(
+    data: dict[str, Any],
+    operation: str,
+    resolved: dict[str, str],
+) -> dict[str, Any]:
+    if operation == "getWorkflow" and isinstance(data.get("items"), list):
+        items = data["items"]
+        if not items:
+            return {"pipelineId": "", "status": "", "items": []}
+        first = items[0] if isinstance(items[0], dict) else {}
+        return {
+            "pipelineId": str(first.get("pipeline_id") or resolved.get("pipelineId", "")),
+            "status": first.get("status") or "",
+            "items": items,
+        }
+    return {
+        "pipelineId": str(data.get("id") or resolved.get("pipelineId", "")),
+        "status": data.get("state") or data.get("status") or resolved.get("status", ""),
+    }
+
+
 # ── Action node config ────────────────────────────────────────────────
 
 
@@ -160,6 +361,9 @@ class _ActionConfig:
     operations: tuple[str, ...]
     default_operation: str
     fields: tuple[_Field, ...]
+    cred_type: str
+    build_request: Callable[..., HttpRequestConfig | None]
+    convert_response: Callable[..., dict[str, Any]]
 
 
 _ACTION_CONFIGS: dict[str, _ActionConfig] = {
@@ -184,6 +388,9 @@ _ACTION_CONFIGS: dict[str, _ActionConfig] = {
                 role="id",
             ),
         ),
+        cred_type="gitlabApi",
+        build_request=_build_gitlab_request,
+        convert_response=_envelope_from_gitlab_api,
     ),
     "jenkins": _ActionConfig(
         source="jenkins",
@@ -207,6 +414,9 @@ _ACTION_CONFIGS: dict[str, _ActionConfig] = {
                 default="queued",
             ),
         ),
+        cred_type="jenkinsApi",
+        build_request=_build_jenkins_request,
+        convert_response=_envelope_from_jenkins_api,
     ),
     "circleci": _ActionConfig(
         source="circleci",
@@ -228,6 +438,9 @@ _ACTION_CONFIGS: dict[str, _ActionConfig] = {
                 default="queued",
             ),
         ),
+        cred_type="circleCiApi",
+        build_request=_build_circleci_request,
+        convert_response=_envelope_from_circleci_api,
     ),
 }
 
@@ -251,13 +464,15 @@ def _synthesize_action(
     return out
 
 
-def _resolve_action_response(
+async def _resolve_action_response(
     *,
     config: _ActionConfig,
     operation: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
+    resolved: dict[str, str],
     synth: Any,
 ) -> tuple[dict[str, Any], str]:
     mocks = ctx.mocks or {}
@@ -276,6 +491,25 @@ def _resolve_action_response(
         body = hmock.get("body")
         if isinstance(body, dict):
             return body, "http_response"
+
+    cred = resolve_credential(node, ctx, config.cred_type)
+    if cred:
+        cfg = config.build_request(cred, operation, resolved, params)
+        if cfg is not None:
+            logger.info(
+                "%s real HTTP call operation=%s",
+                config.source,
+                operation,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        config.convert_response(resp.body, operation, resolved),
+                        f"{config.source}_api",
+                    )
+            except Exception as exc:
+                logger.warning("%s HTTP call failed: %s", config.source, exc)
 
     return synth(), "offline"
 
@@ -298,7 +532,7 @@ def _build_action_payload(
             payload[k] = v
     payload["operation"] = operation
     payload["source"] = config.source
-    if source != config.mock_key:
+    if source not in (config.mock_key, f"{config.source}_api"):
         payload["mockSource"] = source
     return payload
 
@@ -332,12 +566,14 @@ async def _exec_action(
         def _synth() -> dict[str, Any]:
             return _synthesize_action(config, operation, resolved)
 
-        response, source = _resolve_action_response(
+        response, source = await _resolve_action_response(
             config=config,
             operation=operation,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
+            resolved=resolved,
             synth=_synth,
         )
 
@@ -526,8 +762,6 @@ async def _exec_trigger(
     ctx: "EngineContext",
     config: _TriggerConfig,
 ) -> list[tuple[int, list[ExecutionItem]]]:
-    seed_item = items[0] if items else ExecutionItem()
-
     def _synth() -> dict[str, Any]:
         return _synthesize_trigger(config)
 
