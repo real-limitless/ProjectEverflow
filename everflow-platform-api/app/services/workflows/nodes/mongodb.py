@@ -16,7 +16,10 @@ v1 supports the five operations most commonly used in n8n templates:
   with ``{result, source: 'mongoDb'}`` (or one item with a ``results``
   array when ``dataMode == 'object'``).
 
-All database calls are mock-driven — no real MongoDB connection is made.
+When a ``mongoDb`` (or ``mongoDbApi``) credential is attached and no
+mock is present, real calls are made via the ``motor`` async driver.
+Otherwise the executor is mock-driven with an offline synthetic
+fallback.
 
 Parameters honored:
 
@@ -60,7 +63,10 @@ Behavior precedence:
 3. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the MongoDb envelope.
-4. Offline synthetic response with deterministic-looking ids.
+4. If a ``mongoDb`` (or ``mongoDbApi``) credential resolves, a real
+   MongoDB call is made via ``motor`` (async driver); the result is
+   normalized into the operation envelope.
+5. Offline synthetic response with deterministic-looking ids.
 
 Items with an empty resolved ``collection`` are skipped (no item emitted).
 """
@@ -73,6 +79,9 @@ from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
+from motor.motor_asyncio import AsyncIOMotorClient
+from urllib.parse import quote_plus
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -374,15 +383,193 @@ def _response_from_db_mock(
     return None
 
 
+# ── Real driver ────────────────────────────────────────────────────────
+
+
+def _jsonify_mongo(value: Any) -> Any:
+    """Convert BSON ObjectId values to strings for JSON serialization."""
+    try:
+        from bson import ObjectId
+    except ImportError:
+        return value
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _jsonify_mongo(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_jsonify_mongo(v) for v in value]
+    return value
+
+
+def _build_mongodb_config(cred: dict[str, Any]) -> dict[str, Any] | None:
+    """Build a MongoDB connection config from a credential dict.
+
+    Returns a dict with ``connectionString`` and ``database`` keys, or
+    ``None`` when no usable connection info is present.
+    """
+    conn_str = str(cred.get("connectionString") or cred.get("url") or "").strip()
+    database = str(cred.get("database") or cred.get("db") or "").strip()
+
+    if conn_str:
+        config: dict[str, Any] = {"connectionString": conn_str}
+        if database:
+            config["database"] = database
+        return config
+
+    host = str(cred.get("host") or "").strip()
+    if not host:
+        return None
+
+    port = _coerce_int(cred.get("port"), 27017)
+    username = cred.get("username")
+    password = cred.get("password")
+    ssl = _coerce_bool(cred.get("ssl"), False)
+
+    parts: list[str] = ["mongodb://"]
+    if username:
+        user = str(username)
+        if password:
+            parts.append(f"{quote_plus(user)}:{quote_plus(str(password))}@")
+        else:
+            parts.append(f"{user}@")
+    parts.append(host)
+    if port and port != 27017:
+        parts.append(f":{port}")
+    if database:
+        parts.append(f"/{database}")
+    if ssl:
+        parts.append("?ssl=true")
+
+    return {"connectionString": "".join(parts), "database": database}
+
+
+async def _execute_mongodb_operation(
+    conn_params: dict[str, Any],
+    operation: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+    ctx: "EngineContext",
+    collection: str,
+) -> dict[str, Any] | None:
+    """Connect to MongoDB and run a single operation.
+
+    Returns a result dict shaped for ``_normalize_response``, or ``None``
+    if the operation cannot be performed (e.g. missing database).
+    """
+    ectx = _ectx(item, ctx)
+    database = conn_params.get("database") or _resolve_str_param(
+        params, "database", item, ectx, ("database", "databaseName")
+    )
+    if not database:
+        return None
+
+    conn_str = conn_params["connectionString"]
+    client = AsyncIOMotorClient(conn_str)
+    try:
+        coll = client[database][collection]
+
+        if operation == "find":
+            query = _resolve_param(params, "query", item, ectx, ("query",))
+            if query is None:
+                query = {}
+            limit = _coerce_int(
+                _resolve_param(params, "limit", item, ectx), MONGODB_DEFAULT_LIMIT
+            )
+            projection = _resolve_param(params, "projection", item, ectx)
+            sort = _resolve_param(params, "sort", item, ectx)
+
+            cursor = coll.find(query)
+            if sort:
+                if isinstance(sort, dict):
+                    cursor = cursor.sort(list(sort.items()))
+                else:
+                    cursor = cursor.sort(sort)
+            if projection:
+                cursor = cursor.projection(projection)
+            cursor = cursor.limit(limit)
+            documents = await cursor.to_list(length=limit)
+            return {
+                "documents": _jsonify_mongo(documents),
+                "count": len(documents),
+            }
+
+        if operation == "insert":
+            documents = _resolve_param(
+                params, "documents", item, ectx, ("documents", "data")
+            )
+            if documents is None:
+                documents = [dict(item.json)]
+            elif not isinstance(documents, list):
+                documents = [documents]
+            result = await coll.insert_many(documents)
+            return {
+                "insertedCount": len(result.inserted_ids),
+                "insertedIds": [str(_id) for _id in result.inserted_ids],
+                "acknowledged": result.acknowledged,
+            }
+
+        if operation == "update":
+            query = _resolve_param(params, "query", item, ectx, ("query",))
+            if query is None:
+                query = {}
+            update = _resolve_param(params, "update", item, ectx, ("update",))
+            upsert = _coerce_bool(
+                _resolve_param(params, "upsert", item, ectx), False
+            )
+            multi = _coerce_bool(
+                _resolve_param(params, "multi", item, ectx), False
+            )
+
+            if multi:
+                result = await coll.update_many(query, update, upsert=upsert)
+            else:
+                result = await coll.update_one(query, update, upsert=upsert)
+            return {
+                "matchedCount": result.matched_count,
+                "modifiedCount": result.modified_count,
+                "upsertedId": (
+                    str(result.upserted_id) if result.upserted_id else None
+                ),
+                "acknowledged": result.acknowledged,
+            }
+
+        if operation == "delete":
+            query = _resolve_param(params, "query", item, ectx, ("query",))
+            if query is None:
+                query = {}
+            delete_limit = _coerce_int(
+                _resolve_param(params, "limit", item, ectx), 0
+            )
+            if delete_limit == 1:
+                result = await coll.delete_one(query)
+            else:
+                result = await coll.delete_many(query)
+            return {
+                "deletedCount": result.deleted_count,
+                "acknowledged": result.acknowledged,
+            }
+
+        # aggregate
+        pipeline = _resolve_param(params, "pipeline", item, ectx, ("pipeline",))
+        if pipeline is None:
+            pipeline = []
+        cursor = coll.aggregate(pipeline)
+        results = await cursor.to_list(length=None)
+        return {"result": _jsonify_mongo(results), "ok": 1}
+    finally:
+        client.close()
+
+
 # ── Response resolution ────────────────────────────────────────────────
 
 
-def _resolve_mongodb_response(
+async def _resolve_mongodb_response(
     *,
     operation: str,
     collection: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
     limit: int,
     doc_count: int,
@@ -390,8 +577,8 @@ def _resolve_mongodb_response(
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"mongodb_response"``, ``"db_response"``,
-    ``"http_response"``, ``"offline"`` so downstream observers can tell
-    where the result came from.
+    ``"http_response"``, ``"mongodb_api"``, ``"offline"`` so downstream
+    observers can tell where the result came from.
     """
     mocks = ctx.mocks or {}
     mmock = mocks.get("mongodb_response")
@@ -419,6 +606,30 @@ def _resolve_mongodb_response(
         if env is not None:
             return env, "http_response"
 
+    cred = resolve_credential(node, ctx, "mongoDb") or resolve_credential(
+        node, ctx, "mongoDbApi"
+    )
+    if cred:
+        conn_params = _build_mongodb_config(cred)
+        if conn_params is not None:
+            logger.info(
+                "mongoDb real call database=%s collection=%s operation=%s",
+                conn_params.get("database", ""),
+                collection[:80],
+                operation,
+            )
+            try:
+                result = await _execute_mongodb_operation(
+                    conn_params, operation, params, item, ctx, collection
+                )
+                if result is not None:
+                    return (
+                        _normalize_response(result, operation),
+                        "mongodb_api",
+                    )
+            except Exception as exc:
+                logger.warning("mongoDb real call failed: %s", exc)
+
     return (
         _synthesize_response(operation, limit=limit, doc_count=doc_count),
         "offline",
@@ -444,7 +655,7 @@ def _build_find_items(
             "operation": "find",
             "source": "mongoDb",
         }
-        if source != "mongodb_response":
+        if source not in ("mongodb_response", "mongodb_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -458,7 +669,7 @@ def _build_find_items(
             "operation": "find",
             "source": "mongoDb",
         }
-        if source != "mongodb_response":
+        if source not in ("mongodb_response", "mongodb_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -539,7 +750,7 @@ def _build_aggregate_items(
             "operation": "aggregate",
             "source": "mongoDb",
         }
-        if source != "mongodb_response":
+        if source not in ("mongodb_response", "mongodb_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -552,7 +763,7 @@ def _build_aggregate_items(
             "operation": "aggregate",
             "source": "mongoDb",
         }
-        if source != "mongodb_response":
+        if source not in ("mongodb_response", "mongodb_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -631,11 +842,12 @@ async def exec_mongodb(
             _projection = _resolve_param(params, "projection", item, ectx)
             _sort = _resolve_param(params, "sort", item, ectx)
 
-            envelope, source = _resolve_mongodb_response(
+            envelope, source = await _resolve_mongodb_response(
                 operation=operation,
                 collection=collection,
                 params=params,
                 item=item,
+                node=node,
                 ctx=ctx,
                 limit=limit,
                 doc_count=0,
@@ -660,11 +872,12 @@ async def exec_mongodb(
                 documents = [documents]
             doc_count = len(documents)
 
-            envelope, source = _resolve_mongodb_response(
+            envelope, source = await _resolve_mongodb_response(
                 operation=operation,
                 collection=collection,
                 params=params,
                 item=item,
+                node=node,
                 ctx=ctx,
                 limit=0,
                 doc_count=doc_count,
@@ -691,11 +904,12 @@ async def exec_mongodb(
                 _resolve_param(params, "multi", item, ectx), False
             )
 
-            envelope, source = _resolve_mongodb_response(
+            envelope, source = await _resolve_mongodb_response(
                 operation=operation,
                 collection=collection,
                 params=params,
                 item=item,
+                node=node,
                 ctx=ctx,
                 limit=0,
                 doc_count=0,
@@ -718,11 +932,12 @@ async def exec_mongodb(
                 _resolve_param(params, "limit", item, ectx), 0
             )
 
-            envelope, source = _resolve_mongodb_response(
+            envelope, source = await _resolve_mongodb_response(
                 operation=operation,
                 collection=collection,
                 params=params,
                 item=item,
+                node=node,
                 ctx=ctx,
                 limit=0,
                 doc_count=0,
@@ -744,11 +959,12 @@ async def exec_mongodb(
         if _pipeline is None:
             _pipeline = []
 
-        envelope, source = _resolve_mongodb_response(
+        envelope, source = await _resolve_mongodb_response(
             operation=operation,
             collection=collection,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
             limit=0,
             doc_count=0,

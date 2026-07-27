@@ -12,7 +12,9 @@ v1 supports the four operations most commonly used in n8n templates:
 - ``upsert``  — upsert rows in a table; emit one item per input with
   ``{affectedRows, insertId, fieldCount, info, source: 'mySql'}``.
 
-All database calls are mock-driven — no real MySQL connection is made.
+When a ``mySql`` (or ``mysqlApi``) credential is attached and no mock is
+present, real calls are made via ``aiomysql``. Otherwise the executor is
+mock-driven with an offline synthetic fallback.
 
 Parameters honored:
 
@@ -49,7 +51,9 @@ Behavior precedence:
 3. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the MySQL envelope.
-4. Offline synthetic response with deterministic-looking ids.
+4. If a ``mySql`` (or ``mysqlApi``) credential resolves, a real
+   connection is opened via ``aiomysql`` and the operation is executed.
+5. Offline synthetic response with deterministic-looking ids.
 
 Items with an empty resolved ``query`` (execute) or ``table``
 (insert/update/upsert) are skipped (no item emitted).
@@ -61,8 +65,11 @@ import logging
 import random
 from typing import TYPE_CHECKING, Any
 
+import aiomysql
+
 from app.services.workflows.expression import ExpressionContext, evaluate
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -296,22 +303,186 @@ def _response_from_db_mock(
     return None
 
 
+# ── Real DB dispatch ──────────────────────────────────────────────────
+
+
+def _build_mysql_config(cred: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract ``aiomysql.connect`` kwargs from a mySql credential dict.
+
+    Supports either a connection string (``connectionString`` / ``url``)
+    or individual ``host`` / ``port`` / ``database`` / ``user`` /
+    ``password`` fields.  Returns ``None`` when there is not enough
+    information to open a connection.
+    """
+    conn_str = cred.get("connectionString") or cred.get("url")
+    if isinstance(conn_str, str) and conn_str.strip():
+        from urllib.parse import urlparse
+
+        try:
+            parsed = urlparse(conn_str.strip())
+        except Exception:
+            parsed = None
+        if parsed and parsed.hostname:
+            params: dict[str, Any] = {
+                "host": parsed.hostname,
+                "port": parsed.port or 3306,
+                "db": (parsed.path.lstrip("/") if parsed.path else ""),
+                "user": parsed.username or "",
+                "password": parsed.password or "",
+            }
+            if params["db"] and params["user"]:
+                ssl_val = cred.get("ssl")
+                if isinstance(ssl_val, bool) and ssl_val:
+                    params["ssl"] = True
+                return params
+
+    host = cred.get("host")
+    if not host:
+        return None
+
+    database = cred.get("database") or cred.get("db") or cred.get("dbname")
+    user = cred.get("user") or cred.get("username")
+    if not database or not user:
+        return None
+
+    params = {
+        "host": str(host),
+        "port": _coerce_int(cred.get("port"), 3306),
+        "db": str(database),
+        "user": str(user),
+        "password": str(cred.get("password") or ""),
+    }
+    ssl = cred.get("ssl")
+    if isinstance(ssl, bool) and ssl:
+        params["ssl"] = True
+    return params
+
+
+async def _execute_mysql_query(
+    conn_params: dict[str, Any],
+    operation: str,
+    query_or_table: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+) -> dict[str, Any]:
+    """Open a real MySQL connection via ``aiomysql``, run the operation,
+    and return a result dict in the internal envelope shape.
+
+    The caller is responsible for normalising the returned dict via
+    :func:`_normalize_response`.
+    """
+    conn = await aiomysql.connect(**conn_params)
+    try:
+        if operation == "execute":
+            sql = query_or_table
+            qparams = params.get("queryParameters")
+            args = list(qparams) if isinstance(qparams, (list, tuple)) else None
+            async with conn.cursor() as cur:
+                await cur.execute(sql, args)
+                if cur.description:
+                    cols = [d[0] for d in cur.description]
+                    rows = [dict(zip(cols, r)) for r in await cur.fetchall()]
+                else:
+                    rows = []
+                command = sql.strip().split()[0].upper() if sql.strip() else "SELECT"
+                return {
+                    "rows": rows,
+                    "rowCount": len(rows),
+                    "fieldCount": len(cur.description) if cur.description else 0,
+                    "insertId": cur.lastrowid,
+                }
+
+        table = query_or_table
+        columns = params.get("columns")
+        values = params.get("values")
+
+        if isinstance(values, list):
+            rows_data = values
+        elif values is not None:
+            rows_data = [[values]]
+        else:
+            rows_data = []
+
+        if not isinstance(columns, list) or not columns:
+            if rows_data and isinstance(rows_data[0], (list, tuple)):
+                columns = [f"col{i}" for i in range(len(rows_data[0]))]
+            else:
+                columns = []
+
+        col_names = [str(c) for c in columns]
+        qualified = f"`{table}`"
+
+        if operation == "insert":
+            col_list = ", ".join(f"`{c}`" for c in col_names)
+            placeholders = ", ".join("%s" for _ in col_names)
+            sql = f"INSERT INTO {qualified} ({col_list}) VALUES ({placeholders})"
+            async with conn.cursor() as cur:
+                if rows_data:
+                    await cur.executemany(sql, [list(r) for r in rows_data])
+                return {
+                    "affectedRows": max(cur.rowcount, 0),
+                    "insertId": cur.lastrowid,
+                    "fieldCount": 0,
+                    "info": f"Records: {len(rows_data)}  Duplicates: 0  Warnings: 0",
+                }
+
+        if operation == "update":
+            set_clause = ", ".join(f"`{c}` = %s" for c in col_names)
+            where = str(params.get("where") or "").strip()
+            sql = f"UPDATE {qualified} SET {set_clause}"
+            if where:
+                sql += f" WHERE {where}"
+            args: list[Any] = []
+            for row in rows_data:
+                args.extend(row)
+            async with conn.cursor() as cur:
+                await cur.execute(sql, args)
+                affected = cur.rowcount
+                return {
+                    "affectedRows": affected,
+                    "insertId": cur.lastrowid,
+                    "fieldCount": 0,
+                    "info": f"Rows matched: {affected}  Changed: {affected}  Warnings: 0",
+                }
+
+        # upsert
+        col_list = ", ".join(f"`{c}`" for c in col_names)
+        placeholders = ", ".join("%s" for _ in col_names)
+        update_cols = ", ".join(f"`{c}` = VALUES(`{c}`)" for c in col_names)
+        sql = (
+            f"INSERT INTO {qualified} ({col_list}) VALUES ({placeholders}) "
+            f"ON DUPLICATE KEY UPDATE {update_cols}"
+        )
+        async with conn.cursor() as cur:
+            if rows_data:
+                await cur.executemany(sql, [list(r) for r in rows_data])
+            return {
+                "affectedRows": max(cur.rowcount, 0),
+                "insertId": cur.lastrowid,
+                "fieldCount": 0,
+                "info": f"Records: {len(rows_data)}  Duplicates: 0  Warnings: 0",
+            }
+    finally:
+        conn.close()
+
+
 # ── Response resolution ────────────────────────────────────────────────
 
 
-def _resolve_mysql_response(
+async def _resolve_mysql_response(
     *,
     operation: str,
     query_or_table: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"mysql_response"``, ``"db_response"``,
-    ``"http_response"``, ``"offline"`` so downstream observers can tell
-    where the result came from.
+    ``"http_response"``, ``"mysql_api"``, ``"offline"`` so downstream
+    observers can tell where the result came from.
     """
     mocks = ctx.mocks or {}
     mmock = mocks.get("mysql_response")
@@ -336,6 +507,25 @@ def _resolve_mysql_response(
         if env is not None:
             return env, "http_response"
 
+    cred = resolve_credential(node, ctx, "mySql") or resolve_credential(
+        node, ctx, "mysqlApi"
+    )
+    if cred:
+        conn_params = _build_mysql_config(cred)
+        if conn_params is not None:
+            logger.info(
+                "mysql real DB call operation=%s target=%s",
+                operation,
+                query_or_table[:80],
+            )
+            try:
+                raw = await _execute_mysql_query(
+                    conn_params, operation, query_or_table, params, item
+                )
+                return _normalize_response(raw, operation), "mysql_api"
+            except Exception as exc:
+                logger.warning("mysql real DB call failed: %s", exc)
+
     return _synthesize_response(operation), "offline"
 
 
@@ -358,7 +548,7 @@ def _build_execute_items(
             "rowCount": row_count,
             "source": "mySql",
         }
-        if source != "mysql_response":
+        if source not in ("mysql_response", "mysql_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -372,7 +562,7 @@ def _build_execute_items(
             "fieldCount": field_count,
             "source": "mySql",
         }
-        if source != "mysql_response":
+        if source not in ("mysql_response", "mysql_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -393,7 +583,7 @@ def _build_write_item(
         "info": envelope.get("info", ""),
         "source": "mySql",
     }
-    if source != "mysql_response":
+    if source not in ("mysql_response", "mysql_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}
@@ -457,11 +647,12 @@ async def exec_mysql(
             if data_mode not in MYSQL_DATA_MODES:
                 data_mode = MYSQL_DEFAULT_DATA_MODE
 
-            envelope, source = _resolve_mysql_response(
+            envelope, source = await _resolve_mysql_response(
                 operation=operation,
                 query_or_table=query,
                 params=params,
                 item=item,
+                node=node,
                 ctx=ctx,
             )
             out.extend(
@@ -500,11 +691,12 @@ async def exec_mysql(
                 params, "idColumn", item, ectx
             ).strip() or MYSQL_DEFAULT_ID_COLUMN
 
-        envelope, source = _resolve_mysql_response(
+        envelope, source = await _resolve_mysql_response(
             operation=operation,
             query_or_table=table,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
         )
         out.append(_build_write_item(item, envelope, operation, source))

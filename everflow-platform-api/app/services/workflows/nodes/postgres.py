@@ -12,7 +12,9 @@ v1 supports the four operations most commonly used in n8n templates:
 - ``upsert``  — upsert rows in a table; emit one item per input with
   ``{affectedRows, command, lastInsertId, upserted, source: 'postgres'}``.
 
-All database calls are mock-driven — no real Postgres connection is made.
+When a ``postgres`` (or ``postgresApi``) credential is attached and no
+mock is present, real calls are made via ``asyncpg``. Otherwise the
+executor is mock-driven with an offline synthetic fallback.
 
 Parameters honored:
 
@@ -50,7 +52,9 @@ Behavior precedence:
 3. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the Postgres envelope.
-4. Offline synthetic response with deterministic-looking ids.
+4. If a ``postgres`` (or ``postgresApi``) credential resolves, a real
+   connection is opened via ``asyncpg`` and the operation is executed.
+5. Offline synthetic response with deterministic-looking ids.
 
 Items with an empty resolved ``query`` (execute) or ``table``
 (insert/update/upsert) are skipped (no item emitted).
@@ -62,8 +66,11 @@ import logging
 import random
 from typing import TYPE_CHECKING, Any
 
+import asyncpg
+
 from app.services.workflows.expression import ExpressionContext, evaluate
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -150,6 +157,22 @@ def _resolve_str_param(
 
 def _new_insert_id() -> int:
     return random.randint(1, 2_000_000_000)
+
+
+def _parse_pg_status(status: Any) -> int:
+    """Extract the affected-row count from an asyncpg status string.
+
+    asyncpg ``Connection.execute`` returns strings like ``"INSERT 0 3"``
+    or ``"UPDATE 5"``; the trailing integer is the affected-row count.
+    """
+    if isinstance(status, str):
+        parts = status.split()
+        if parts:
+            try:
+                return int(parts[-1])
+            except ValueError:
+                return 0
+    return 0
 
 
 # ── Synthetic responses ────────────────────────────────────────────────
@@ -295,23 +318,163 @@ def _response_from_db_mock(
     return None
 
 
+# ── Real DB dispatch ──────────────────────────────────────────────────
+
+
+def _build_postgres_config(cred: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract ``asyncpg.connect`` kwargs from a postgres credential dict.
+
+    Supports either a connection string (``connectionString`` / ``url``)
+    or individual ``host`` / ``port`` / ``database`` / ``user`` /
+    ``password`` fields.  Returns ``None`` when there is not enough
+    information to open a connection.
+    """
+    conn_str = cred.get("connectionString") or cred.get("url")
+    if isinstance(conn_str, str) and conn_str.strip():
+        return {"dsn": conn_str.strip()}
+
+    host = cred.get("host")
+    if not host:
+        return None
+
+    database = cred.get("database") or cred.get("dbname")
+    user = cred.get("user") or cred.get("username")
+    if not database or not user:
+        return None
+
+    params: dict[str, Any] = {
+        "host": str(host),
+        "port": _coerce_int(cred.get("port"), 5432),
+        "database": str(database),
+        "user": str(user),
+        "password": str(cred.get("password") or ""),
+    }
+    ssl = cred.get("ssl")
+    if isinstance(ssl, bool) and ssl:
+        params["ssl"] = True
+    return params
+
+
+async def _execute_postgres_query(
+    conn_params: dict[str, Any],
+    operation: str,
+    query_or_table: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+) -> dict[str, Any]:
+    """Open a real Postgres connection via ``asyncpg``, run the operation,
+    and return a result dict in the internal envelope shape.
+
+    The caller is responsible for normalising the returned dict via
+    :func:`_normalize_response`.
+    """
+    conn = await asyncpg.connect(**conn_params)
+    try:
+        if operation == "execute":
+            sql = query_or_table
+            qparams = params.get("queryParameters")
+            args = list(qparams) if isinstance(qparams, (list, tuple)) else []
+            rows = await conn.fetch(sql, *args)
+            result_rows = [dict(r) for r in rows]
+            command = sql.strip().split()[0].upper() if sql.strip() else "SELECT"
+            return {
+                "rows": result_rows,
+                "rowCount": len(result_rows),
+                "command": command,
+            }
+
+        table = query_or_table
+        schema = str(params.get("schema") or POSTGRES_DEFAULT_SCHEMA)
+        columns = params.get("columns")
+        values = params.get("values")
+
+        if isinstance(values, list):
+            rows_data = values
+        elif values is not None:
+            rows_data = [[values]]
+        else:
+            rows_data = []
+
+        if not isinstance(columns, list) or not columns:
+            if rows_data and isinstance(rows_data[0], (list, tuple)):
+                columns = [f"col{i}" for i in range(len(rows_data[0]))]
+            else:
+                columns = []
+
+        col_names = [str(c) for c in columns]
+        qualified = f'"{schema}"."{table}"'
+
+        if operation == "insert":
+            col_list = ", ".join(f'"{c}"' for c in col_names)
+            placeholders = ", ".join(f"${i + 1}" for i in range(len(col_names)))
+            sql = f"INSERT INTO {qualified} ({col_list}) VALUES ({placeholders})"
+            if rows_data:
+                await conn.executemany(sql, [list(r) for r in rows_data])
+            return {
+                "affectedRows": max(len(rows_data), 1),
+                "command": "INSERT",
+                "lastInsertId": 0,
+            }
+
+        if operation == "update":
+            set_clause = ", ".join(
+                f'"{c}" = ${i + 1}' for i, c in enumerate(col_names)
+            )
+            where = str(params.get("where") or "").strip()
+            sql = f"UPDATE {qualified} SET {set_clause}"
+            if where:
+                sql += f" WHERE {where}"
+            args: list[Any] = []
+            for row in rows_data:
+                args.extend(row)
+            status = await conn.execute(sql, *args)
+            affected = _parse_pg_status(status)
+            return {
+                "affectedRows": affected,
+                "command": "UPDATE",
+            }
+
+        # upsert
+        col_list = ", ".join(f'"{c}"' for c in col_names)
+        placeholders = ", ".join(f"${i + 1}" for i in range(len(col_names)))
+        id_col = str(params.get("idColumn") or POSTGRES_DEFAULT_ID_COLUMN)
+        update_cols = ", ".join(
+            f'"{c}" = EXCLUDED."{c}"' for c in col_names if c != id_col
+        )
+        sql = (
+            f"INSERT INTO {qualified} ({col_list}) VALUES ({placeholders}) "
+            f'ON CONFLICT ("{id_col}") DO UPDATE SET {update_cols}'
+        )
+        if rows_data:
+            await conn.executemany(sql, [list(r) for r in rows_data])
+        return {
+            "affectedRows": max(len(rows_data), 1),
+            "command": "INSERT",
+            "lastInsertId": 0,
+            "upserted": True,
+        }
+    finally:
+        await conn.close()
+
+
 # ── Response resolution ────────────────────────────────────────────────
 
 
-def _resolve_postgres_response(
+async def _resolve_postgres_response(
     *,
     operation: str,
     query_or_table: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
     row_count: int,
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"postgres_response"``, ``"db_response"``,
-    ``"http_response"``, ``"offline"`` so downstream observers can tell
-    where the result came from.
+    ``"http_response"``, ``"postgres_api"``, ``"offline"`` so downstream
+    observers can tell where the result came from.
     """
     mocks = ctx.mocks or {}
     pmock = mocks.get("postgres_response")
@@ -336,6 +499,25 @@ def _resolve_postgres_response(
         if env is not None:
             return env, "http_response"
 
+    cred = resolve_credential(node, ctx, "postgres") or resolve_credential(
+        node, ctx, "postgresApi"
+    )
+    if cred:
+        conn_params = _build_postgres_config(cred)
+        if conn_params is not None:
+            logger.info(
+                "postgres real DB call operation=%s target=%s",
+                operation,
+                query_or_table[:80],
+            )
+            try:
+                raw = await _execute_postgres_query(
+                    conn_params, operation, query_or_table, params, item
+                )
+                return _normalize_response(raw, operation), "postgres_api"
+            except Exception as exc:
+                logger.warning("postgres real DB call failed: %s", exc)
+
     return _synthesize_response(operation, row_count), "offline"
 
 
@@ -359,7 +541,7 @@ def _build_execute_items(
             "command": command,
             "source": "postgres",
         }
-        if source != "postgres_response":
+        if source not in ("postgres_response", "postgres_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -373,7 +555,7 @@ def _build_execute_items(
             "command": command,
             "source": "postgres",
         }
-        if source != "postgres_response":
+        if source not in ("postgres_response", "postgres_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -396,7 +578,7 @@ def _build_write_item(
         payload["lastInsertId"] = envelope["lastInsertId"]
     if operation == "upsert":
         payload["upserted"] = envelope.get("upserted", True)
-    if source != "postgres_response":
+    if source not in ("postgres_response", "postgres_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}
@@ -460,11 +642,12 @@ async def exec_postgres(
             if data_mode not in POSTGRES_DATA_MODES:
                 data_mode = POSTGRES_DEFAULT_DATA_MODE
 
-            envelope, source = _resolve_postgres_response(
+            envelope, source = await _resolve_postgres_response(
                 operation=operation,
                 query_or_table=query,
                 params=params,
                 item=item,
+                node=node,
                 ctx=ctx,
                 row_count=0,
             )
@@ -513,11 +696,12 @@ async def exec_postgres(
                 params, "idColumn", item, ectx
             ).strip() or POSTGRES_DEFAULT_ID_COLUMN
 
-        envelope, source = _resolve_postgres_response(
+        envelope, source = await _resolve_postgres_response(
             operation=operation,
             query_or_table=table,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
             row_count=row_count,
         )

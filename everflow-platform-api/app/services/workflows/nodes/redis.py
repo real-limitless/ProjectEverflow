@@ -17,7 +17,10 @@ v1 supports the seven operations most commonly used in n8n templates:
 - ``publish``— publish a message to a channel; emit one item per input
   with ``{channel, message, subscribers, source: 'redis'}``.
 
-All Redis calls are mock-driven — no real Redis connection is performed.
+When a ``redis`` (or ``redisApi``) credential is attached and no mock
+is present, real calls are made via the ``redis`` async driver.
+Otherwise the executor is mock-driven with an offline synthetic
+fallback.
 
 Parameters honored:
 
@@ -46,7 +49,10 @@ Behavior precedence:
 3. ``ctx.mocks['http_response']`` — final fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the operation envelope.
-4. Offline synthetic response with deterministic-looking values.
+4. If a ``redis`` (or ``redisApi``) credential resolves, a real Redis
+   call is made via the ``redis`` async driver; the result is merged
+   into the operation envelope.
+5. Offline synthetic response with deterministic-looking values.
 
 Items with an empty resolved ``key`` on get/set/delete/incr/decr are
 skipped (no item emitted). Items with an empty ``channel`` on publish
@@ -60,6 +66,9 @@ from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
+import redis.asyncio as aioredis
+from urllib.parse import quote_plus
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -122,6 +131,18 @@ def _coerce_int(value: Any, default: int) -> int:
                 return int(float(s))
             except ValueError:
                 return default
+    return default
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    if isinstance(value, (int, float)):
+        return bool(value)
     return default
 
 
@@ -207,22 +228,129 @@ def _coerce_mock_value(raw: Any, operation: str) -> dict[str, Any]:
     return {}
 
 
+# ── Real driver ────────────────────────────────────────────────────────
+
+
+def _build_redis_config(cred: dict[str, Any]) -> dict[str, Any] | None:
+    """Build a Redis connection config from a credential dict.
+
+    Returns a dict with a ``connectionString`` key, or ``None`` when no
+    usable connection info is present.
+    """
+    conn_str = str(cred.get("connectionString") or cred.get("url") or "").strip()
+    if conn_str:
+        return {"connectionString": conn_str}
+
+    host = str(cred.get("host") or "").strip()
+    if not host:
+        return None
+
+    port = _coerce_int(cred.get("port"), 6379)
+    database = _coerce_int(cred.get("database") or cred.get("db"), 0)
+    password = cred.get("password")
+    username = cred.get("username")
+    ssl = _coerce_bool(cred.get("ssl"), False)
+
+    scheme = "rediss" if ssl else "redis"
+    parts: list[str] = [f"{scheme}://"]
+    if password:
+        if username:
+            parts.append(
+                f"{quote_plus(str(username))}:{quote_plus(str(password))}@"
+            )
+        else:
+            parts.append(f":{quote_plus(str(password))}@")
+    parts.append(host)
+    if port and port != 6379:
+        parts.append(f":{port}")
+    parts.append(f"/{database}")
+
+    return {"connectionString": "".join(parts)}
+
+
+async def _execute_redis_operation(
+    conn_params: dict[str, Any],
+    operation: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+    resolved: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Connect to Redis and run a single operation.
+
+    Returns a result dict with operation-specific fields, or ``None`` if
+    the operation cannot be performed.
+    """
+    conn_str = conn_params["connectionString"]
+    client = aioredis.from_url(conn_str, decode_responses=True)
+    try:
+        if operation == "get":
+            key = resolved["key"]
+            value = await client.get(key)
+            if value is None:
+                return {"value": None, "exists": False, "ttl": -1}
+            ttl = await client.ttl(key)
+            return {"value": value, "exists": True, "ttl": ttl}
+
+        if operation == "set":
+            key = resolved["key"]
+            value = resolved["value"]
+            expire = resolved["expire"]
+            if expire and expire > 0:
+                await client.set(key, value, ex=expire)
+            else:
+                await client.set(key, value)
+            return {"ok": True}
+
+        if operation == "delete":
+            key = resolved["key"]
+            deleted = await client.delete(key)
+            return {"deleted": deleted}
+
+        if operation == "incr":
+            key = resolved["key"]
+            by = resolved["by"]
+            value = await client.incrby(key, by)
+            return {"value": value}
+
+        if operation == "decr":
+            key = resolved["key"]
+            by = resolved["by"]
+            value = await client.decrby(key, by)
+            return {"value": value}
+
+        if operation == "keys":
+            pattern = resolved["pattern"]
+            keys = await client.keys(pattern)
+            return {"keys": list(keys), "count": len(keys)}
+
+        if operation == "publish":
+            channel = resolved["channel"]
+            message = resolved["message"]
+            subscribers = await client.publish(channel, message)
+            return {"subscribers": subscribers}
+
+        return None
+    finally:
+        await client.aclose()
+
+
 # ── Response resolution ────────────────────────────────────────────────
 
 
-def _resolve_envelope(
+async def _resolve_envelope(
     *,
     operation: str,
     key: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
     resolved: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"redis_response"``, ``"db_response"``,
-    ``"http_response"``, ``"offline"``.
+    ``"http_response"``, ``"redis_api"``, ``"offline"``.
     """
     mocks = ctx.mocks or {}
     base = _offline_envelope(operation, resolved)
@@ -259,6 +387,26 @@ def _resolve_envelope(
         else:
             env = _coerce_mock_value(raw, operation)
         return {**base, **env}, "http_response"
+
+    cred = resolve_credential(node, ctx, "redis") or resolve_credential(
+        node, ctx, "redisApi"
+    )
+    if cred:
+        conn_params = _build_redis_config(cred)
+        if conn_params is not None:
+            logger.info(
+                "redis real call operation=%s key=%r",
+                operation,
+                key[:80],
+            )
+            try:
+                result = await _execute_redis_operation(
+                    conn_params, operation, params, item, resolved
+                )
+                if result is not None:
+                    return {**base, **result}, "redis_api"
+            except Exception as exc:
+                logger.warning("redis real call failed: %s", exc)
 
     return base, "offline"
 
@@ -407,11 +555,12 @@ async def exec_redis(
             "pattern": pattern,
         }
 
-        envelope, source = _resolve_envelope(
+        envelope, source = await _resolve_envelope(
             operation=operation,
             key=key,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
             resolved=resolved,
         )
