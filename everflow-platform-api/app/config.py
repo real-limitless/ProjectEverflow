@@ -71,7 +71,8 @@ class Settings(BaseSettings):
     sandbox_agent_token: str = "change-me"
     # Prebaked guest image (./deploy/build-sandbox-guest.sh); override via SANDBOX_DEFAULT_IMAGE
     sandbox_default_image: str = "ghcr.io/limitless-rh/everflow-sandbox-guest:dev"
-    sandbox_default_memory_mib: int = 2048
+    # Keep in sync with sandbox-agent default; 2GiB OOMs under OpenCode+desktop+browser.
+    sandbox_default_memory_mib: int = 3072
     sandbox_default_cpus: int = 2
     sandbox_default_harnesses: StrList = Field(
         default_factory=lambda: ["agent-claude-code", "agent-opencode"],
