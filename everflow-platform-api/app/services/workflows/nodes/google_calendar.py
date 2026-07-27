@@ -34,6 +34,11 @@ Parameters honored:
 - ``dataMode``     (``"array"`` / ``"object"``; default ``"array"``;
   only meaningful for ``list``)
 
+When a ``googleCalendarOAuth2Api`` credential is attached and no mock is
+present, real calls are made to the Google Calendar API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
+
 Behavior precedence:
 
 1. ``ctx.mocks['calendar_response']`` — when present, the value drives the
@@ -44,7 +49,11 @@ Behavior precedence:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the operation envelope.
-3. Offline synthetic response with deterministic-looking ids and ISO
+3. If a ``googleCalendarOAuth2Api`` credential resolves (``accessToken``
+   present), real calls are made to the Google Calendar API via
+   :func:`execute_http_request` and the response is coerced into the
+   operation envelope.
+4. Offline synthetic response with deterministic-looking ids and ISO
    timestamps.
 
 Items with an empty resolved ``calendarId`` are skipped (no item emitted).
@@ -56,9 +65,12 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlencode
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -460,10 +472,111 @@ def _calendar_response_from_http_mock(
     return None
 
 
+# ── Real HTTP request building ────────────────────────────────────────
+
+
+def _build_calendar_request(
+    cred: dict[str, Any],
+    *,
+    operation: str,
+    calendar_id: str,
+    event_id: str,
+    summary: str,
+    start_iso: str,
+    end_iso: str,
+    max_results: int,
+    q: str,
+) -> HttpRequestConfig | None:
+    """Build a real Google Calendar API request config.
+
+    Returns ``None`` when the credential has no ``accessToken``.
+    """
+    access_token = str(cred.get("accessToken") or "")
+    if not access_token:
+        return None
+    base = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
+    if operation == "create":
+        body: dict[str, Any] = {
+            "summary": summary,
+            "start": {"dateTime": start_iso},
+            "end": {"dateTime": end_iso},
+        }
+        return HttpRequestConfig(
+            url=base,
+            method="POST",
+            body=body,
+            body_mode="json",
+            auth="bearer",
+            auth_credential=cred,
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "list":
+        query_params: dict[str, Any] = {
+            "maxResults": max_results,
+            "timeMin": start_iso,
+            "timeMax": end_iso,
+        }
+        if q:
+            query_params["q"] = q
+        return HttpRequestConfig(
+            url=f"{base}?{urlencode(query_params)}",
+            method="GET",
+            auth="bearer",
+            auth_credential=cred,
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "get":
+        return HttpRequestConfig(
+            url=f"{base}/{event_id}",
+            method="GET",
+            auth="bearer",
+            auth_credential=cred,
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "delete":
+        return HttpRequestConfig(
+            url=f"{base}/{event_id}",
+            method="DELETE",
+            auth="bearer",
+            auth_credential=cred,
+            response_mode="json",
+            timeout=30.0,
+        )
+    return None
+
+
+def _envelope_from_calendar_api(
+    data: dict[str, Any],
+    *,
+    operation: str,
+    event_id: str,
+    summary: str,
+    start_iso: str,
+    end_iso: str,
+    max_results: int,
+) -> dict[str, Any]:
+    """Convert a real Google Calendar API response to the internal
+    operation envelope shape."""
+    if operation == "list":
+        return _coerce_listing_envelope(data, max_results=max_results)
+    if operation == "delete":
+        return _coerce_delete_envelope(data, event_id=event_id)
+    return _coerce_event_envelope(
+        data,
+        default_id=event_id or _new_event_id(),
+        default_summary=summary,
+        default_start=start_iso or _now_iso(),
+        default_end=end_iso or _now_plus_iso(1),
+    )
+
+
 # ── Response resolution ────────────────────────────────────────────────
 
 
-def _resolve_calendar_response(
+async def _resolve_calendar_response(
     *,
     operation: str,
     calendar_id: str,
@@ -474,13 +587,14 @@ def _resolve_calendar_response(
     max_results: int,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"calendar_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"calendar_api"``, ``"offline"`` so downstream observers can tell
+    where the result came from.
     """
     mocks = ctx.mocks or {}
     cmock = mocks.get("calendar_response")
@@ -559,6 +673,50 @@ def _resolve_calendar_response(
         if env is not None:
             return env, "http_response"
 
+    cred = resolve_credential(node, ctx, "googleCalendarOAuth2Api")
+    if cred:
+        ectx = _ectx(item, ctx)
+        q = _resolve_str_param(params, "q", item, ectx, ("q", "query", "search"))
+        cfg = _build_calendar_request(
+            cred,
+            operation=operation,
+            calendar_id=calendar_id,
+            event_id=event_id,
+            summary=summary,
+            start_iso=start_iso,
+            end_iso=end_iso,
+            max_results=max_results,
+            q=q,
+        )
+        if cfg is not None:
+            logger.info(
+                "googleCalendar real HTTP call operation=%s calendar=%s",
+                operation,
+                calendar_id,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_calendar_api(
+                            resp.body,
+                            operation=operation,
+                            event_id=event_id,
+                            summary=summary,
+                            start_iso=start_iso,
+                            end_iso=end_iso,
+                            max_results=max_results,
+                        ),
+                        "calendar_api",
+                    )
+                if operation == "delete" and resp.status_code < 400:
+                    return (
+                        _coerce_delete_envelope({}, event_id=event_id),
+                        "calendar_api",
+                    )
+            except Exception as exc:
+                logger.warning("googleCalendar HTTP call failed: %s", exc)
+
     if operation == "list":
         return _synthesize_list_response(max_results), "offline"
     if operation == "delete":
@@ -615,11 +773,12 @@ async def exec_google_calendar(
 
         if operation == "create":
             out.extend(
-                _build_create_items(
+                await _build_create_items(
                     params=params,
                     item=item,
                     ectx=ectx,
                     calendar_id=calendar_id,
+                    node=node,
                     ctx=ctx,
                 )
             )
@@ -627,12 +786,13 @@ async def exec_google_calendar(
 
         if operation == "list":
             out.extend(
-                _build_list_items(
+                await _build_list_items(
                     params=params,
                     item=item,
                     ectx=ectx,
                     calendar_id=calendar_id,
                     data_mode=data_mode,
+                    node=node,
                     ctx=ctx,
                 )
             )
@@ -649,21 +809,23 @@ async def exec_google_calendar(
             continue
         if operation == "get":
             out.extend(
-                _build_get_items(
+                await _build_get_items(
                     item=item,
                     calendar_id=calendar_id,
                     event_id=event_id,
                     params=params,
+                    node=node,
                     ctx=ctx,
                 )
             )
         else:
             out.extend(
-                _build_delete_items(
+                await _build_delete_items(
                     item=item,
                     calendar_id=calendar_id,
                     event_id=event_id,
                     params=params,
+                    node=node,
                     ctx=ctx,
                 )
             )
@@ -674,12 +836,13 @@ async def exec_google_calendar(
 # ── Per-operation payload builders ─────────────────────────────────────
 
 
-def _build_create_items(
+async def _build_create_items(
     *,
     params: dict[str, Any],
     item: ExecutionItem,
     ectx: ExpressionContext,
     calendar_id: str,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> list[ExecutionItem]:
     summary = _resolve_str_param(
@@ -700,7 +863,7 @@ def _build_create_items(
     attendees = _coerce_attendees(
         _resolve_param(params, "attendees", item, ectx, ("attendees",))
     )
-    envelope, source = _resolve_calendar_response(
+    envelope, source = await _resolve_calendar_response(
         operation="create",
         calendar_id=calendar_id,
         event_id="",
@@ -710,6 +873,7 @@ def _build_create_items(
         max_results=CALENDAR_OFFLINE_MAX_EVENTS,
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
     )
     payload: dict[str, Any] = {
@@ -731,7 +895,7 @@ def _build_create_items(
         payload["location"] = location
     if attendees:
         payload["attendees"] = attendees
-    if source != "calendar_response":
+    if source not in ("calendar_response", "calendar_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}
@@ -744,13 +908,14 @@ def _build_create_items(
     return [ni]
 
 
-def _build_list_items(
+async def _build_list_items(
     *,
     params: dict[str, Any],
     item: ExecutionItem,
     ectx: ExpressionContext,
     calendar_id: str,
     data_mode: str,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> list[ExecutionItem]:
     max_results = _resolve_max_results(params, item, ectx)
@@ -761,7 +926,7 @@ def _build_list_items(
         params, "timeMax", item, ectx, ("timeMax",)
     ) or _now_plus_iso(CALENDAR_DEFAULT_WINDOW_DAYS)
     q = _resolve_str_param(params, "q", item, ectx, ("q", "query", "search"))
-    envelope, source = _resolve_calendar_response(
+    envelope, source = await _resolve_calendar_response(
         operation="list",
         calendar_id=calendar_id,
         event_id="",
@@ -771,6 +936,7 @@ def _build_list_items(
         max_results=max_results,
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
     )
     events = envelope.get("items") or []
@@ -789,7 +955,7 @@ def _build_list_items(
         }
         if q:
             payload["q"] = q
-        if source != "calendar_response":
+        if source not in ("calendar_response", "calendar_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -813,7 +979,7 @@ def _build_list_items(
             }
             if q:
                 payload["q"] = q
-            if source != "calendar_response":
+            if source not in ("calendar_response", "calendar_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -836,7 +1002,7 @@ def _build_list_items(
                 }
                 if q:
                     payload["q"] = q
-                if source != "calendar_response":
+                if source not in ("calendar_response", "calendar_api"):
                     payload["mockSource"] = source
                 ni = item.clone()
                 ni.json = {**item.json, **payload}
@@ -852,15 +1018,16 @@ def _build_list_items(
     return results
 
 
-def _build_get_items(
+async def _build_get_items(
     *,
     item: ExecutionItem,
     calendar_id: str,
     event_id: str,
     params: dict[str, Any],
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> list[ExecutionItem]:
-    envelope, source = _resolve_calendar_response(
+    envelope, source = await _resolve_calendar_response(
         operation="get",
         calendar_id=calendar_id,
         event_id=event_id,
@@ -870,6 +1037,7 @@ def _build_get_items(
         max_results=CALENDAR_OFFLINE_MAX_EVENTS,
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
     )
     payload = {
@@ -886,7 +1054,7 @@ def _build_get_items(
         "ok": True,
         "source": "googleCalendar",
     }
-    if source != "calendar_response":
+    if source not in ("calendar_response", "calendar_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}
@@ -899,15 +1067,16 @@ def _build_get_items(
     return [ni]
 
 
-def _build_delete_items(
+async def _build_delete_items(
     *,
     item: ExecutionItem,
     calendar_id: str,
     event_id: str,
     params: dict[str, Any],
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> list[ExecutionItem]:
-    envelope, source = _resolve_calendar_response(
+    envelope, source = await _resolve_calendar_response(
         operation="delete",
         calendar_id=calendar_id,
         event_id=event_id,
@@ -917,6 +1086,7 @@ def _build_delete_items(
         max_results=CALENDAR_OFFLINE_MAX_EVENTS,
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
     )
     payload = {
@@ -928,7 +1098,7 @@ def _build_delete_items(
         "ok": bool(envelope.get("success", True)),
         "source": "googleCalendar",
     }
-    if source != "calendar_response":
+    if source not in ("calendar_response", "calendar_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}

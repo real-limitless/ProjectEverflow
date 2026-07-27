@@ -15,6 +15,11 @@ v1 supports the four operations most commonly used in n8n templates:
   ``{videoId, title, description, privacyStatus, uploadStatus,
   source: 'youTube'}``.
 
+When a ``youTubeOAuth2Api`` credential is attached and no mock is
+present, real calls are made to the YouTube Data API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
+
 Parameters honored:
 
 - ``operation``  (``"search"`` / ``"get"`` / ``"list"`` / ``"upload"``;
@@ -47,7 +52,11 @@ Behavior precedence:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the operation envelope.
-3. Offline synthetic response with deterministic-looking ids and ISO
+3. If a ``youTubeOAuth2Api`` credential resolves (``accessToken``
+   present), a real call is made to the YouTube Data API via
+   :func:`execute_http_request` and the response is unwrapped into the
+   operation envelope.
+4. Offline synthetic response with deterministic-looking ids and ISO
    timestamps.
 
 Items with an empty resolved ``videoId`` for ``get`` are skipped, and items
@@ -62,9 +71,12 @@ import logging
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -477,7 +489,8 @@ def _youtube_response_from_http_mock(
 # ── Response resolution ────────────────────────────────────────────────
 
 
-def _resolve_youtube_response(
+def _build_youtube_request(
+    cred: dict[str, Any],
     *,
     operation: str,
     video_id: str,
@@ -485,15 +498,130 @@ def _resolve_youtube_response(
     description: str,
     privacy_status: str,
     max_results: int,
+    q: str,
+    order: str,
+    type_: str,
+    channel_id: str,
+) -> HttpRequestConfig | None:
+    """Build a real YouTube Data API request config.
+
+    Returns ``None`` when the credential has no ``accessToken``.
+    """
+    access_token = str(cred.get("accessToken") or "")
+    if not access_token:
+        return None
+    headers = {"Authorization": f"Bearer {access_token}"}
+    if operation == "search":
+        url = (
+            "https://www.googleapis.com/youtube/v3/search"
+            f"?part=snippet&q={quote(q)}&maxResults={max_results}"
+            f"&order={quote(order)}&type={quote(type_)}"
+        )
+        return HttpRequestConfig(
+            url=url,
+            method="GET",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "get":
+        url = (
+            "https://www.googleapis.com/youtube/v3/videos"
+            f"?part=snippet,contentDetails,statistics&id={quote(video_id)}"
+        )
+        return HttpRequestConfig(
+            url=url,
+            method="GET",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "list":
+        url = (
+            "https://www.googleapis.com/youtube/v3/search"
+            f"?part=snippet&channelId={quote(channel_id)}"
+            f"&maxResults={max_results}&type=video"
+        )
+        return HttpRequestConfig(
+            url=url,
+            method="GET",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+    # upload
+    return HttpRequestConfig(
+        url="https://www.googleapis.com/youtube/v3/videos?part=snippet,status",
+        method="POST",
+        headers=headers,
+        body={
+            "snippet": {"title": title, "description": description},
+            "status": {"privacyStatus": privacy_status},
+        },
+        body_mode="json",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _envelope_from_youtube_api(
+    data: Any,
+    *,
+    operation: str,
+    video_id: str,
+    title: str,
+    description: str,
+    privacy_status: str,
+    max_results: int,
+) -> dict[str, Any]:
+    """Convert a real YouTube Data API response to the internal envelope."""
+    if operation == "search":
+        if isinstance(data, dict):
+            return _coerce_search_envelope(data, max_results=max_results)
+        return _synthesize_search_response(max_results)
+    if operation == "get":
+        if isinstance(data, dict):
+            return _coerce_get_envelope(data, video_id=video_id)
+        return _synthesize_get_response(video_id)
+    if operation == "list":
+        if isinstance(data, dict):
+            return _coerce_list_envelope(data, max_results=max_results)
+        return _synthesize_list_response(max_results)
+    # upload
+    if isinstance(data, dict):
+        return _coerce_upload_envelope(
+            data,
+            title=title,
+            description=description,
+            privacy_status=privacy_status,
+        )
+    return _synthesize_upload_response(
+        title=title, description=description, privacy_status=privacy_status
+    )
+
+
+async def _resolve_youtube_response(
+    *,
+    operation: str,
+    video_id: str,
+    title: str,
+    description: str,
+    privacy_status: str,
+    max_results: int,
+    q: str = "",
+    order: str = YOUTUBE_DEFAULT_ORDER,
+    type_: str = YOUTUBE_DEFAULT_TYPE,
+    channel_id: str = "",
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"youtube_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"youtube_api"``, ``"offline"`` so downstream observers can tell
+    where the result came from.
     """
     mocks = ctx.mocks or {}
     ymock = mocks.get("youtube_response")
@@ -562,6 +690,45 @@ def _resolve_youtube_response(
         if env is not None:
             return env, "http_response"
 
+    cred = resolve_credential(node, ctx, "youTubeOAuth2Api")
+    if cred:
+        cfg = _build_youtube_request(
+            cred,
+            operation=operation,
+            video_id=video_id,
+            title=title,
+            description=description,
+            privacy_status=privacy_status,
+            max_results=max_results,
+            q=q,
+            order=order,
+            type_=type_,
+            channel_id=channel_id,
+        )
+        if cfg is not None:
+            logger.info(
+                "youTube real HTTP call operation=%s videoId=%r",
+                operation,
+                video_id[:80],
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_youtube_api(
+                            resp.body,
+                            operation=operation,
+                            video_id=video_id,
+                            title=title,
+                            description=description,
+                            privacy_status=privacy_status,
+                            max_results=max_results,
+                        ),
+                        "youtube_api",
+                    )
+            except Exception as exc:
+                logger.warning("youTube HTTP call failed: %s", exc)
+
     if operation == "search":
         return _synthesize_search_response(max_results), "offline"
     if operation == "get":
@@ -603,10 +770,11 @@ async def exec_youtube(
 
         if operation == "search":
             out.extend(
-                _build_search_items(
+                await _build_search_items(
                     params=params,
                     item=item,
                     ectx=ectx,
+                    node=node,
                     ctx=ctx,
                 )
             )
@@ -623,10 +791,11 @@ async def exec_youtube(
                 )
                 continue
             out.extend(
-                _build_get_items(
+                await _build_get_items(
                     item=item,
                     video_id=video_id,
                     params=params,
+                    node=node,
                     ctx=ctx,
                 )
             )
@@ -643,11 +812,12 @@ async def exec_youtube(
                 )
                 continue
             out.extend(
-                _build_list_items(
+                await _build_list_items(
                     params=params,
                     item=item,
                     ectx=ectx,
                     channel_id=channel_id,
+                    node=node,
                     ctx=ctx,
                 )
             )
@@ -655,10 +825,11 @@ async def exec_youtube(
 
         # upload
         out.extend(
-            _build_upload_items(
+            await _build_upload_items(
                 params=params,
                 item=item,
                 ectx=ectx,
+                node=node,
                 ctx=ctx,
             )
         )
@@ -669,11 +840,12 @@ async def exec_youtube(
 # ── Per-operation payload builders ─────────────────────────────────────
 
 
-def _build_search_items(
+async def _build_search_items(
     *,
     params: dict[str, Any],
     item: ExecutionItem,
     ectx: ExpressionContext,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> list[ExecutionItem]:
     q = _resolve_str_param(params, "q", item, ectx, ("q", "query", "search"))
@@ -686,15 +858,20 @@ def _build_search_items(
     )
     data_mode = _resolve_data_mode(params, item, ectx)
 
-    envelope, source = _resolve_youtube_response(
+    envelope, source = await _resolve_youtube_response(
         operation="search",
         video_id="",
         title="",
         description="",
         privacy_status=YOUTUBE_DEFAULT_PRIVACY_STATUS,
         max_results=max_results,
+        q=q,
+        order=order,
+        type_=type_,
+        channel_id="",
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
     )
     raw_items = envelope.get("items") or []
@@ -711,7 +888,7 @@ def _build_search_items(
             "ok": True,
             "source": "youTube",
         }
-        if source != "youtube_response":
+        if source not in ("youtube_response", "youtube_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -733,7 +910,7 @@ def _build_search_items(
                 "ok": True,
                 "source": "youTube",
             }
-            if source != "youtube_response":
+            if source not in ("youtube_response", "youtube_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -763,7 +940,7 @@ def _build_search_items(
                     "ok": True,
                     "source": "youTube",
                 }
-                if source != "youtube_response":
+                if source not in ("youtube_response", "youtube_api"):
                     payload["mockSource"] = source
                 ni = item.clone()
                 ni.json = {**item.json, **payload}
@@ -781,22 +958,28 @@ def _build_search_items(
     return results
 
 
-def _build_get_items(
+async def _build_get_items(
     *,
     item: ExecutionItem,
     video_id: str,
     params: dict[str, Any],
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> list[ExecutionItem]:
-    envelope, source = _resolve_youtube_response(
+    envelope, source = await _resolve_youtube_response(
         operation="get",
         video_id=video_id,
         title="",
         description="",
         privacy_status=YOUTUBE_DEFAULT_PRIVACY_STATUS,
         max_results=YOUTUBE_OFFLINE_MAX_VIDEOS,
+        q="",
+        order=YOUTUBE_DEFAULT_ORDER,
+        type_=YOUTUBE_DEFAULT_TYPE,
+        channel_id="",
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
     )
     snippet = envelope.get("snippet") if isinstance(envelope.get("snippet"), dict) else {}
@@ -818,7 +1001,7 @@ def _build_get_items(
         "ok": True,
         "source": "youTube",
     }
-    if source != "youtube_response":
+    if source not in ("youtube_response", "youtube_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}
@@ -830,24 +1013,30 @@ def _build_get_items(
     return [ni]
 
 
-def _build_list_items(
+async def _build_list_items(
     *,
     params: dict[str, Any],
     item: ExecutionItem,
     ectx: ExpressionContext,
     channel_id: str,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> list[ExecutionItem]:
     max_results = _resolve_max_results(params, item, ectx)
-    envelope, source = _resolve_youtube_response(
+    envelope, source = await _resolve_youtube_response(
         operation="list",
         video_id="",
         title="",
         description="",
         privacy_status=YOUTUBE_DEFAULT_PRIVACY_STATUS,
         max_results=max_results,
+        q="",
+        order=YOUTUBE_DEFAULT_ORDER,
+        type_=YOUTUBE_DEFAULT_TYPE,
+        channel_id=channel_id,
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
     )
     raw_items = envelope.get("items") or []
@@ -865,7 +1054,7 @@ def _build_list_items(
             "ok": True,
             "source": "youTube",
         }
-        if source != "youtube_response":
+        if source not in ("youtube_response", "youtube_api"):
             payload["mockSource"] = source
         ni = item.clone()
         ni.json = {**item.json, **payload}
@@ -885,7 +1074,7 @@ def _build_list_items(
                 "ok": True,
                 "source": "youTube",
             }
-            if source != "youtube_response":
+            if source not in ("youtube_response", "youtube_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -901,11 +1090,12 @@ def _build_list_items(
     return results
 
 
-def _build_upload_items(
+async def _build_upload_items(
     *,
     params: dict[str, Any],
     item: ExecutionItem,
     ectx: ExpressionContext,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> list[ExecutionItem]:
     title = _resolve_str_param(
@@ -918,15 +1108,20 @@ def _build_upload_items(
         params, "privacyStatus", item, ectx, ("privacyStatus",),
         default=YOUTUBE_DEFAULT_PRIVACY_STATUS,
     )
-    envelope, source = _resolve_youtube_response(
+    envelope, source = await _resolve_youtube_response(
         operation="upload",
         video_id="",
         title=title,
         description=description,
         privacy_status=privacy_status,
         max_results=YOUTUBE_OFFLINE_MAX_VIDEOS,
+        q="",
+        order=YOUTUBE_DEFAULT_ORDER,
+        type_=YOUTUBE_DEFAULT_TYPE,
+        channel_id="",
         params=params,
         item=item,
+        node=node,
         ctx=ctx,
     )
     snippet = envelope.get("snippet") if isinstance(envelope.get("snippet"), dict) else {}
@@ -941,7 +1136,7 @@ def _build_upload_items(
         "ok": True,
         "source": "youTube",
     }
-    if source != "youtube_response":
+    if source not in ("youtube_response", "youtube_api"):
         payload["mockSource"] = source
     ni = item.clone()
     ni.json = {**item.json, **payload}

@@ -23,6 +23,11 @@ Parameters honored:
   required for ``read`` and ``update``)
 - ``replaceAll`` (bool; default ``False``; used by ``update``)
 
+When a ``googleDocsOAuth2Api`` credential is attached and no mock is
+present, real calls are made to the Google Docs API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
+
 Behavior precedence:
 
 1. ``ctx.mocks['docs_response']`` — when present, the value drives the
@@ -34,7 +39,11 @@ Behavior precedence:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the Docs envelope.
-3. Offline synthetic response with deterministic-looking ids.
+3. If a ``googleDocsOAuth2Api`` credential resolves (``accessToken``
+   present), real calls are made to the Google Docs API via
+   :func:`execute_http_request` and the response is coerced into the
+   operation envelope.
+4. Offline synthetic response with deterministic-looking ids.
 
 Items missing ``documentId`` (for ``read``/``update``) are skipped (no
 item emitted) — matching the behavior of the other output nodes in
@@ -49,7 +58,9 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -247,10 +258,85 @@ def _docs_response_from_http_mock(
     return None
 
 
+# ── Real HTTP request building ────────────────────────────────────────
+
+
+def _build_docs_request(
+    cred: dict[str, Any],
+    *,
+    operation: str,
+    document_id: str,
+    title: str,
+    content: str,
+) -> HttpRequestConfig | None:
+    """Build a real Google Docs API request config.
+
+    Returns ``None`` when the credential has no ``accessToken``.
+    """
+    access_token = str(cred.get("accessToken") or "")
+    if not access_token:
+        return None
+    if operation == "create":
+        return HttpRequestConfig(
+            url="https://docs.googleapis.com/v1/documents",
+            method="POST",
+            body={"title": title},
+            body_mode="json",
+            auth="bearer",
+            auth_credential=cred,
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "read":
+        return HttpRequestConfig(
+            url=f"https://docs.googleapis.com/v1/documents/{document_id}",
+            method="GET",
+            auth="bearer",
+            auth_credential=cred,
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "update":
+        return HttpRequestConfig(
+            url=f"https://docs.googleapis.com/v1/documents/{document_id}:batchUpdate",
+            method="POST",
+            body={
+                "requests": [
+                    {"insertText": {"location": {"index": 1}, "text": content}}
+                ]
+            },
+            body_mode="json",
+            auth="bearer",
+            auth_credential=cred,
+            response_mode="json",
+            timeout=30.0,
+        )
+    return None
+
+
+def _envelope_from_docs_api(
+    data: dict[str, Any],
+    *,
+    operation: str,
+    document_id: str,
+    title: str,
+    content: str,
+) -> dict[str, Any]:
+    """Convert a real Google Docs API response to the internal
+    operation envelope shape."""
+    if operation == "create":
+        return _coerce_create_envelope(
+            data, document_id=document_id, title=title, content=content
+        )
+    if operation == "read":
+        return _coerce_read_envelope(data, document_id=document_id)
+    return _coerce_update_envelope(data, document_id=document_id)
+
+
 # ── Response resolution ────────────────────────────────────────────────
 
 
-def _resolve_docs_response(
+async def _resolve_docs_response(
     *,
     operation: str,
     document_id: str,
@@ -258,13 +344,14 @@ def _resolve_docs_response(
     content: str,
     params: dict[str, Any],
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"docs_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"docs_api"``, ``"offline"`` so downstream observers can tell where
+    the result came from.
     """
     mocks = ctx.mocks or {}
     dmock = mocks.get("docs_response")
@@ -322,6 +409,37 @@ def _resolve_docs_response(
         )
         if env is not None:
             return env, "http_response"
+
+    cred = resolve_credential(node, ctx, "googleDocsOAuth2Api")
+    if cred:
+        cfg = _build_docs_request(
+            cred,
+            operation=operation,
+            document_id=document_id,
+            title=title,
+            content=content,
+        )
+        if cfg is not None:
+            logger.info(
+                "googleDocs real HTTP call operation=%s documentId=%s",
+                operation,
+                document_id,
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                if isinstance(resp.body, dict):
+                    return (
+                        _envelope_from_docs_api(
+                            resp.body,
+                            operation=operation,
+                            document_id=document_id,
+                            title=title,
+                            content=content,
+                        ),
+                        "docs_api",
+                    )
+            except Exception as exc:
+                logger.warning("googleDocs HTTP call failed: %s", exc)
 
     if operation == "create":
         return (
@@ -391,13 +509,14 @@ async def exec_google_docs(
                     params, "content", item, ectx, ("content", "text")
                 )
 
-        envelope, source = _resolve_docs_response(
+        envelope, source = await _resolve_docs_response(
             operation=operation,
             document_id=document_id,
             title=title,
             content=content,
             params=params,
             item=item,
+            node=node,
             ctx=ctx,
         )
 
@@ -436,7 +555,7 @@ async def exec_google_docs(
                 "source": "googleDocs",
             }
 
-        if source != "docs_response":
+        if source not in ("docs_response", "docs_api"):
             payload["mockSource"] = source
 
         ni = item.clone()

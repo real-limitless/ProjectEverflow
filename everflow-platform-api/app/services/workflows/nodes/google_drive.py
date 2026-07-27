@@ -12,6 +12,11 @@ v1 supports the four operations most commonly used in n8n templates:
 - ``delete``   — delete a file by id; emit one item per input with
   ``{fileId, success, deletedAt, source: 'googleDrive'}``.
 
+When a ``googleDriveOAuth2Api`` credential is attached and no mock is
+present, real calls are made to the Google Drive API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
+
 Parameters honored:
 
 - ``operation`` (``"upload"`` / ``"download"`` / ``"list"`` / ``"delete"``;
@@ -40,7 +45,11 @@ Behavior precedence:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the operation envelope.
-3. Offline synthetic response with deterministic-looking ids and
+3. If a ``googleDriveOAuth2Api`` credential resolves (``accessToken``
+   present), a real call is made to the Google Drive API via
+   :func:`execute_http_request` and the response is unwrapped into the
+   operation envelope.
+4. Offline synthetic response with deterministic-looking ids and
    timestamps.
 
 Items missing the data needed for the operation (``name`` + ``content``
@@ -56,9 +65,12 @@ import logging
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -336,7 +348,105 @@ def _drive_response_from_http_mock(
     return _coerce_upload_envelope(body, name="mock_file.txt", mime_type=DRIVE_DEFAULT_MIME_TYPE)
 
 
-def _resolve_drive_response(
+def _build_drive_request(
+    cred: dict[str, Any],
+    *,
+    operation: str,
+    name: str,
+    mime_type: str,
+    file_id: str,
+    page_size: int,
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Google Drive API request config.
+
+    Returns ``None`` when the credential has no ``accessToken``.
+    """
+    access_token = str(cred.get("accessToken") or "")
+    if not access_token:
+        return None
+    headers = {"Authorization": f"Bearer {access_token}"}
+    if operation == "upload":
+        return HttpRequestConfig(
+            url="https://www.googleapis.com/drive/v3/files",
+            method="POST",
+            headers=headers,
+            body={"name": name, "mimeType": mime_type},
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+    if operation == "download":
+        return HttpRequestConfig(
+            url=f"https://www.googleapis.com/drive/v3/files/{quote(file_id)}?alt=media",
+            method="GET",
+            headers=headers,
+            response_mode="binary",
+            timeout=30.0,
+        )
+    if operation == "list":
+        url = f"https://www.googleapis.com/drive/v3/files?pageSize={page_size}"
+        query = str(params.get("query") or "")
+        if query:
+            url += f"&q={quote(query)}"
+        return HttpRequestConfig(
+            url=url,
+            method="GET",
+            headers=headers,
+            response_mode="json",
+            timeout=30.0,
+        )
+    # delete
+    return HttpRequestConfig(
+        url=f"https://www.googleapis.com/drive/v3/files/{quote(file_id)}",
+        method="DELETE",
+        headers=headers,
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _envelope_from_drive_api(
+    data: Any,
+    *,
+    operation: str,
+    name: str,
+    mime_type: str,
+    file_id: str,
+    page_size: int,
+) -> dict[str, Any]:
+    """Convert a real Google Drive API response to the internal envelope."""
+    if operation == "upload":
+        if isinstance(data, dict):
+            return _coerce_upload_envelope(data, name=name, mime_type=mime_type)
+        return _synthesize_upload(name, mime_type, DRIVE_OFFLINE_FILE_SIZE)
+    if operation == "download":
+        if isinstance(data, (bytes, bytearray)):
+            raw = bytes(data)
+        elif isinstance(data, str):
+            raw = data.encode("utf-8")
+        else:
+            raw = b""
+        return {
+            "id": file_id,
+            "name": name or "mock_file.txt",
+            "mimeType": mime_type or "text/plain",
+            "content": base64.b64encode(raw).decode("ascii") if raw else "",
+            "size": len(raw),
+        }
+    if operation == "list":
+        if isinstance(data, dict):
+            return _coerce_listing_envelope(data, page_size=page_size)
+        return _synthesize_listing(page_size)
+    # delete — 204 No Content (empty body)
+    return {
+        "success": True,
+        "fileId": file_id,
+        "deletedAt": _now_iso(),
+    }
+
+
+async def _resolve_drive_response(
     *,
     operation: str,
     params: dict[str, Any],
@@ -345,13 +455,14 @@ def _resolve_drive_response(
     file_id: str,
     page_size: int,
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"drive_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"drive_api"``, ``"offline"`` so downstream observers can tell where
+    the result came from.
     """
     mocks = ctx.mocks or {}
     dmock = mocks.get("drive_response")
@@ -415,6 +526,39 @@ def _resolve_drive_response(
             if operation == "download":
                 return env, "http_response"
             return env, "http_response"
+
+    cred = resolve_credential(node, ctx, "googleDriveOAuth2Api")
+    if cred:
+        cfg = _build_drive_request(
+            cred,
+            operation=operation,
+            name=name,
+            mime_type=mime_type,
+            file_id=file_id,
+            page_size=page_size,
+            params=params,
+        )
+        if cfg is not None:
+            logger.info(
+                "googleDrive real HTTP call operation=%s fileId=%r",
+                operation,
+                file_id[:80],
+            )
+            try:
+                resp = await execute_http_request(cfg, ctx=ctx)
+                return (
+                    _envelope_from_drive_api(
+                        resp.body,
+                        operation=operation,
+                        name=name,
+                        mime_type=mime_type,
+                        file_id=file_id,
+                        page_size=page_size,
+                    ),
+                    "drive_api",
+                )
+            except Exception as exc:
+                logger.warning("googleDrive HTTP call failed: %s", exc)
 
     if operation == "upload":
         return _synthesize_upload(name, mime_type, DRIVE_OFFLINE_FILE_SIZE), "offline"
@@ -490,7 +634,7 @@ async def exec_google_drive(
             if not folder_id:
                 folder_id = "root"
 
-        envelope, source = _resolve_drive_response(
+        envelope, source = await _resolve_drive_response(
             operation=operation,
             params=params,
             name=name,
@@ -498,6 +642,7 @@ async def exec_google_drive(
             file_id=file_id,
             page_size=page_size,
             item=item,
+            node=node,
             ctx=ctx,
         )
 
@@ -523,7 +668,7 @@ async def exec_google_drive(
             }
             if folder_id:
                 payload["folderId"] = folder_id
-            if source != "drive_response":
+            if source not in ("drive_response", "drive_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -540,7 +685,7 @@ async def exec_google_drive(
                 "ok": True,
                 "source": "googleDrive",
             }
-            if source != "drive_response":
+            if source not in ("drive_response", "drive_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -558,7 +703,7 @@ async def exec_google_drive(
                     "ok": True,
                     "source": "googleDrive",
                 }
-                if source != "drive_response":
+                if source not in ("drive_response", "drive_api"):
                     payload["mockSource"] = source
                 ni = item.clone()
                 ni.json = {**item.json, **payload}
@@ -577,7 +722,7 @@ async def exec_google_drive(
                         "ok": True,
                         "source": "googleDrive",
                     }
-                    if source != "drive_response":
+                    if source not in ("drive_response", "drive_api"):
                         payload["mockSource"] = source
                     ni = item.clone()
                     ni.json = {**item.json, **payload}
@@ -594,7 +739,7 @@ async def exec_google_drive(
                             "ok": True,
                             "source": "googleDrive",
                         }
-                        if source != "drive_response":
+                        if source not in ("drive_response", "drive_api"):
                             payload["mockSource"] = source
                         ni = item.clone()
                         ni.json = {**item.json, **payload}
@@ -609,7 +754,7 @@ async def exec_google_drive(
                 "ok": bool(envelope.get("success", True)),
                 "source": "googleDrive",
             }
-            if source != "drive_response":
+            if source not in ("drive_response", "drive_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
