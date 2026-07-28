@@ -1,5 +1,10 @@
 """S3 executor (clean-room n8n ``n8n-nodes-base.s3``).
 
+When an ``s3`` / ``aws`` credential is attached and no mock is present,
+real calls are made to S3 (or an S3-compatible endpoint such as MinIO)
+via ``boto3``. Otherwise the executor is mock-driven with an offline
+synthetic fallback.
+
 v1 supports the four operations most commonly used in n8n templates:
 
 - ``upload``   — upload a file; emit one item per input with
@@ -39,7 +44,11 @@ Behavior precedence:
 2. ``ctx.mocks['http_response']`` — generic HTTP-response fallback
    (``{status_code, body, headers}``); a JSON ``body`` dict is unwrapped
    into the operation envelope.
-3. Offline synthetic response with deterministic-looking ETags and
+3. If an ``s3`` / ``aws`` credential resolves (``accessKeyId`` +
+   ``secretAccessKey`` present), a real call is made via ``boto3`` and
+   the raw S3 response is coerced into the operation envelope. Any
+   exception falls through to the offline path.
+4. Offline synthetic response with deterministic-looking ETags and
    timestamps.
 
 Items missing the data needed for the operation (empty ``bucket`` for all
@@ -50,14 +59,19 @@ package.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import boto3
+from botocore.config import Config as BotoConfig
+
 from app.services.workflows.expression import ExpressionContext, evaluate
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -382,10 +396,126 @@ def _s3_response_from_http_mock(
     return _coerce_delete_envelope(body, key=key, bucket=bucket)
 
 
+# ── Real S3 (boto3) ───────────────────────────────────────────────────
+
+
+def _build_s3_client(cred: dict[str, Any]) -> Any:
+    """Build a ``boto3`` S3 client from a credential dict.
+
+    Honored keys (camelCase and snake_case variants):
+
+    - ``accessKeyId`` / ``access_key_id``  (required)
+    - ``secretAccessKey`` / ``secret_access_key``  (required)
+    - ``region``  (default ``us-east-1``)
+    - ``endpoint`` / ``endpointUrl`` / ``endpoint_url``  (optional; MinIO)
+
+    Returns ``None`` when access key / secret are missing so the caller
+    can fall through to the offline path.
+    """
+    if not isinstance(cred, dict):
+        return None
+    access_key = (
+        cred.get("accessKeyId")
+        or cred.get("access_key_id")
+        or cred.get("accessKey")
+        or cred.get("access_key")
+    )
+    secret_key = (
+        cred.get("secretAccessKey")
+        or cred.get("secret_access_key")
+        or cred.get("secretKey")
+        or cred.get("secret_key")
+    )
+    if not access_key or not secret_key:
+        return None
+    region = str(cred.get("region") or cred.get("awsRegion") or "us-east-1")
+    endpoint = (
+        cred.get("endpoint")
+        or cred.get("endpointUrl")
+        or cred.get("endpoint_url")
+    )
+    config = BotoConfig(
+        connect_timeout=30,
+        read_timeout=60,
+        retries={"max_attempts": 3},
+    )
+    kwargs: dict[str, Any] = {
+        "aws_access_key_id": str(access_key),
+        "aws_secret_access_key": str(secret_key),
+        "region_name": region,
+        "config": config,
+    }
+    if endpoint:
+        kwargs["endpoint_url"] = str(endpoint)
+    return boto3.client("s3", **kwargs)
+
+
+async def _execute_s3_operation(
+    client: Any,
+    operation: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+) -> dict[str, Any]:
+    """Run a single S3 operation via ``boto3`` and return a raw envelope.
+
+    ``boto3`` is synchronous, so each call is dispatched to a worker
+    thread via :func:`asyncio.to_thread` to avoid blocking the event
+    loop. ``params`` carries the resolved ``bucket`` / ``key`` / ``prefix``
+    / ``maxKeys`` / ``contentBytes`` / ``contentType`` for the call.
+
+    The returned dict uses S3-native keys (``ETag``, ``Contents``, …) so
+    the existing ``_coerce_*_envelope`` helpers can normalize it.
+    """
+    bucket = str(params.get("bucket") or "")
+    key = str(params.get("key") or "")
+    prefix = str(params.get("prefix") or "")
+    max_keys = int(params.get("maxKeys") or S3_DEFAULT_MAX_KEYS)
+    content_bytes = params.get("contentBytes") or b""
+    content_type = str(params.get("contentType") or S3_DEFAULT_CONTENT_TYPE)
+
+    def _run() -> dict[str, Any]:
+        if operation == "upload":
+            resp = client.put_object(
+                Bucket=bucket, Key=key, Body=content_bytes, ContentType=content_type
+            )
+            etag = resp.get("ETag") if isinstance(resp, dict) else None
+            return {
+                "ETag": etag or "",
+                "LOCATION": f"https://{bucket}.s3.amazonaws.com/{key}",
+                "key": key,
+                "bucket": bucket,
+                "size": len(content_bytes),
+            }
+        if operation == "download":
+            resp = client.get_object(Bucket=bucket, Key=key)
+            body = resp["Body"].read() if isinstance(resp, dict) else b""
+            ct = resp.get("ContentType") if isinstance(resp, dict) else None
+            cl = resp.get("ContentLength") if isinstance(resp, dict) else None
+            etag = resp.get("ETag") if isinstance(resp, dict) else None
+            return {
+                "Body": base64.b64encode(body).decode("ascii"),
+                "ContentType": ct or S3_DEFAULT_CONTENT_TYPE,
+                "ContentLength": int(cl) if cl is not None else len(body),
+                "ETag": etag or "",
+                "key": key,
+                "bucket": bucket,
+            }
+        if operation == "list":
+            resp = client.list_objects_v2(
+                Bucket=bucket, Prefix=prefix, MaxKeys=max_keys
+            )
+            return resp if isinstance(resp, dict) else {}
+        # delete
+        client.delete_object(Bucket=bucket, Key=key)
+        return {"Deleted": [{"Key": key}], "key": key, "bucket": bucket}
+
+    return await asyncio.to_thread(_run)
+
+
 # ── Response resolver ─────────────────────────────────────────────────
 
 
-def _resolve_s3_response(
+async def _resolve_s3_response(
     *,
     operation: str,
     bucket: str,
@@ -394,14 +524,16 @@ def _resolve_s3_response(
     prefix: str,
     max_keys: int,
     content_bytes: bytes,
+    content_type: str,
     item: ExecutionItem,
+    node: "ExecNode",
     ctx: "EngineContext",
 ) -> tuple[dict[str, Any], str]:
     """Return ``(envelope, source)`` for the current call.
 
     ``source`` is one of ``"s3_response"``, ``"http_response"``,
-    ``"offline"`` so downstream observers can tell where the result came
-    from.
+    ``"s3_api"``, ``"offline"`` so downstream observers can tell where
+    the result came from.
     """
     mocks = ctx.mocks or {}
     smock = mocks.get("s3_response")
@@ -452,6 +584,57 @@ def _resolve_s3_response(
         )
         if env is not None:
             return env, "http_response"
+
+    cred = resolve_credential(node, ctx, "s3") or resolve_credential(node, ctx, "aws")
+    if cred:
+        client = _build_s3_client(cred)
+        if client is not None:
+            logger.info(
+                "s3 real API call op=%s bucket=%r key=%r",
+                operation,
+                bucket,
+                key,
+            )
+            try:
+                raw = await _execute_s3_operation(
+                    client,
+                    operation,
+                    {
+                        "bucket": bucket,
+                        "key": key,
+                        "prefix": prefix,
+                        "maxKeys": max_keys,
+                        "contentBytes": content_bytes,
+                        "contentType": content_type,
+                    },
+                    item,
+                )
+                if isinstance(raw, dict):
+                    if operation == "upload":
+                        return (
+                            _coerce_upload_envelope(
+                                raw, key=key, bucket=bucket, content_bytes=content_bytes
+                            ),
+                            "s3_api",
+                        )
+                    if operation == "download":
+                        return (
+                            _coerce_download_envelope(raw, key=key, bucket=bucket),
+                            "s3_api",
+                        )
+                    if operation == "list":
+                        return (
+                            _coerce_list_envelope(
+                                raw, bucket=bucket, prefix=prefix, max_keys=max_keys
+                            ),
+                            "s3_api",
+                        )
+                    return (
+                        _coerce_delete_envelope(raw, key=key, bucket=bucket),
+                        "s3_api",
+                    )
+            except Exception as exc:
+                logger.warning("s3 real API call failed: %s", exc)
 
     if operation == "upload":
         return _coerce_upload_envelope(_synthesize_upload(key, bucket, content_bytes), key=key, bucket=bucket, content_bytes=content_bytes), "offline"
@@ -522,7 +705,7 @@ async def exec_s3(
                 )
                 continue
 
-        envelope, source = _resolve_s3_response(
+        envelope, source = await _resolve_s3_response(
             operation=operation,
             bucket=bucket,
             params=params,
@@ -530,7 +713,9 @@ async def exec_s3(
             prefix=prefix,
             max_keys=max_keys,
             content_bytes=content_bytes,
+            content_type=content_type,
             item=item,
+            node=node,
             ctx=ctx,
         )
 
@@ -546,7 +731,7 @@ async def exec_s3(
                 "ok": True,
                 "source": "s3",
             }
-            if source != "s3_response":
+            if source not in ("s3_response", "s3_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -564,7 +749,7 @@ async def exec_s3(
                 "ok": True,
                 "source": "s3",
             }
-            if source != "s3_response":
+            if source not in ("s3_response", "s3_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}
@@ -585,7 +770,7 @@ async def exec_s3(
                 }
                 if delimiter:
                     payload["delimiter"] = delimiter
-                if source != "s3_response":
+                if source not in ("s3_response", "s3_api"):
                     payload["mockSource"] = source
                 ni = item.clone()
                 ni.json = {**item.json, **payload}
@@ -604,7 +789,7 @@ async def exec_s3(
                         "ok": True,
                         "source": "s3",
                     }
-                    if source != "s3_response":
+                    if source not in ("s3_response", "s3_api"):
                         payload["mockSource"] = source
                     ni = item.clone()
                     ni.json = {**item.json, **payload}
@@ -621,7 +806,7 @@ async def exec_s3(
                             "ok": True,
                             "source": "s3",
                         }
-                        if source != "s3_response":
+                        if source not in ("s3_response", "s3_api"):
                             payload["mockSource"] = source
                         ni = item.clone()
                         ni.json = {**item.json, **payload}
@@ -636,7 +821,7 @@ async def exec_s3(
                 "ok": True,
                 "source": "s3",
             }
-            if source != "s3_response":
+            if source not in ("s3_response", "s3_api"):
                 payload["mockSource"] = source
             ni = item.clone()
             ni.json = {**item.json, **payload}

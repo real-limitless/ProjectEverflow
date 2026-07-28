@@ -20,6 +20,7 @@ import httpx
 
 from app.services.workflows.expression import ExpressionContext, evaluate
 from app.services.workflows.graph import ExecNode
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import BinaryFile, ExecutionItem
 
 if TYPE_CHECKING:
@@ -528,42 +529,47 @@ async def exec_agent(
 
         max_tries = node.max_tries or 3
         final_text = ""
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            for _attempt in range(max_tries):
-                body: dict[str, Any] = {
-                    "model": model,
-                    "messages": messages,
-                }
-                if tools_schema:
-                    body["tools"] = tools_schema
-                    body["tool_choice"] = "auto"
-                resp = await client.post(
-                    f"{base_url.rstrip('/')}/chat/completions",
+        for _attempt in range(max_tries):
+            body: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+            }
+            if tools_schema:
+                body["tools"] = tools_schema
+                body["tool_choice"] = "auto"
+            resp = await execute_http_request(
+                HttpRequestConfig(
+                    url=f"{base_url.rstrip('/')}/chat/completions",
+                    method="POST",
                     headers={
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
-                    json=body,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                choice = (data.get("choices") or [{}])[0]
-                msg = choice.get("message") or {}
-                tool_calls = msg.get("tool_calls") or []
-                if tool_calls:
-                    messages.append(msg)
-                    for tc in tool_calls:
-                        result = await _run_tool_call(tc, tool_nodes, ctx)
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.get("id"),
-                                "content": result,
-                            }
-                        )
-                    continue
-                final_text = str(msg.get("content") or "")
-                break
+                    body=body,
+                    body_mode="json",
+                    response_mode="json",
+                    timeout=120.0,
+                ),
+                ctx=ctx,
+            )
+            data = resp.body if isinstance(resp.body, dict) else {}
+            choice = (data.get("choices") or [{}])[0]
+            msg = choice.get("message") or {}
+            tool_calls = msg.get("tool_calls") or []
+            if tool_calls:
+                messages.append(msg)
+                for tc in tool_calls:
+                    result = await _run_tool_call(tc, tool_nodes, ctx)
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.get("id"),
+                            "content": result,
+                        }
+                    )
+                continue
+            final_text = str(msg.get("content") or "")
+            break
 
         ni = item.clone()
         ni.json = {**item.json, "output": final_text or _offline_research(prompt, item.json, tool_nodes)}
@@ -666,28 +672,33 @@ async def exec_chain_llm(
         usage: dict[str, Any] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         if api_key:
             try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
-                    resp = await client.post(
-                        f"{base_url.rstrip('/')}/chat/completions",
+                resp = await execute_http_request(
+                    HttpRequestConfig(
+                        url=f"{base_url.rstrip('/')}/chat/completions",
+                        method="POST",
                         headers={
                             "Authorization": f"Bearer {api_key}",
                             "Content-Type": "application/json",
                         },
-                        json={"model": model, "messages": messages},
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    choice = (data.get("choices") or [{}])[0]
-                    msg = choice.get("message") or {}
-                    final_text = str(msg.get("content") or "")
-                    if isinstance(data.get("usage"), dict):
-                        usage = {
-                            "prompt_tokens": int(data["usage"].get("prompt_tokens") or 0),
-                            "completion_tokens": int(
-                                data["usage"].get("completion_tokens") or 0
-                            ),
-                            "total_tokens": int(data["usage"].get("total_tokens") or 0),
-                        }
+                        body={"model": model, "messages": messages},
+                        body_mode="json",
+                        response_mode="json",
+                        timeout=120.0,
+                    ),
+                    ctx=ctx,
+                )
+                data = resp.body if isinstance(resp.body, dict) else {}
+                choice = (data.get("choices") or [{}])[0]
+                msg = choice.get("message") or {}
+                final_text = str(msg.get("content") or "")
+                if isinstance(data.get("usage"), dict):
+                    usage = {
+                        "prompt_tokens": int(data["usage"].get("prompt_tokens") or 0),
+                        "completion_tokens": int(
+                            data["usage"].get("completion_tokens") or 0
+                        ),
+                        "total_tokens": int(data["usage"].get("total_tokens") or 0),
+                    }
             except Exception as exc:
                 logger.warning("chainLlm HTTP call failed: %s", exc)
                 final_text = ""
