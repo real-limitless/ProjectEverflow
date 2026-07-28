@@ -16,6 +16,13 @@ Mock-first via ``ctx.mocks['vector_store_output']``; offline fallback uses
 cosine similarity over deterministic SHA-256 embeddings (384-dim). A
 connected embedding model is resolved through ``ctx.mocks['embeddings_output']``
 or ``ctx.node_outputs`` (items carrying an ``embedding`` field).
+
+When a ``milvusApi`` or ``weaviateApi`` credential is attached and no mock
+is present, real REST calls are made to the Milvus v2 or Weaviate v1 API
+via :func:`execute_http_request` (``source`` = ``milvus_api`` /
+``weaviate_api``). Redis and MongoDB vector stores remain in-memory only
+(their vector search uses native client protocols, not HTTP). On any HTTP
+failure the executor falls through to the in-memory fallback.
 """
 
 from __future__ import annotations
@@ -27,7 +34,13 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import (
+    HttpRequestConfig,
+    HttpResponse,
+    execute_http_request,
+)
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -443,6 +456,458 @@ async def _exec_vector_store(
     return [(0, out_retrieve)]
 
 
+# ── Real HTTP paths (Milvus, Weaviate) ───────────────────────────────
+
+
+def _build_milvus_request(
+    cred: dict[str, Any],
+    operation: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+) -> HttpRequestConfig | None:
+    """Build a Milvus v2 REST API request config.
+
+    Returns ``None`` when the credential lacks ``baseUrl`` or the
+    operation has no REST mapping (``load``).
+    """
+    base_url = str(cred.get("baseUrl") or cred.get("url") or "")
+    if not base_url:
+        return None
+    base_url = base_url.rstrip("/")
+    api_key = str(cred.get("apiKey") or "")
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    if operation == "insert":
+        collection = str(params.get("collectionName") or "n8n_milvus")
+        data = params.get("_docs")
+        if not isinstance(data, list) or not data:
+            return None
+        return HttpRequestConfig(
+            url=f"{base_url}/v2/vectordb/collections/{collection}/insert",
+            method="POST",
+            headers=headers,
+            body={"data": data},
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "retrieve":
+        collection = str(params.get("collectionName") or "n8n_milvus")
+        query_vector = params.get("_query_vector")
+        if not isinstance(query_vector, list) or not query_vector:
+            return None
+        top_k = _coerce_top_k(params.get("topK"))
+        return HttpRequestConfig(
+            url=f"{base_url}/v2/vectordb/entities/search",
+            method="POST",
+            headers=headers,
+            body={
+                "collectionName": collection,
+                "data": [[float(v) for v in query_vector]],
+                "limit": top_k,
+            },
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    return None
+
+
+def _convert_milvus_insert_response(
+    resp: HttpResponse,
+    docs: list[dict[str, Any]],
+    extra_output: dict[str, Any],
+) -> list[ExecutionItem]:
+    """Convert a Milvus v2 insert response to output items."""
+    body = resp.body if isinstance(resp.body, dict) else {}
+    ids = body.get("ids") or body.get("insert_ids") or []
+    if not isinstance(ids, list):
+        ids = []
+    out: list[ExecutionItem] = []
+    for i, doc in enumerate(docs):
+        doc_id = str(ids[i]) if i < len(ids) else f"doc-{i + 1}"
+        text = str(doc.get("pageContent", ""))
+        metadata = _strip_text_from_meta(doc.get("metadata") or {})
+        out.append(
+            ExecutionItem(
+                json={
+                    "document": {"pageContent": text, "metadata": metadata},
+                    "stored": True,
+                    "mode": "insert",
+                    "id": doc_id,
+                    **extra_output,
+                    "source": "milvus_api",
+                }
+            )
+        )
+    return out
+
+
+def _convert_milvus_retrieve_response(
+    resp: HttpResponse,
+    item: ExecutionItem,
+    extra_output: dict[str, Any],
+) -> list[ExecutionItem]:
+    """Convert a Milvus v2 search response to output items."""
+    body = resp.body if isinstance(resp.body, dict) else {}
+    results = body.get("data") or body.get("results") or []
+    if not isinstance(results, list):
+        results = []
+    out: list[ExecutionItem] = []
+    for entry in results:
+        if not isinstance(entry, dict):
+            continue
+        raw_score = entry.get("distance")
+        if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool):
+            score = float(raw_score)
+        else:
+            score = 0.0
+        entity = (
+            entry.get("entity") if isinstance(entry.get("entity"), dict) else entry
+        )
+        text = str(
+            entity.get("text")
+            or entity.get("pageContent")
+            or entity.get("content")
+            or ""
+        )
+        raw_meta = entity.get("metadata")
+        metadata = _strip_text_from_meta(raw_meta if isinstance(raw_meta, dict) else {})
+        ni = item.clone()
+        ni.json = {
+            **item.json,
+            "document": {"pageContent": text, "metadata": metadata},
+            "score": score,
+            "id": str(entry.get("id", "")),
+            **extra_output,
+            "source": "milvus_api",
+        }
+        out.append(ni)
+    return out
+
+
+async def _try_milvus_http(
+    node: "ExecNode",
+    items: list[ExecutionItem],
+    *,
+    ctx: "EngineContext",
+    mode: str,
+    top_k: int,
+    params: dict[str, Any],
+    extra_output: dict[str, Any],
+) -> list[tuple[int, list[ExecutionItem]]] | None:
+    """Attempt real Milvus v2 REST API calls.
+
+    Returns ``None`` to signal the caller to fall through to the
+    in-memory fallback.
+    """
+    cred = resolve_credential(node, ctx, "milvusApi")
+    if not cred:
+        return None
+
+    try:
+        if mode == "insert":
+            docs = _items_to_docs(items)
+            if not docs:
+                return None
+            data: list[dict[str, Any]] = []
+            for i, doc in enumerate(docs):
+                text = str(doc.get("pageContent", ""))
+                src_item = items[i] if i < len(items) else ExecutionItem(json={})
+                embedding = doc.get("embedding")
+                if not isinstance(embedding, list):
+                    embedding = _resolve_embedding(src_item, ctx, text)
+                metadata = dict(doc.get("metadata") or {})
+                metadata.setdefault("text", text)
+                data.append(
+                    {
+                        "text": text,
+                        "metadata": _strip_text_from_meta(metadata),
+                        "vector": [float(v) for v in embedding],
+                    }
+                )
+            build_params = {**params, "_docs": data}
+            cfg = _build_milvus_request(
+                cred,
+                "insert",
+                build_params,
+                items[0] if items else ExecutionItem(),
+            )
+            if cfg is None:
+                return None
+            logger.info(
+                "milvus real HTTP insert collection=%s",
+                params.get("collectionName"),
+            )
+            resp = await execute_http_request(cfg, ctx=ctx)
+            out = _convert_milvus_insert_response(resp, docs, extra_output)
+            return [(0, out)]
+
+        if mode == "retrieve":
+            out_retrieve: list[ExecutionItem] = []
+            made_call = False
+            for item in items:
+                query = _resolve_query(node, item, ctx)
+                if not query:
+                    continue
+                query_vector = _resolve_embedding(item, ctx, query)
+                build_params = {
+                    **params,
+                    "_query_vector": query_vector,
+                    "topK": top_k,
+                }
+                cfg = _build_milvus_request(cred, "retrieve", build_params, item)
+                if cfg is None:
+                    return None
+                made_call = True
+                logger.info(
+                    "milvus real HTTP retrieve collection=%s",
+                    params.get("collectionName"),
+                )
+                resp = await execute_http_request(cfg, ctx=ctx)
+                out_retrieve.extend(
+                    _convert_milvus_retrieve_response(resp, item, extra_output)
+                )
+            if not made_call:
+                return None
+            return [(0, out_retrieve)]
+
+        return None
+    except Exception as exc:
+        logger.warning("milvus HTTP call failed: %s", exc)
+        return None
+
+
+def _build_weaviate_request(
+    cred: dict[str, Any],
+    operation: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+) -> HttpRequestConfig | None:
+    """Build a Weaviate v1 REST API request config.
+
+    Returns ``None`` when the credential lacks ``baseUrl`` or the
+    operation has no REST mapping (``load``).
+    """
+    base_url = str(cred.get("baseUrl") or cred.get("url") or "")
+    if not base_url:
+        return None
+    base_url = base_url.rstrip("/")
+    api_key = str(cred.get("apiKey") or "")
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    if operation == "insert":
+        class_name = str(params.get("className") or "Document")
+        text = str(params.get("_text") or "")
+        raw_meta = params.get("_metadata")
+        metadata = raw_meta if isinstance(raw_meta, dict) else {}
+        body: dict[str, Any] = {
+            "class": class_name,
+            "properties": {"text": text, **_strip_text_from_meta(metadata)},
+        }
+        vector = params.get("_vector")
+        if isinstance(vector, list) and vector:
+            body["vector"] = [float(v) for v in vector]
+        return HttpRequestConfig(
+            url=f"{base_url}/v1/objects",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "retrieve":
+        class_name = str(params.get("className") or "Document")
+        query_vector = params.get("_query_vector")
+        if not isinstance(query_vector, list) or not query_vector:
+            return None
+        top_k = _coerce_top_k(params.get("topK"))
+        vector_str = ", ".join(str(float(v)) for v in query_vector)
+        graphql = (
+            "{ Get { "
+            f"{class_name}("
+            f"nearVector: {{vector: [{vector_str}]}}, limit: {top_k})"
+            " { text _additional { id distance } }"
+            " } }"
+        )
+        return HttpRequestConfig(
+            url=f"{base_url}/v1/graphql",
+            method="POST",
+            headers=headers,
+            body={"query": graphql},
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    return None
+
+
+def _convert_weaviate_insert_response(
+    resp: HttpResponse,
+    doc: dict[str, Any],
+    extra_output: dict[str, Any],
+) -> ExecutionItem:
+    """Convert a Weaviate v1 object insert response to an output item."""
+    body = resp.body if isinstance(resp.body, dict) else {}
+    doc_id = str(body.get("id") or body.get("uuid") or "")
+    text = str(doc.get("pageContent", ""))
+    metadata = _strip_text_from_meta(doc.get("metadata") or {})
+    return ExecutionItem(
+        json={
+            "document": {"pageContent": text, "metadata": metadata},
+            "stored": True,
+            "mode": "insert",
+            "id": doc_id,
+            **extra_output,
+            "source": "weaviate_api",
+        }
+    )
+
+
+def _convert_weaviate_retrieve_response(
+    resp: HttpResponse,
+    item: ExecutionItem,
+    extra_output: dict[str, Any],
+) -> list[ExecutionItem]:
+    """Convert a Weaviate v1 GraphQL Get response to output items."""
+    body = resp.body if isinstance(resp.body, dict) else {}
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    get_data = data.get("Get") if isinstance(data.get("Get"), dict) else {}
+    results: list[dict[str, Any]] = []
+    for class_results in get_data.values():
+        if isinstance(class_results, list):
+            results.extend(r for r in class_results if isinstance(r, dict))
+    out: list[ExecutionItem] = []
+    for entry in results:
+        additional = (
+            entry.get("_additional")
+            if isinstance(entry.get("_additional"), dict)
+            else {}
+        )
+        raw_score = additional.get("distance") or additional.get("certainty")
+        if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool):
+            score = float(raw_score)
+        else:
+            score = 0.0
+        text = str(
+            entry.get("text") or entry.get("pageContent") or entry.get("content") or ""
+        )
+        raw_meta = entry.get("metadata")
+        metadata = _strip_text_from_meta(raw_meta if isinstance(raw_meta, dict) else {})
+        ni = item.clone()
+        ni.json = {
+            **item.json,
+            "document": {"pageContent": text, "metadata": metadata},
+            "score": score,
+            "id": str(additional.get("id", "")),
+            **extra_output,
+            "source": "weaviate_api",
+        }
+        out.append(ni)
+    return out
+
+
+async def _try_weaviate_http(
+    node: "ExecNode",
+    items: list[ExecutionItem],
+    *,
+    ctx: "EngineContext",
+    mode: str,
+    top_k: int,
+    params: dict[str, Any],
+    extra_output: dict[str, Any],
+) -> list[tuple[int, list[ExecutionItem]]] | None:
+    """Attempt real Weaviate v1 REST API calls.
+
+    Returns ``None`` to signal the caller to fall through to the
+    in-memory fallback.
+    """
+    cred = resolve_credential(node, ctx, "weaviateApi")
+    if not cred:
+        return None
+
+    try:
+        if mode == "insert":
+            docs = _items_to_docs(items)
+            if not docs:
+                return None
+            out: list[ExecutionItem] = []
+            for i, doc in enumerate(docs):
+                text = str(doc.get("pageContent", ""))
+                src_item = items[i] if i < len(items) else ExecutionItem(json={})
+                embedding = doc.get("embedding")
+                if not isinstance(embedding, list):
+                    embedding = _resolve_embedding(src_item, ctx, text)
+                build_params = {
+                    **params,
+                    "_text": text,
+                    "_metadata": dict(doc.get("metadata") or {}),
+                    "_vector": [float(v) for v in embedding],
+                }
+                cfg = _build_weaviate_request(
+                    cred,
+                    "insert",
+                    build_params,
+                    items[i] if i < len(items) else ExecutionItem(),
+                )
+                if cfg is None:
+                    return None
+                logger.info(
+                    "weaviate real HTTP insert class=%s",
+                    params.get("className"),
+                )
+                resp = await execute_http_request(cfg, ctx=ctx)
+                out.append(
+                    _convert_weaviate_insert_response(resp, doc, extra_output)
+                )
+            if not out:
+                return None
+            return [(0, out)]
+
+        if mode == "retrieve":
+            out_retrieve: list[ExecutionItem] = []
+            made_call = False
+            for item in items:
+                query = _resolve_query(node, item, ctx)
+                if not query:
+                    continue
+                query_vector = _resolve_embedding(item, ctx, query)
+                build_params = {
+                    **params,
+                    "_query_vector": query_vector,
+                    "topK": top_k,
+                }
+                cfg = _build_weaviate_request(cred, "retrieve", build_params, item)
+                if cfg is None:
+                    return None
+                made_call = True
+                logger.info(
+                    "weaviate real HTTP retrieve class=%s",
+                    params.get("className"),
+                )
+                resp = await execute_http_request(cfg, ctx=ctx)
+                out_retrieve.extend(
+                    _convert_weaviate_retrieve_response(resp, item, extra_output)
+                )
+            if not made_call:
+                return None
+            return [(0, out_retrieve)]
+
+        return None
+    except Exception as exc:
+        logger.warning("weaviate HTTP call failed: %s", exc)
+        return None
+
+
 async def exec_vector_store_milvus(
     node: "ExecNode",
     items: list[ExecutionItem],
@@ -456,6 +921,10 @@ async def exec_vector_store_milvus(
     ``parameters.host`` (default ``"localhost"``, echoed only), and
     ``parameters.port`` (default ``19530``, echoed only). The store is keyed
     by ``f"{run_id}:{node.id}:{collectionName}"``.
+
+    When a ``milvusApi`` credential is attached and no mock is present,
+    real REST calls are made to the Milvus v2 API; on failure the
+    executor falls through to the in-memory store.
     """
     params = node.parameters or {}
     mode = _coerce_mode(params.get("mode"))
@@ -464,6 +933,26 @@ async def exec_vector_store_milvus(
     host = _coerce_str(params.get("host"), "localhost")
     port = _coerce_int(params.get("port"), 19530)
     key = f"{ctx.run_id or 'no-run'}:{node.id}:{collection_name}"
+    extra_output = {
+        "collectionName": collection_name,
+        "host": host,
+        "port": port,
+    }
+
+    has_mock = bool(ctx.mocks and "vector_store_output" in ctx.mocks)
+    if not has_mock:
+        http_result = await _try_milvus_http(
+            node,
+            items,
+            ctx=ctx,
+            mode=mode,
+            top_k=top_k,
+            params=params,
+            extra_output=extra_output,
+        )
+        if http_result is not None:
+            return http_result
+
     return await _exec_vector_store(
         node,
         items,
@@ -473,11 +962,7 @@ async def exec_vector_store_milvus(
         key=key,
         mode=mode,
         top_k=top_k,
-        extra_output={
-            "collectionName": collection_name,
-            "host": host,
-            "port": port,
-        },
+        extra_output=extra_output,
     )
 
 
@@ -493,6 +978,10 @@ async def exec_vector_store_weaviate(
     (default 4), ``parameters.className`` (default ``"Document"``), and
     ``parameters.url`` (default ``"http://localhost:8080"``, echoed only).
     The store is keyed by ``f"{run_id}:{node.id}:{className}"``.
+
+    When a ``weaviateApi`` credential is attached and no mock is present,
+    real REST calls are made to the Weaviate v1 API; on failure the
+    executor falls through to the in-memory store.
     """
     params = node.parameters or {}
     mode = _coerce_mode(params.get("mode"))
@@ -500,6 +989,25 @@ async def exec_vector_store_weaviate(
     class_name = _coerce_str(params.get("className"), "Document")
     url = _coerce_str(params.get("url"), "http://localhost:8080")
     key = f"{ctx.run_id or 'no-run'}:{node.id}:{class_name}"
+    extra_output = {
+        "className": class_name,
+        "url": url,
+    }
+
+    has_mock = bool(ctx.mocks and "vector_store_output" in ctx.mocks)
+    if not has_mock:
+        http_result = await _try_weaviate_http(
+            node,
+            items,
+            ctx=ctx,
+            mode=mode,
+            top_k=top_k,
+            params=params,
+            extra_output=extra_output,
+        )
+        if http_result is not None:
+            return http_result
+
     return await _exec_vector_store(
         node,
         items,
@@ -509,10 +1017,7 @@ async def exec_vector_store_weaviate(
         key=key,
         mode=mode,
         top_k=top_k,
-        extra_output={
-            "className": class_name,
-            "url": url,
-        },
+        extra_output=extra_output,
     )
 
 
@@ -528,6 +1033,9 @@ async def exec_vector_store_redis(
     (default 4), ``parameters.indexName`` (default ``"n8n_redis_index"``),
     and ``parameters.redisUrl`` (default ``"redis://localhost:6379"``,
     echoed only). The store is keyed by ``f"{run_id}:{node.id}:{indexName}"``.
+
+    Redis vector search uses the native redis client (RediSearch/RedisVL),
+    not HTTP; this executor remains in-memory only.
     """
     params = node.parameters or {}
     mode = _coerce_mode(params.get("mode"))
@@ -564,6 +1072,9 @@ async def exec_vector_store_mongodb(
     ``parameters.indexName`` (default ``"vector_index"``), and
     ``parameters.databaseName`` (default ``"default"``). The store is keyed
     by ``f"{run_id}:{node.id}:{databaseName}:{collectionName}:{indexName}"``.
+
+    MongoDB vector search uses the native MongoDB driver ($vectorSearch),
+    not HTTP; this executor remains in-memory only.
     """
     params = node.parameters or {}
     mode = _coerce_mode(params.get("mode"))

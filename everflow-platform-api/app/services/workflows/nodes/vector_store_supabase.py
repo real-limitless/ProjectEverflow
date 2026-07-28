@@ -2,13 +2,22 @@
 
 Clean-room n8n ``@n8n/n8n-nodes-langchain.vectorStoreSupabase`` v1.
 
-A faithful Supabase binding would talk to a Postgres instance via the
-``supabase-py`` SDK and call the ``match_documents`` RPC. v1 is fully
-mock-driven — there is **no** network call. The store is a module-level
-``dict`` keyed by ``f"{run_id}:{node.id}:{tableName}"`` so two parallel
-runs (or two vector-store nodes in the same run) keep their data
-isolated, and the same node can address multiple logical Supabase tables
-inside a single workflow.
+When a ``supabaseApi`` credential is attached and no mock is present,
+real calls are made to the Supabase PostgREST API (``{url}/rest/v1/``)
+via :func:`execute_http_request`:
+
+- ``insert`` / ``load`` — ``POST /rest/v1/{table}`` with a JSON body and
+  ``Prefer: return=representation`` header.
+- ``retrieve`` — ``POST /rest/v1/rpc/{queryName}`` with a
+  ``{"query_embedding": [...], "match_count": k}`` body (Supabase RPC
+  for vector search).
+
+On any error the executor falls through to the in-memory store. The
+in-memory store is a module-level ``dict`` keyed by
+``f"{run_id}:{node.id}:{tableName}"`` so two parallel runs (or two
+vector-store nodes in the same run) keep their data isolated, and the
+same node can address multiple logical Supabase tables inside a single
+workflow.
 
 Stored records carry:
 
@@ -35,7 +44,9 @@ import math
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -316,6 +327,77 @@ def _resolve_embedding_model_name(
     return ""
 
 
+def _build_supabase_request(
+    cred: dict[str, Any],
+    operation: str,
+    params: dict[str, Any],
+    item: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Supabase PostgREST request config.
+
+    Returns ``None`` when the credential has no ``url`` or ``apiKey``.
+
+    For ``insert`` / ``load``: ``POST {url}/rest/v1/{table}`` with a JSON
+    body (``content``, ``metadata``, ``embedding`` when available) and the
+    ``Prefer: return=representation`` header.
+
+    For ``retrieve``: ``POST {url}/rest/v1/rpc/{queryName}`` with a
+    ``{"query_embedding": [...], "match_count": k}`` body.
+    """
+    base_url = str(cred.get("url") or cred.get("baseUrl") or "").rstrip("/")
+    api_key = str(cred.get("apiKey") or cred.get("api_key") or "")
+    if not base_url or not api_key:
+        return None
+
+    table_name = str(params.get("tableName") or "documents").strip() or "documents"
+    query_name = (
+        str(params.get("queryName") or "match_documents").strip()
+        or "match_documents"
+    )
+
+    headers: dict[str, str] = {
+        "apikey": api_key,
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    if operation in ("insert", "load"):
+        body: dict[str, Any] = {
+            "content": item.get("pageContent") or item.get("content") or "",
+            "metadata": item.get("metadata") or {},
+        }
+        emb = item.get("embedding")
+        if isinstance(emb, list):
+            body["embedding"] = emb
+        headers["Prefer"] = "return=representation"
+        return HttpRequestConfig(
+            url=f"{base_url}/rest/v1/{table_name}",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    if operation == "retrieve":
+        match_count = item.get("topK") or item.get("match_count") or 4
+        body = {"match_count": match_count}
+        emb = item.get("embedding")
+        if isinstance(emb, list):
+            body["query_embedding"] = emb
+        return HttpRequestConfig(
+            url=f"{base_url}/rest/v1/rpc/{query_name}",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    return None
+
+
 async def exec_vector_store_supabase(
     node: "ExecNode",
     items: list[ExecutionItem],
@@ -384,6 +466,55 @@ async def exec_vector_store_supabase(
         if mock_docs is not None:
             docs = mock_docs
         else:
+            # Real I/O via Supabase PostgREST when credentials resolve.
+            cred = resolve_credential(node, ctx, "supabaseApi")
+            if cred:
+                try:
+                    real_docs = _items_to_docs(items)
+                    real_model = _resolve_embedding_model_name(node, ctx)
+                    if real_model:
+                        for doc, src_item in zip(real_docs, items):
+                            if not doc.get("embedding"):
+                                emb = _resolve_embedding_for(
+                                    ctx,
+                                    doc.get("pageContent", ""),
+                                    src_item,
+                                    real_model,
+                                )
+                                if emb is not None:
+                                    doc["embedding"] = emb
+                    real_out: list[ExecutionItem] = []
+                    for doc in real_docs:
+                        cfg = _build_supabase_request(cred, mode, params, doc)
+                        if cfg is None:
+                            raise RuntimeError("incomplete supabase credentials")
+                        resp = await execute_http_request(cfg, ctx=ctx)
+                        row: dict[str, Any] = {}
+                        if isinstance(resp.body, list) and resp.body:
+                            if isinstance(resp.body[0], dict):
+                                row = resp.body[0]
+                        elif isinstance(resp.body, dict):
+                            row = resp.body
+                        ni = ExecutionItem(
+                            json={
+                                "document": {
+                                    "pageContent": row.get("content")
+                                    or doc.get("pageContent", ""),
+                                    "metadata": row.get("metadata")
+                                    if isinstance(row.get("metadata"), dict)
+                                    else dict(doc.get("metadata") or {}),
+                                },
+                                "stored": True,
+                                "mode": mode,
+                                "tableName": table_name,
+                                "queryName": query_name,
+                                "source": "supabase_api",
+                            }
+                        )
+                        real_out.append(ni)
+                    return [(0, real_out)]
+                except Exception as exc:
+                    logger.warning("supabase %s via API failed: %s", mode, exc)
             docs = _items_to_docs(items)
 
         model_name = _resolve_embedding_model_name(node, ctx)
@@ -447,6 +578,51 @@ async def exec_vector_store_supabase(
             for i, d in enumerate(mock_docs)
         ]
     else:
+        # Real I/O via Supabase PostgREST when credentials resolve.
+        cred = resolve_credential(node, ctx, "supabaseApi")
+        if cred:
+            try:
+                real_model = _resolve_embedding_model_name(node, ctx)
+                real_out: list[ExecutionItem] = []
+                for item in items:
+                    query = _resolve_query(node, item, ctx)
+                    if not query:
+                        continue
+                    query_embedding: list[float] | None = None
+                    if real_model:
+                        query_embedding = _resolve_embedding_for(
+                            ctx, query, item, real_model
+                        )
+                    req_data: dict[str, Any] = {
+                        "embedding": query_embedding,
+                        "topK": top_k,
+                    }
+                    cfg = _build_supabase_request(cred, "retrieve", params, req_data)
+                    if cfg is None:
+                        raise RuntimeError("incomplete supabase credentials")
+                    resp = await execute_http_request(cfg, ctx=ctx)
+                    rows = resp.body if isinstance(resp.body, list) else []
+                    for row in rows[:top_k]:
+                        if not isinstance(row, dict):
+                            continue
+                        ni = item.clone()
+                        ni.json = {
+                            **item.json,
+                            "document": {
+                                "pageContent": row.get("content") or "",
+                                "metadata": row.get("metadata")
+                                if isinstance(row.get("metadata"), dict)
+                                else {},
+                            },
+                            "score": 1.0 - float(row.get("distance") or 0.0),
+                            "tableName": table_name,
+                            "queryName": query_name,
+                            "source": "supabase_api",
+                        }
+                        real_out.append(ni)
+                return [(0, real_out)]
+            except Exception as exc:
+                logger.warning("supabase retrieve via API failed: %s", exc)
         bucket = list(_SUPABASE_STORES.get(key) or [])
     model_name = _resolve_embedding_model_name(node, ctx)
     for item in items:

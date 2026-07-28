@@ -2,14 +2,21 @@
 
 Clean-room n8n ``@n8n/n8n-nodes-langchain.vectorStorePGVector`` v1.
 
-A faithful pgvector binding would talk to a PostgreSQL instance via
-``asyncpg`` / ``psycopg`` (with the ``vector`` extension) and call
-``INSERT`` / ``SELECT ... ORDER BY embedding <=> $1 LIMIT k``. v1 is
-fully mock-driven — there is **no** network call. The store is a
-module-level ``dict`` keyed by ``f"{run_id}:{node.id}:{tableName}`` so
-two parallel runs, two vector-store nodes in the same run, and the same
-node addressing different ``tableName`` values inside a single workflow
-keep their data isolated.
+When a ``postgres`` credential is attached and no mock is present, real
+calls are made to PostgreSQL via :mod:`asyncpg` (with the ``vector``
+extension):
+
+- ``insert`` / ``load`` — ``INSERT INTO {table} (content, embedding)
+  VALUES ($1, $2::vector)``.
+- ``retrieve`` — ``SELECT content, embedding <=> $1::vector AS distance
+  FROM {table} ORDER BY distance LIMIT $2``.
+
+On any error the executor falls through to the in-memory store. The
+in-memory store is a module-level ``dict`` keyed by
+``f"{run_id}:{node.id}:{tableName}"`` so two parallel runs, two
+vector-store nodes in the same run, and the same node addressing
+different ``tableName`` values inside a single workflow keep their data
+isolated.
 
 Stored records are pgvector-flavoured dicts:
 
@@ -35,8 +42,11 @@ import logging
 import math
 from typing import TYPE_CHECKING, Any
 
+import asyncpg
+
 from app.services.workflows.expression import ExpressionContext, evaluate
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -329,6 +339,81 @@ def _resolve_embedding_model_name(
     return ""
 
 
+def _build_pgvector_config(cred: dict[str, Any]) -> dict[str, Any]:
+    """Build asyncpg connection params from a ``postgres`` credential dict."""
+    port = cred.get("port") or 5432
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        port = 5432
+    return {
+        "host": str(cred.get("host") or "localhost"),
+        "port": port,
+        "database": str(cred.get("database") or ""),
+        "user": str(cred.get("user") or cred.get("username") or ""),
+        "password": str(cred.get("password") or ""),
+    }
+
+
+def _vector_to_str(vec: list[float] | None) -> str:
+    """Serialize a vector to the pgvector text format ``[v1,v2,...]``."""
+    if not vec:
+        return "[]"
+    return "[" + ",".join(str(float(v)) for v in vec) + "]"
+
+
+async def _execute_pgvector_op(
+    conn_params: dict[str, Any],
+    operation: str,
+    *,
+    table_name: str,
+    content: str | None = None,
+    embedding: list[float] | None = None,
+    query_embedding: list[float] | None = None,
+    top_k: int = 4,
+) -> dict[str, Any]:
+    """Connect via asyncpg and run an insert or retrieve operation.
+
+    Returns a result dict:
+
+    - ``insert`` / ``load`` → ``{"inserted": True}``
+    - ``retrieve`` → ``{"rows": [{"content": ..., "distance": ...}, ...]}``
+    """
+    conn = await asyncpg.connect(**conn_params)
+    try:
+        if operation in ("insert", "load"):
+            emb_str = _vector_to_str(embedding)
+            await conn.execute(
+                f"INSERT INTO {table_name} (content, embedding) "
+                f"VALUES ($1, $2::vector)",
+                content or "",
+                emb_str,
+            )
+            return {"inserted": True}
+        if operation == "retrieve":
+            emb_str = _vector_to_str(query_embedding)
+            rows = await conn.fetch(
+                f"SELECT content, embedding <=> $1::vector AS distance "
+                f"FROM {table_name} ORDER BY distance LIMIT $2",
+                emb_str,
+                top_k,
+            )
+            return {
+                "rows": [
+                    {
+                        "content": r["content"],
+                        "distance": float(r["distance"])
+                        if r["distance"] is not None
+                        else 1.0,
+                    }
+                    for r in rows
+                ]
+            }
+        return {}
+    finally:
+        await conn.close()
+
+
 async def exec_vector_store_pgvector(
     node: "ExecNode",
     items: list[ExecutionItem],
@@ -403,6 +488,50 @@ async def exec_vector_store_pgvector(
         if mock_docs is not None:
             docs = mock_docs
         else:
+            # Real I/O via asyncpg when credentials resolve.
+            cred = resolve_credential(node, ctx, "postgres")
+            if cred:
+                try:
+                    conn_params = _build_pgvector_config(cred)
+                    real_docs = _items_to_docs(items)
+                    real_model = _resolve_embedding_model_name(node, ctx)
+                    if real_model:
+                        for doc, src_item in zip(real_docs, items):
+                            if not doc.get("embedding"):
+                                emb = _resolve_embedding_for(
+                                    ctx,
+                                    doc.get("pageContent", ""),
+                                    src_item,
+                                    real_model,
+                                )
+                                if emb is not None:
+                                    doc["embedding"] = emb
+                    real_out: list[ExecutionItem] = []
+                    for doc in real_docs:
+                        await _execute_pgvector_op(
+                            conn_params,
+                            mode,
+                            table_name=table_name,
+                            content=doc.get("pageContent", ""),
+                            embedding=doc.get("embedding"),
+                        )
+                        ni = ExecutionItem(
+                            json={
+                                "document": {
+                                    "pageContent": doc.get("pageContent", ""),
+                                    "metadata": dict(doc.get("metadata") or {}),
+                                },
+                                "stored": True,
+                                "mode": mode,
+                                "tableName": table_name,
+                                "distanceStrategy": distance_strategy,
+                                "source": "pgvector_api",
+                            }
+                        )
+                        real_out.append(ni)
+                    return [(0, real_out)]
+                except Exception as exc:
+                    logger.warning("pgvector %s via API failed: %s", mode, exc)
             docs = _items_to_docs(items)
 
         model_name = _resolve_embedding_model_name(node, ctx)
@@ -466,6 +595,47 @@ async def exec_vector_store_pgvector(
             for i, d in enumerate(mock_docs)
         ]
     else:
+        # Real I/O via asyncpg when credentials resolve.
+        cred = resolve_credential(node, ctx, "postgres")
+        if cred:
+            try:
+                conn_params = _build_pgvector_config(cred)
+                real_model = _resolve_embedding_model_name(node, ctx)
+                real_out: list[ExecutionItem] = []
+                for item in items:
+                    query = _resolve_query(node, item, ctx)
+                    if not query:
+                        continue
+                    query_embedding: list[float] | None = None
+                    if real_model:
+                        query_embedding = _resolve_embedding_for(
+                            ctx, query, item, real_model
+                        )
+                    result = await _execute_pgvector_op(
+                        conn_params,
+                        "retrieve",
+                        table_name=table_name,
+                        query_embedding=query_embedding,
+                        top_k=top_k,
+                    )
+                    for row in result.get("rows", [])[:top_k]:
+                        ni = item.clone()
+                        ni.json = {
+                            **item.json,
+                            "document": {
+                                "pageContent": row.get("content") or "",
+                                "metadata": {},
+                            },
+                            "score": 1.0 - float(row.get("distance") or 0.0),
+                            "id": None,
+                            "tableName": table_name,
+                            "distanceStrategy": distance_strategy,
+                            "source": "pgvector_api",
+                        }
+                        real_out.append(ni)
+                return [(0, real_out)]
+            except Exception as exc:
+                logger.warning("pgvector retrieve via API failed: %s", exc)
         bucket = list(_PGVECTOR_TABLES.get(key) or [])
 
     model_name = _resolve_embedding_model_name(node, ctx)
