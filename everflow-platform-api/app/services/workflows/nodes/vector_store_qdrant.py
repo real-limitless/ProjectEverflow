@@ -2,10 +2,12 @@
 
 Clean-room n8n ``@n8n/n8n-nodes-langchain.vectorStoreQdrant`` v1.
 
-A faithful Qdrant binding would talk to the Qdrant HTTP/gRPC API
-(or ``qdrant-client``) and call ``upsert`` / ``search`` against a
-collection. v1 is fully mock-driven — there is **no** network call. The
-store is a module-level ``dict`` keyed by
+When a ``qdrantApi`` credential is attached and no mock is present,
+real calls are made to the Qdrant HTTP API via
+:func:`execute_http_request` (``PUT /collections/{collectionName}/points``
+for insert, ``POST /collections/{collectionName}/points/search`` for
+retrieve). Otherwise the executor is mock-driven with an in-memory
+fallback store. The store is a module-level ``dict`` keyed by
 ``f"{run_id}:{node.id}:{collectionName}"`` so two parallel runs, two
 vector-store nodes in the same run, and the same node addressing
 different ``collectionName`` collections all stay isolated.
@@ -32,10 +34,13 @@ from __future__ import annotations
 
 import logging
 import math
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -366,6 +371,87 @@ def _resolve_embedding_model_name(
     return ""
 
 
+def _build_qdrant_request(
+    cred: dict[str, Any],
+    operation: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+    *,
+    embedding: list[float] | None = None,
+    doc_id: str | None = None,
+) -> HttpRequestConfig | None:
+    """Build a real Qdrant HTTP request config.
+
+    Returns ``None`` when no base URL can be resolved.
+    """
+    base_url = (
+        cred.get("baseUrl")
+        or cred.get("base_url")
+        or cred.get("url")
+        or params.get("url")
+        or ""
+    )
+    base_url = str(base_url).strip().rstrip("/")
+    if not base_url:
+        return None
+    collection_name = _coerce_collection_name(params.get("collectionName"))
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    api_key = str(cred.get("apiKey") or cred.get("api_key") or "")
+    if api_key:
+        headers["api-key"] = api_key
+
+    if operation in ("insert", "load"):
+        page_content = ""
+        for key in ("pageContent", "text", "content"):
+            v = item.json.get(key)
+            if isinstance(v, str) and v:
+                page_content = v
+                break
+        if not page_content:
+            import json as _json
+
+            page_content = _json.dumps(item.json or {}, default=str)
+        payload = dict(item.json.get("metadata") or {})
+        payload.setdefault("text", page_content)
+        values = [float(v) for v in embedding] if embedding else []
+        body: dict[str, Any] = {
+            "points": [
+                {
+                    "id": doc_id or str(uuid.uuid4()),
+                    "vector": values,
+                    "payload": payload,
+                }
+            ]
+        }
+        return HttpRequestConfig(
+            url=f"{base_url}/collections/{collection_name}/points",
+            method="PUT",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    # retrieve
+    top_k = _coerce_top_k(params.get("topK"))
+    values = [float(v) for v in embedding] if embedding else []
+    body = {
+        "vector": values,
+        "limit": top_k,
+        "with_payload": True,
+    }
+    return HttpRequestConfig(
+        url=f"{base_url}/collections/{collection_name}/points/search",
+        method="POST",
+        headers=headers,
+        body=body,
+        body_mode="json",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
 async def exec_vector_store_qdrant(
     node: "ExecNode",
     items: list[ExecutionItem],
@@ -446,6 +532,53 @@ async def exec_vector_store_qdrant(
                     if emb is not None:
                         doc["embedding"] = emb
 
+        # ── Real HTTP path (only when no mock) ──────────────────────
+        if mock_docs is None:
+            cred = resolve_credential(node, ctx, "qdrantApi")
+            if cred:
+                api_out: list[ExecutionItem] = []
+                try:
+                    for doc, src_item in zip(docs, items):
+                        emb = doc.get("embedding") or []
+                        doc_id = str(uuid.uuid4())
+                        cfg = _build_qdrant_request(
+                            cred,
+                            "insert",
+                            params,
+                            src_item,
+                            embedding=emb,
+                            doc_id=doc_id,
+                        )
+                        if cfg is None:
+                            raise ValueError("cannot build qdrant request")
+                        await execute_http_request(cfg, ctx=ctx)
+                        payload = dict(doc.get("metadata") or {})
+                        payload.setdefault("text", doc.get("pageContent", ""))
+                        ni = ExecutionItem(
+                            json={
+                                "document": {
+                                    "pageContent": doc.get("pageContent", ""),
+                                    "metadata": {
+                                        k: v
+                                        for k, v in payload.items()
+                                        if k != "text"
+                                    }
+                                    if "text" in payload
+                                    else dict(payload),
+                                },
+                                "stored": True,
+                                "mode": mode,
+                                "id": doc_id,
+                                "collectionName": collection_name,
+                                "url": url,
+                                "source": "qdrant_api",
+                            }
+                        )
+                        api_out.append(ni)
+                    return [(0, api_out)]
+                except Exception as exc:
+                    logger.warning("qdrant HTTP upsert failed: %s", exc)
+
         bucket = _QDRANT_COLLECTIONS.setdefault(key, [])
         next_n = len(bucket) + 1
         for doc in docs:
@@ -519,6 +652,74 @@ async def exec_vector_store_qdrant(
         ]
 
     model_name = _resolve_embedding_model_name(node, ctx)
+
+    # ── Real HTTP path (only when no mock) ──────────────────────────
+    if mock_docs is None:
+        cred = resolve_credential(node, ctx, "qdrantApi")
+        if cred:
+            api_out: list[ExecutionItem] = []
+            try:
+                for item in items:
+                    query = _resolve_query(node, item, ctx)
+                    if not query:
+                        continue
+                    query_embedding: list[float] | None = None
+                    if model_name:
+                        query_embedding = _resolve_embedding_for(
+                            ctx, query, item, model_name
+                        )
+                    cfg = _build_qdrant_request(
+                        cred,
+                        "retrieve",
+                        params,
+                        item,
+                        embedding=query_embedding,
+                    )
+                    if cfg is None:
+                        raise ValueError("cannot build qdrant request")
+                    resp = await execute_http_request(cfg, ctx=ctx)
+                    data = resp.body if isinstance(resp.body, dict) else {}
+                    results = data.get("result") or []
+                    if not isinstance(results, list):
+                        results = []
+                    for point in results[:top_k]:
+                        if not isinstance(point, dict):
+                            continue
+                        payload = point.get("payload") or {}
+                        text = (
+                            str(payload.get("text", ""))
+                            if isinstance(payload, dict)
+                            else ""
+                        )
+                        extra_meta = (
+                            {
+                                k: v
+                                for k, v in payload.items()
+                                if k != "text"
+                            }
+                            if isinstance(payload, dict) and "text" in payload
+                            else dict(payload)
+                            if isinstance(payload, dict)
+                            else {}
+                        )
+                        ni = item.clone()
+                        ni.json = {
+                            **item.json,
+                            "document": {
+                                "pageContent": text,
+                                "metadata": extra_meta,
+                            },
+                            "score": float(point.get("score", 0.0)),
+                            "id": str(point.get("id", "")),
+                            "collectionName": collection_name,
+                            "url": url,
+                            "source": "qdrant_api",
+                        }
+                        api_out.append(ni)
+                return [(0, api_out)]
+            except Exception as exc:
+                logger.warning("qdrant HTTP query failed: %s", exc)
+
     for item in items:
         query = _resolve_query(node, item, ctx)
         if not query:

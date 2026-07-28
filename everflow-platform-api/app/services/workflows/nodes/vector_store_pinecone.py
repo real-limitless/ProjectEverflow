@@ -2,10 +2,12 @@
 
 Clean-room n8n ``@n8n/n8n-nodes-langchain.vectorStorePinecone`` v1.
 
-A faithful Pinecone binding would talk to the Pinecone HTTP API (or
-``pinecone-client``) and call ``index.upsert`` / ``index.query``. v1 is
-fully mock-driven — there is **no** network call. The store is a
-module-level ``dict`` keyed by
+When a ``pineconeApi`` credential is attached and no mock is present,
+real calls are made to the Pinecone HTTP API via
+:func:`execute_http_request` (``POST /vectors/upsert`` for insert,
+``POST /query`` for retrieve). Otherwise the executor is mock-driven
+with an in-memory fallback store. The store is a module-level ``dict``
+keyed by
 ``f"{run_id}:{node.id}:{indexName}:{namespace}"`` so two parallel runs,
 two vector-store nodes in the same run, and the same node addressing
 different ``indexName`` / ``namespace`` pairs all stay isolated.
@@ -32,10 +34,13 @@ from __future__ import annotations
 
 import logging
 import math
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from app.services.workflows.expression import ExpressionContext, evaluate
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -366,6 +371,100 @@ def _resolve_embedding_model_name(
     return ""
 
 
+def _resolve_pinecone_base_url(
+    cred: dict[str, Any], params: dict[str, Any]
+) -> str:
+    """Resolve the Pinecone index base URL from cred or params."""
+    base = cred.get("baseUrl") or cred.get("base_url") or ""
+    if base:
+        return str(base).rstrip("/")
+    env = str(cred.get("environment") or "")
+    idx = str(cred.get("indexName") or params.get("indexName") or "")
+    proj = str(cred.get("projectId") or cred.get("project_id") or "")
+    if env and idx and proj:
+        return f"https://{idx}-{proj}.svc.{env}.pinecone.io"
+    return ""
+
+
+def _build_pinecone_request(
+    cred: dict[str, Any],
+    operation: str,
+    params: dict[str, Any],
+    item: ExecutionItem,
+    *,
+    embedding: list[float] | None = None,
+    doc_id: str | None = None,
+) -> HttpRequestConfig | None:
+    """Build a real Pinecone HTTP request config.
+
+    Returns ``None`` when the credential has no ``apiKey`` or no
+    resolvable base URL.
+    """
+    api_key = str(cred.get("apiKey") or cred.get("api_key") or "")
+    if not api_key:
+        return None
+    base_url = _resolve_pinecone_base_url(cred, params)
+    if not base_url:
+        return None
+    headers = {"Api-Key": api_key, "Content-Type": "application/json"}
+    namespace = _coerce_namespace(params.get("namespace"))
+
+    if operation in ("insert", "load"):
+        page_content = ""
+        for key in ("pageContent", "text", "content"):
+            v = item.json.get(key)
+            if isinstance(v, str) and v:
+                page_content = v
+                break
+        if not page_content:
+            import json as _json
+
+            page_content = _json.dumps(item.json or {}, default=str)
+        meta = dict(item.json.get("metadata") or {})
+        meta.setdefault("text", page_content)
+        values = [float(v) for v in embedding] if embedding else []
+        body: dict[str, Any] = {
+            "vectors": [
+                {
+                    "id": doc_id or str(uuid.uuid4()),
+                    "values": values,
+                    "metadata": meta,
+                }
+            ]
+        }
+        if namespace:
+            body["namespace"] = namespace
+        return HttpRequestConfig(
+            url=f"{base_url}/vectors/upsert",
+            method="POST",
+            headers=headers,
+            body=body,
+            body_mode="json",
+            response_mode="json",
+            timeout=30.0,
+        )
+
+    # retrieve
+    top_k = _coerce_top_k(params.get("topK"))
+    values = [float(v) for v in embedding] if embedding else []
+    body = {
+        "vector": values,
+        "topK": top_k,
+        "includeMetadata": True,
+    }
+    if namespace:
+        body["namespace"] = namespace
+    return HttpRequestConfig(
+        url=f"{base_url}/query",
+        method="POST",
+        headers=headers,
+        body=body,
+        body_mode="json",
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
 async def exec_vector_store_pinecone(
     node: "ExecNode",
     items: list[ExecutionItem],
@@ -444,6 +543,53 @@ async def exec_vector_store_pinecone(
                     if emb is not None:
                         doc["embedding"] = emb
 
+        # ── Real HTTP path (only when no mock) ──────────────────────
+        if mock_docs is None:
+            cred = resolve_credential(node, ctx, "pineconeApi")
+            if cred:
+                api_out: list[ExecutionItem] = []
+                try:
+                    for doc, src_item in zip(docs, items):
+                        emb = doc.get("embedding") or []
+                        doc_id = str(uuid.uuid4())
+                        cfg = _build_pinecone_request(
+                            cred,
+                            "insert",
+                            params,
+                            src_item,
+                            embedding=emb,
+                            doc_id=doc_id,
+                        )
+                        if cfg is None:
+                            raise ValueError("cannot build pinecone request")
+                        await execute_http_request(cfg, ctx=ctx)
+                        metadata = dict(doc.get("metadata") or {})
+                        metadata.setdefault("text", doc.get("pageContent", ""))
+                        ni = ExecutionItem(
+                            json={
+                                "document": {
+                                    "pageContent": doc.get("pageContent", ""),
+                                    "metadata": {
+                                        k: v
+                                        for k, v in metadata.items()
+                                        if k != "text"
+                                    }
+                                    if "text" in metadata
+                                    else dict(metadata),
+                                },
+                                "stored": True,
+                                "mode": mode,
+                                "id": doc_id,
+                                "indexName": index_name,
+                                "namespace": namespace,
+                                "source": "pinecone_api",
+                            }
+                        )
+                        api_out.append(ni)
+                    return [(0, api_out)]
+                except Exception as exc:
+                    logger.warning("pinecone HTTP upsert failed: %s", exc)
+
         bucket = _PINECONE_INDEXES.setdefault(key, [])
         next_n = len(bucket) + 1
         for doc in docs:
@@ -497,6 +643,72 @@ async def exec_vector_store_pinecone(
         bucket = mock_docs
 
     model_name = _resolve_embedding_model_name(node, ctx)
+
+    # ── Real HTTP path (only when no mock) ──────────────────────────
+    if mock_docs is None:
+        cred = resolve_credential(node, ctx, "pineconeApi")
+        if cred:
+            api_out: list[ExecutionItem] = []
+            try:
+                for item in items:
+                    query = _resolve_query(node, item, ctx)
+                    if not query:
+                        continue
+                    query_embedding: list[float] | None = None
+                    if model_name:
+                        query_embedding = _resolve_embedding_for(
+                            ctx, query, item, model_name
+                        )
+                    cfg = _build_pinecone_request(
+                        cred,
+                        "retrieve",
+                        params,
+                        item,
+                        embedding=query_embedding,
+                    )
+                    if cfg is None:
+                        raise ValueError("cannot build pinecone request")
+                    resp = await execute_http_request(cfg, ctx=ctx)
+                    data = resp.body if isinstance(resp.body, dict) else {}
+                    matches = data.get("matches") or []
+                    for match in matches[:top_k]:
+                        if not isinstance(match, dict):
+                            continue
+                        metadata = match.get("metadata") or {}
+                        text = (
+                            str(metadata.get("text", ""))
+                            if isinstance(metadata, dict)
+                            else ""
+                        )
+                        extra_meta = (
+                            {
+                                k: v
+                                for k, v in metadata.items()
+                                if k != "text"
+                            }
+                            if isinstance(metadata, dict) and "text" in metadata
+                            else dict(metadata)
+                            if isinstance(metadata, dict)
+                            else {}
+                        )
+                        ni = item.clone()
+                        ni.json = {
+                            **item.json,
+                            "document": {
+                                "pageContent": text,
+                                "metadata": extra_meta,
+                            },
+                            "score": float(match.get("score", 0.0)),
+                            "id": str(match.get("id", "")),
+                            "indexName": index_name,
+                            "namespace": namespace,
+                            "source": "pinecone_api",
+                        }
+                        api_out.append(ni)
+                return [(0, api_out)]
+            except Exception as exc:
+                logger.warning("pinecone HTTP query failed: %s", exc)
+
     for item in items:
         query = _resolve_query(node, item, ctx)
         if not query:

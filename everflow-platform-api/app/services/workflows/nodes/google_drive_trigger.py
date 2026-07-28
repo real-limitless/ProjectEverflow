@@ -4,8 +4,10 @@ v1 supports the trigger behavior most commonly used in n8n templates:
 poll or webhook on Google Drive file changes. The trigger fires once at
 workflow start and emits one item per Drive change.
 
-The executor is a clean-room, mock-driven implementation — no real Google
-Drive API calls are performed.
+When a ``googleDriveOAuth2Api`` credential is attached and no mock is
+present, real calls are made to the Google Drive Changes API via
+:func:`execute_http_request`. Otherwise the executor is mock-driven with
+an offline synthetic fallback.
 
 Parameters consumed:
 
@@ -30,7 +32,11 @@ Behavior precedence (mock sources are tried in this order):
 2. ``ctx.mocks['drive_response']`` — fallback (treated as ``changes``).
 3. ``ctx.mocks['trigger_payload']`` — final generic trigger-payload
    fallback.
-4. Offline synthetic Drive changes list with 3 files (default event
+4. If a ``googleDriveOAuth2Api`` credential resolves (``accessToken``
+   present), real calls are made to the Drive Changes API
+   (``changes.startPageToken`` then ``changes.list``) and the response
+   is used.
+5. Offline synthetic Drive changes list with 3 files (default event
    ``fileCreated``).
 
 Emitted item shape (per change):
@@ -66,7 +72,9 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from app.services.workflows.http_client import HttpRequestConfig, execute_http_request
 from app.services.workflows.items import ExecutionItem
+from app.services.workflows.nodes._http_helpers import resolve_credential
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -262,10 +270,50 @@ def _changes_from_drive_response(
     return None, ""
 
 
-def _resolve_changes(
+def _build_drive_changes_request(
+    cred: dict[str, Any],
+    params: dict[str, Any],
+) -> HttpRequestConfig | None:
+    """Build a real Google Drive Changes API request config.
+
+    Returns the config for the ``changes.startPageToken`` call (the
+    entry point of the changes flow). Returns ``None`` when the
+    credential has no ``accessToken``.
+    """
+    access_token = str(cred.get("accessToken") or "")
+    if not access_token:
+        return None
+    return HttpRequestConfig(
+        url="https://www.googleapis.com/drive/v3/changes/startPageToken",
+        method="GET",
+        auth="bearer",
+        auth_credential={"accessToken": access_token},
+        response_mode="json",
+        timeout=30.0,
+    )
+
+
+def _envelope_from_drive_api(data: Any) -> dict[str, Any]:
+    """Convert a real Drive Changes API response to the internal changes
+    payload shape (matching ``_synthesize_changes()``)."""
+    if not isinstance(data, dict):
+        return {"changes": [], "newStartPageToken": "", "kind": "drive#changeList"}
+    changes = data.get("changes")
+    if not isinstance(changes, list):
+        changes = []
+    return {
+        "changes": changes,
+        "newStartPageToken": _coerce_str(data.get("newStartPageToken"))
+        or _coerce_str(data.get("nextPageToken"))
+        or "",
+        "kind": _coerce_str(data.get("kind")) or "drive#changeList",
+    }
+
+
+async def _resolve_changes(
     node: "ExecNode", ctx: "EngineContext", event: str
 ) -> tuple[dict[str, Any], str]:
-    """Pick the Drive changes payload from mocks or fall back to offline synth."""
+    """Pick the Drive changes payload from mocks, real API, or offline synth."""
     mocks = ctx.mocks if isinstance(ctx.mocks, dict) else {}
 
     dmock = mocks.get("drive_changes")
@@ -325,6 +373,42 @@ def _resolve_changes(
         # Bare changes list under a top-level "changes" key
         if isinstance(tmock.get("changes"), list):
             return dict(tmock), "trigger_payload"
+
+    cred = resolve_credential(node, ctx, "googleDriveOAuth2Api")
+    if cred:
+        params = node.parameters or {}
+        cfg = _build_drive_changes_request(cred, params)
+        if cfg is not None:
+            logger.info(
+                "googleDriveTrigger real HTTP call event=%s",
+                event,
+            )
+            try:
+                token_resp = await execute_http_request(cfg, ctx=ctx)
+                token_data = (
+                    token_resp.body if isinstance(token_resp.body, dict) else {}
+                )
+                page_token = _coerce_str(token_data.get("startPageToken"))
+
+                access_token = str(cred.get("accessToken") or "")
+                changes_cfg = HttpRequestConfig(
+                    url=(
+                        "https://www.googleapis.com/drive/v3/changes"
+                        f"?pageToken={page_token}"
+                        "&includeItemsFromAllDrives=true"
+                        "&supportsAllDrives=true"
+                    ),
+                    method="GET",
+                    auth="bearer",
+                    auth_credential={"accessToken": access_token},
+                    response_mode="json",
+                    timeout=30.0,
+                )
+                changes_resp = await execute_http_request(changes_cfg, ctx=ctx)
+                if isinstance(changes_resp.body, dict):
+                    return _envelope_from_drive_api(changes_resp.body), "drive_api"
+            except Exception as exc:
+                logger.warning("googleDriveTrigger HTTP call failed: %s", exc)
 
     return _synthesize_changes(), "offline"
 
@@ -396,7 +480,7 @@ async def exec_google_drive_trigger(
     file_types = _resolve_file_types(params)
     poll_times = params.get("pollTimes") if isinstance(params.get("pollTimes"), dict) else {}
 
-    changes_payload, source = _resolve_changes(node, ctx, event)
+    changes_payload, source = await _resolve_changes(node, ctx, event)
     changes_list = changes_payload.get("changes") if isinstance(changes_payload, dict) else None
     if not isinstance(changes_list, list):
         changes_list = []
@@ -435,7 +519,7 @@ async def exec_google_drive_trigger(
             base["folderId"] = folder_id
         if file_types:
             base["fileTypes"] = list(file_types)
-        if source != "offline":
+        if source not in ("offline", "drive_api"):
             base["mockSource"] = source
         # Echo the raw change for downstream debugging.
         base["change"] = dict(change)
@@ -467,7 +551,7 @@ async def exec_google_drive_trigger(
             if poll_times:
                 merged.setdefault("pollTimes", dict(poll_times))
             merged.setdefault("source", "googleDriveTrigger")
-            if source != "offline":
+            if source not in ("offline", "drive_api"):
                 merged.setdefault("mockSource", source)
             ni = item.clone()
             ni.json = merged
@@ -494,7 +578,7 @@ async def exec_google_drive_trigger(
             base["folderId"] = folder_id
         if file_types:
             base["fileTypes"] = list(file_types)
-        if source != "offline":
+        if source not in ("offline", "drive_api"):
             base["mockSource"] = source
         return [(0, [ExecutionItem(json=base)])]
 
