@@ -18,8 +18,8 @@ const VNC_PATH = '/vnc.html'
 const RESIZE_DEBOUNCE_MS = 350
 const MIN_W = 640
 const MIN_H = 480
-const MAX_W = 3840
-const MAX_H = 2160
+const MAX_W = 2560
+const MAX_H = 1440
 
 function desktopIframeSrc(endpoint: PreviewEndpoint): string {
   const base = previewIframeSrc(endpoint, VNC_PATH)
@@ -28,10 +28,13 @@ function desktopIframeSrc(endpoint: PreviewEndpoint): string {
     u.searchParams.set('autoconnect', '1')
     // scale fills the iframe while guest FB is matched via resize API
     u.searchParams.set('resize', 'scale')
+    // Auto-retry when the proxied websockify hop drops (common under guest memory pressure)
+    u.searchParams.set('reconnect', 'true')
+    u.searchParams.set('reconnect_delay', '2000')
     return u.href
   } catch {
     const join = base.includes('?') ? '&' : '?'
-    return `${base}${join}autoconnect=1&resize=scale`
+    return `${base}${join}autoconnect=1&resize=scale&reconnect=true&reconnect_delay=2000`
   }
 }
 
@@ -67,8 +70,10 @@ export function DesktopPanel() {
   const resizeInflight = useRef(false)
   const pendingSize = useRef<{ w: number; h: number } | null>(null)
 
+  const mintInflight = useRef(false)
   const mint = useCallback(async () => {
-    if (!projectId || !sandboxRunning) return
+    if (!projectId || !sandboxRunning || mintInflight.current) return
+    mintInflight.current = true
     setMinting(true)
     setError(null)
     try {
@@ -83,6 +88,7 @@ export function DesktopPanel() {
       setError(e instanceof Error ? e.message : 'Failed to open desktop')
       setIframeSrc(null)
     } finally {
+      mintInflight.current = false
       setMinting(false)
     }
   }, [projectId, sandboxRunning])

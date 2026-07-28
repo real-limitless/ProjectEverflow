@@ -441,7 +441,7 @@ call **everflow MCP** tools. You are not operating the Everflow monorepo control
 3. **Browser automation (navigate / click / snapshot)**
    - Full browser tools come from the **Playwright MCP** (marketplace: Browser / Playwright), usually `playwright_*`.
    - Everflow MCP: `browser_status`, `browser_set_mode(headless|headed)`. Headed uses the Desktop panel.
-   - Default is headless. Mode switches may restart OpenCode.
+   - Default is headless. Mode switches recycle Playwright MCP (not OpenCode serve).
 
 4. **Platform entities for this project**
    - Context: `whoami`, `get_project`.

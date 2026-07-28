@@ -116,7 +116,7 @@ async def test_schedule_ensure_runs_background() -> None:
 def test_clamp_desktop_size_even_and_bounds() -> None:
     assert clamp_desktop_size(100, 100) == (640, 480)
     assert clamp_desktop_size(1921, 1081) == (1920, 1080)
-    assert clamp_desktop_size(9999, 9999) == (3840, 2160)
+    assert clamp_desktop_size(9999, 9999) == (2560, 1440)
 
 
 @pytest.mark.asyncio

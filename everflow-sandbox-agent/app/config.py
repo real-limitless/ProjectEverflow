@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     # Guest microVM image (msb pulls via compose DNS into local registry)
     default_image: str = "registry:5000/everflow/everflow-sandbox-guest:latest"
     default_cpus: int = 2
-    default_memory_mib: int = 2048
+    # 2GiB is tight for OpenCode (~500MiB) + Playwright + XFCE/noVNC together.
+    default_memory_mib: int = 3072
     # Mount strategy for microVM workspace: named-volume | bind | no-volumes | auto
     # auto tries strategies in order and caches the last success for this process.
     volume_strategy: str = "auto"

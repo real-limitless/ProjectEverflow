@@ -137,7 +137,7 @@ services:
       SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
       # Same guest ref msb uses (compose DNS host)
       SANDBOX_DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-registry:5000/everflow/everflow-sandbox-guest:latest}
-      SANDBOX_DEFAULT_MEMORY_MIB: ${SANDBOX_DEFAULT_MEMORY_MIB:-2048}
+      SANDBOX_DEFAULT_MEMORY_MIB: ${SANDBOX_DEFAULT_MEMORY_MIB:-3072}
       SANDBOX_DEFAULT_CPUS: ${SANDBOX_DEFAULT_CPUS:-2}
       PREVIEW_ENABLED: ${PREVIEW_ENABLED:-true}
       PREVIEW_BASE_DOMAIN: ${PREVIEW_BASE_DOMAIN:-preview.localhost:8000}

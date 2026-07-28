@@ -531,7 +531,9 @@ async def browser_set_mode(mode: str, restart_opencode: bool = True) -> str:
 
     Args:
         mode: headless (default) or headed / headful / visible.
-        restart_opencode: Restart OpenCode so Playwright MCP picks up the mode (default true).
+        restart_opencode: Recycle Playwright MCP so it re-reads the mode file
+            (default true). Does not kill OpenCode itself — a full serve restart
+            would abort this in-flight MCP tool call.
     """
     try:
         return _ok(

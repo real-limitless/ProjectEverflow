@@ -391,11 +391,17 @@ class EverflowClient:
         *,
         restart_opencode: bool = True,
     ) -> dict[str, Any]:
-        return await self.request(
-            "POST",
-            f"/api/v1/projects/{self.project_id}/sandbox/browser/mode",
-            json_body={"mode": mode, "restart_opencode": restart_opencode},
-        )
+        # Headed mode may start the guest desktop stack; allow longer than DEFAULT_TIMEOUT.
+        prev = self._timeout
+        self._timeout = httpx.Timeout(connect=5.0, read=120.0, write=30.0, pool=5.0)
+        try:
+            return await self.request(
+                "POST",
+                f"/api/v1/projects/{self.project_id}/sandbox/browser/mode",
+                json_body={"mode": mode, "restart_opencode": restart_opencode},
+            )
+        finally:
+            self._timeout = prev
 
 
 def dumps(data: Any) -> str:

@@ -256,6 +256,39 @@ async def browser_status(backend: Any, name: str) -> dict[str, Any]:
     }
 
 
+async def _recycle_playwright_mcp(exec_fn: Any, name: str) -> dict[str, Any]:
+    """Stop Playwright MCP children so OpenCode respawns them with the new mode.
+
+    Must NOT kill ``opencode serve``: ``browser_set_mode`` is often invoked via
+    Everflow MCP inside that process, and a full restart aborts the in-flight
+    tool call (chat hangs forever).
+    """
+    script = (
+        "pkill -f 'everflow-playwright-mcp|@playwright/mcp|playwright-mcp' "
+        "2>/dev/null || true; echo recycled"
+    )
+    try:
+        code, stdout, stderr = await exec_fn(
+            name,
+            "sh",
+            ["-c", script],
+            cwd="/workspace",
+            env=None,
+            timeout_seconds=15,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc), "playwright_mcp_recycled": False}
+    # pkill exits 1 when nothing matched — still success for our purposes.
+    return {
+        "ok": True,
+        "playwright_mcp_recycled": True,
+        "full_opencode_restart": False,
+        "exit_code": code,
+        "stdout": (stdout or "")[:120],
+        "stderr": (stderr or "")[:120],
+    }
+
+
 async def set_browser_mode(
     backend: Any,
     name: str,
@@ -263,7 +296,12 @@ async def set_browser_mode(
     mode: str,
     restart_opencode: bool = True,
 ) -> dict[str, Any]:
-    """Set headless/headed mode, ensure desktop when headed, optionally restart OpenCode."""
+    """Set headless/headed mode, ensure desktop when headed, reload Playwright MCP.
+
+    ``restart_opencode`` historically force-restarted ``opencode serve``. That
+    deadlocks when the call arrives through Everflow MCP (child of OpenCode).
+    It now only recycles Playwright MCP so ``browser.mode`` is re-read.
+    """
     resolved = normalize_mode(mode)
     await _install_wrapper(backend.exec, name)
     await _guest_write_text(backend, name, BROWSER_MODE_REL, resolved + "\n")
@@ -304,33 +342,10 @@ async def set_browser_mode(
     opencode_restart: dict[str, Any] | None = None
     if restart_opencode:
         try:
-            from app.msb import MicrosandboxBackend
-            from app.opencode_mgr import get_opencode_manager
-
-            mgr = get_opencode_manager()
-            if isinstance(backend, MicrosandboxBackend):
-                info = await mgr.ensure_guest_via_exec(
-                    name,
-                    exec_fn=backend.exec,
-                    workspace_guest="/workspace",
-                    force_restart=True,
-                )
-            else:
-                # Host/mock backends: restart only if we already track an instance.
-                info = await mgr.ensure_guest_via_exec(
-                    name,
-                    exec_fn=backend.exec,
-                    workspace_guest="/workspace",
-                    force_restart=True,
-                )
-            opencode_restart = {
-                "ok": True,
-                "healthy": bool(isinstance(info, dict) and info.get("healthy")),
-                "mode": (info or {}).get("mode") if isinstance(info, dict) else None,
-            }
+            opencode_restart = await _recycle_playwright_mcp(backend.exec, name)
         except Exception as exc:  # noqa: BLE001
-            # OpenCode may not be running yet — mode still applied for next ensure.
-            logger.info("opencode restart after browser mode skipped name=%s: %s", name, exc)
+            # OpenCode / Playwright may not be running yet — mode still applied.
+            logger.info("playwright MCP recycle after browser mode skipped name=%s: %s", name, exc)
             opencode_restart = {"ok": False, "skipped": True, "error": str(exc)}
 
     status = await browser_status(backend, name)

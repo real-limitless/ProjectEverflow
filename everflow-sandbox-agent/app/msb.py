@@ -942,12 +942,17 @@ class MicrosandboxBackend(SandboxBackend):
         args: list[str] | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> tuple[Any, Any]:
-        """Start a streaming exec with piped stdin. Returns (ExecHandle, ExecSink)."""
+        """Start a streaming exec with piped stdin. Returns (ExecHandle, ExecSink).
+
+        ``timeout=None`` keeps guest↔host tunnels (preview mux / API tunnel) alive
+        for the life of the process — a short default would drop noVNC mid-session.
+        """
         from microsandbox import Stdin
 
         sb = await self._connect(name)
-        kwargs: dict[str, Any] = {"stdin": Stdin.pipe()}
+        kwargs: dict[str, Any] = {"stdin": Stdin.pipe(), "timeout": timeout}
         if cwd:
             kwargs["cwd"] = cwd
         if env:
