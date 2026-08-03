@@ -44,3 +44,6 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+
+.env.screenshots.local
+.env.*.local

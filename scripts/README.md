@@ -1,5 +1,24 @@
 # Everflow control scripts
 
+**Supported runtime:** Docker Compose or Podman Compose only. Everflow is a
+multi-service stack (frontend, backend, sandbox-agent, registry, searxng). The
+control tool (`./scripts/everflow`) starts and manages that Compose stack —
+running individual packages as host processes is not a supported product path.
+
+## README screenshots — `capture-screenshots.mjs`
+
+Capture the **live Compose UI** (not Vite demo):
+
+```bash
+./scripts/everflow start
+cd scripts/screenshots && npm install
+export EVERFLOW_EMAIL=… EVERFLOW_PASSWORD=…
+node scripts/capture-screenshots.mjs --app-only
+node scripts/capture-screenshots.mjs --interactive   # headed Playground snaps
+```
+
+See [`screenshots/README.md`](screenshots/README.md). Output: `docs/screenshots/`.
+
 ## Website one-liner — `get-everflow.sh`
 
 Single remote bootstrap script for marketing sites / docs:
@@ -61,7 +80,8 @@ EVERFLOW_RESET_PASSWORD='new-long-password' \
 
 **Upgrade notes:** Interactive menu option **9** offers full (registry seed + stack) or stack-only. Full reseed uses `build` or `ghcr` (defaults from `REGISTRY_SEED_MODE` / `INSTALL_MODE` / `BUILD_FROM_SOURCE`, else GHCR). Data volumes and admin accounts are kept.
 
-Host requirements: Docker or Podman + Compose. No host Python/Node for the control plane.
+Host requirements: Docker or Podman + Compose V2. No host Python/Node for the control plane.
+Compose is the only supported way to run the product stack.
 
 Layout:
 

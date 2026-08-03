@@ -1,0 +1,17 @@
+{
+  "name": "everflow-screenshot-capture",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Host-side Playwright capture for Everflow README screenshots (demo UI)",
+  "type": "module",
+  "scripts": {
+    "capture": "node ../capture-screenshots.mjs --app-only",
+    "capture:app": "node ../capture-screenshots.mjs --app-only",
+    "capture:interactive": "node ../capture-screenshots.mjs --interactive",
+    "capture:start-stack": "node ../capture-screenshots.mjs --app-only --start-stack",
+    "postinstall": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.54.2"
+  }
+}

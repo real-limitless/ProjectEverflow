@@ -18,78 +18,88 @@ Teams build, review, and deploy AI-powered applications inside pre-approved boun
 
 ## Screenshots
 
-Captured from a **live full stack** (Compose UI on `:3000` — not Vite demo / `npm run dev`). Real org, projects, and sandboxes.
+All images below are from a **live full stack** (Compose UI — real org, projects, and microVM sandboxes).  
+Captions live in [`docs/screenshots/CAPTIONS.md`](docs/screenshots/CAPTIONS.md).
+
+### Platform
+
+| Playground home | Marketplace |
+|-----------------|-------------|
+| ![Playground home](docs/screenshots/01-playground-home.png) | ![Marketplace](docs/screenshots/02-marketplace.png) |
+| Open or create a project bound to an isolated microVM sandbox | Discover and install skills, tools, and MCP servers for harnesses |
+
+| Usage dashboard | Overview |
+|-----------------|----------|
+| ![Usage](docs/screenshots/03-usage.png) | ![Overview](docs/screenshots/04-overview.png) |
+| Token usage **per model** and **per project** | Organization dashboard surface |
+
+| Plans & billing | Harnesses |
+|-----------------|-----------|
+| ![Plans](docs/screenshots/05-plans.png) | ![Harnesses](docs/screenshots/06-harnesses.png) |
+| Plans and billing surface | Agent runtimes available to projects |
+
+### Create projects & connect code
+
+| Create project | Connect repositories |
+|----------------|----------------------|
+| ![Create Project](docs/screenshots/playground/01-create-project.png) | ![Connect repos](docs/screenshots/playground/02-connect-repos.png) |
+| Name, description, and URL **slug** for a new sandbox-backed project | Attach Git remotes so agents work on your real codebases |
+
+### Knowledge, search & grounding
+
+| Web search | Reader mode |
+|------------|-------------|
+| ![Web search](docs/screenshots/playground/03-web-search-knowledge.png) | ![Reader mode](docs/screenshots/playground/04-reader-mode.png) |
+| Search the internet and promote results into **Knowledge** for models | Clean extracted page text (no chrome) for review and grounding |
+
+| Full website view | Mind maps |
+|-------------------|-----------|
+| ![Website view](docs/screenshots/playground/05-website-view.png) | ![Mind maps](docs/screenshots/playground/06-mind-maps.png) |
+| Open the **live page** in Web search (**Website** vs **Reader**) | AI-built or user-defined maps of project knowledge |
+
+### Code, Git & preview
+
+| Code editor | Git history & graph |
+|-------------|---------------------|
+| ![Code editor](docs/screenshots/playground/07-code-editor.png) | ![Git](docs/screenshots/playground/08-git-history-graph.png) |
+| Browse the tree, open files, and edit in the workbench | Commit history, human or AI commits, repo graph |
+
+| Live Preview | Full desktop |
+|--------------|--------------|
+| ![Live Preview](docs/screenshots/playground/09-live-preview.png) | ![Desktop](docs/screenshots/playground/10-desktop-environment.png) |
+| Chat starts apps **in the sandbox**; Preview streams them with no extra host setup | Real GUI desktop for agents — GUI apps and interactive browsers, isolated |
+
+### Agents, data, automation & providers
+
+| Agents, skills, tools & MCP | SQL database |
+|-----------------------------|--------------|
+| ![Agents & tools](docs/screenshots/playground/11-agents-skills-tools.png) | ![SQL](docs/screenshots/playground/12-sql-database.png) |
+| Agents, skills, HTTP tools, MCP servers, and OpenCode plugins in one place | Run SQL yourself or with AI assistance |
+
+| Workflows | Shared org skills |
+|-----------|-------------------|
+| ![Workflows](docs/screenshots/playground/13-workflows.png) | ![Shared skills](docs/screenshots/playground/14-org-shared-skills.png) |
+| Automated pipelines and CI/CD-style profiles for project tasks | Skills the organization can reuse across projects |
+
+| Terminal & CLI harnesses | AI providers |
+|--------------------------|--------------|
+| ![Terminal](docs/screenshots/playground/15-terminal-cli-harnesses.png) | ![AI providers](docs/screenshots/playground/16-ai-providers.png) |
+| Full sandbox shell plus OpenCode, Claude Code, Codex CLI, and more | Attach providers at **project** or **org/global** scope |
+
+<details>
+<summary>Regenerate screenshots (maintainers)</summary>
 
 ```bash
 ./scripts/everflow start
 cd scripts/screenshots && npm install
 export EVERFLOW_EMAIL='you@example.com' EVERFLOW_PASSWORD='…'
-# App surfaces:
 node ../capture-screenshots.mjs --app-only
-# Playground guided shots (headed — you open Desktop/Chat, then snap):
-node ../capture-screenshots.mjs --interactive
+node ../capture-screenshots.mjs --interactive   # headed Playground snaps
 ```
 
-Details: [`scripts/screenshots/README.md`](scripts/screenshots/README.md) · captions: [`docs/screenshots/CAPTIONS.md`](docs/screenshots/CAPTIONS.md)
+See [`scripts/screenshots/README.md`](scripts/screenshots/README.md).
 
-### App surfaces
-
-| Playground home | Marketplace |
-|-----------------|-------------|
-| ![Playground home](docs/screenshots/01-playground-home.png) | ![Marketplace](docs/screenshots/02-marketplace.png) |
-| *Workbench entry — open or create a project bound to an isolated microVM* | *Skills, tools, and MCP servers installable into project harnesses* |
-
-| Usage | Overview |
-|-------|----------|
-| ![Usage](docs/screenshots/03-usage.png) | ![Overview](docs/screenshots/04-overview.png) |
-| *Org AI token / activity metrics from real sessions* | *Org dashboard surface* |
-
-### Playground (Studio) — live components
-
-Shot against the live stack (real org/projects/sandboxes). More panels (Desktop, Chat, Code, …) added as we capture them.
-
-| Create Project | Connect repositories |
-|----------------|----------------------|
-| ![Create Project](docs/screenshots/playground/01-create-project.png) | ![Connect repos](docs/screenshots/playground/02-connect-repos.png) |
-| **Create Project** — name, description, and URL **slug**. Each project gets an isolated microVM sandbox. | **Connect repos** — attach Git remotes so the sandbox and agents work on your real codebases. |
-
-| Web search → Knowledge | Reader mode |
-|------------------------|-------------|
-| ![Web search and Knowledge](docs/screenshots/playground/03-web-search-knowledge.png) | ![Reader mode](docs/screenshots/playground/04-reader-mode.png) |
-| **Web search & Knowledge** — search the internet, review results, and promote pages into **Knowledge** for model grounding. | **Reader mode** — pull clean page text from a site (no chrome/clutter) for review and LLM grounding. |
-
-| Full website in Web search | Mind maps |
-|----------------------------|-----------|
-| ![Website view](docs/screenshots/playground/05-website-view.png) | ![Mind maps](docs/screenshots/playground/06-mind-maps.png) |
-| **Website view** — open the **full live page** inside Web search (**Website** vs **Reader**), not only extracted text. | **Mind maps** — AI-built or user-defined maps of project knowledge the models can use for grounding. |
-
-| Code editor | Git history & graph |
-|-------------|--------------------|
-| ![Code editor](docs/screenshots/playground/07-code-editor.png) | ![Git history and graph](docs/screenshots/playground/08-git-history-graph.png) |
-| **Code editor** — browse the project tree, open files, and edit the codebase in the workbench. | **Git** — view commit history, commit yourself or via AI, and inspect the **repo graph**. |
-
-| Live Preview (app in sandbox) | Full desktop environment |
-|-------------------------------|---------------------------|
-| ![Live Preview](docs/screenshots/playground/09-live-preview.png) | ![Desktop environment](docs/screenshots/playground/10-desktop-environment.png) |
-| **Live Preview** — the chatbot starts websites/apps **inside the project sandbox**; **Preview** streams them live with no extra host setup. | **Desktop** — a real GUI desktop in the sandbox so agents can build GUI apps or drive **interactive browsers** in a safe, isolated environment. |
-
-| Agents, skills, tools & MCP | SQL database |
-|-----------------------------|--------------|
-| ![Agents skills tools MCP](docs/screenshots/playground/11-agents-skills-tools.png) | ![SQL database](docs/screenshots/playground/12-sql-database.png) |
-| **One control plane** — create **agents**, attach **skills**, **web/HTTP tools**, **MCP servers**, and **OpenCode plugins** in one place. | **SQL** — run your own queries or use **AI** to explore project databases from the workbench. |
-
-| Workflows & CI/CD-style automation | Shared org skills |
-|------------------------------------|-------------------|
-| ![Workflows](docs/screenshots/playground/13-workflows.png) | ![Org shared skills](docs/screenshots/playground/14-org-shared-skills.png) |
-| **Workflows** — design automated pipelines and CI/CD-style profiles so agents and triggers run project tasks without manual glue. | **Shared skills** — people in the organization create **skills** that can be reused across projects. |
-
-More shots: [`docs/screenshots/playground/`](docs/screenshots/playground/) · captions: [`CAPTIONS.md`](docs/screenshots/CAPTIONS.md).
-
-```bash
-# while interactive capture is running:
-echo 'snap playground/desktop-chat.png Agent chat driving a full Linux desktop in the project microVM' \
-  > docs/screenshots/.capture-cmd
-```
+</details>
 
 ---
 
