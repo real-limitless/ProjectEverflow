@@ -5,6 +5,8 @@
 **Branch tip tagged:** `Development-Everflow`  
 **License:** Apache-2.0  
 
+> **Template for future cuts:** agents should follow `.grok/skills/release/SKILL.md` (`/release`) and copy this file / `CHANGELOG.md` structure for the next tag.
+
 ## What this is
 
 A pin-able snapshot of the **runnable** Everflow control plane for early self-hosters and contributors. Install only via **Docker Compose or Podman Compose** (see product README).

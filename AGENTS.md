@@ -12,6 +12,8 @@ Clients talk only to the Everflow API. An internal **sandbox-agent** owns KVM an
 
 **Open source norms:** No CLA — contributions use DCO (`Signed-off-by`). See `OPEN_SOURCE.md`, `DCO`, and `CONTRIBUTING.md`. Do not introduce CLA bots or copyright-assignment requirements.
 
+**Releases:** When cutting a public beta/rc/stable tag, follow project skill `.grok/skills/release/SKILL.md` (slash `/release`). Same process as `BETA-v0.0.1`: `VERSION` + `CHANGELOG.md` + `docs/releases/<TAG>.md` + README/ROADMAP/SECURITY pins + CORE pointer + DCO commit + annotated tag; do not push until asked.
+
 ## Repository layout
 
 | Path | Role |
