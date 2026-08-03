@@ -25,7 +25,7 @@ from app.msb_registry import (
     [
         ("registry:5000/everflow/everflow-sandbox-guest:latest", "registry:5000"),
         ("localhost:5000/everflow/guest:dev", "localhost:5000"),
-        ("ghcr.io/limitless-rh/everflow-sandbox-guest:latest", "ghcr.io"),
+        ("ghcr.io/real-limitless/everflow-sandbox-guest:latest", "ghcr.io"),
         ("python", None),
         ("ubuntu:24.04", None),
         ("", None),

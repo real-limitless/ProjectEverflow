@@ -112,9 +112,11 @@ For anything beyond this sketch, **query the graph** — do not invent connectio
 | Doc | Use |
 |-----|-----|
 | `README.md` | Install, Compose, host requirements |
-| `PLAN.md` | Product/plan context |
+| `ROADMAP.md` | Public shipped / next / later |
+| `CONTRIBUTING.md` | How to develop and open PRs |
+| `SECURITY.md` | Vulnerability reporting |
 | `everflow-platform-api/README.md` | API details |
 | `everflow-sandbox-agent/README.md` | Agent / guest image |
 | `toolkits/README.md` | Starter templates |
 | `CLAUDE.md` | Short graphify reminder (Claude) |
-| `graphify-out/GRAPH_REPORT.md` | Community hubs / broad architecture |
+| `graphify-out/GRAPH_REPORT.md` | Community hubs / broad architecture (local; gitignored) |

@@ -38,7 +38,7 @@ npm run preview  # serve dist/
 | Persistence | Layout restored from `localStorage` (`everflow-ui-layouts-v1`) |
 | Detach | Panel → pop-out window via `?detach=<key>&project=<id>` |
 
-Mock data only — no backend, Monaco, or React Flow yet (see monorepo [`PLAN.md`](../PLAN.md)).
+For product install and platform overview, see the monorepo [README.md](../README.md) and [ROADMAP.md](../ROADMAP.md).
 
 ## Layout model
 

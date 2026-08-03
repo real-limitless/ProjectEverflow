@@ -211,6 +211,6 @@ alembic/            # migrations
 tests/
 ```
 
-## Deferred (not in foundation)
+## Related
 
-Agents, workflows, deployments, nodes, WebSockets, Redis, Celery, pgvector/RAG — see root `PLAN.md`.
+Shipped vs planned product surface: monorepo [ROADMAP.md](../ROADMAP.md). Install and operator docs: [README.md](../README.md).

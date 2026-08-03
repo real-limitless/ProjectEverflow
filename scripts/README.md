@@ -5,10 +5,10 @@
 Single remote bootstrap script for marketing sites / docs:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/real-limitless/ProjectEverflow/main/scripts/get-everflow.sh | bash
+curl -fsSL https://raw.githubusercontent.com/real-limitless/ProjectEverflow/Development-Everflow/scripts/get-everflow.sh | bash
 ```
 
-Host the same file on your domain as e.g. `https://everflow.example/install` (raw file, `Content-Type: text/plain` or shell). The script clones into `~/everflow` (override with `EVERFLOW_DIR`) and runs the control tool.
+Host the same file on your domain as e.g. `https://everflow.example/install` (raw file, `Content-Type: text/plain` or shell). The script clones the **product branch** (`Development-Everflow` by default; override with `EVERFLOW_VERSION`) into `~/everflow` (override with `EVERFLOW_DIR`) and runs the control tool.
 
 See header comments in `get-everflow.sh` for all env vars.
 

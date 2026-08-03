@@ -36,7 +36,7 @@ INT_REG="${INTERNAL_REGISTRY_HOST:-registry:${PORT}}"
 # Repository namespace inside the registry
 NS="${LOCAL_REGISTRY_NS:-everflow}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
-PUBLIC_GHCR="${EVERFLOW_PUBLIC_REGISTRY:-ghcr.io/limitless-rh}"
+PUBLIC_GHCR="${EVERFLOW_PUBLIC_REGISTRY:-ghcr.io/real-limitless}"
 ENGINE="${CONTAINER_ENGINE:-}"
 
 # Upstream sources → local names under NS/

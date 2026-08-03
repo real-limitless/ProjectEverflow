@@ -16,7 +16,7 @@
 #
 # Defaults: local embedded registry (compose service `registry`).
 # Maintainers publishing to GHCR:
-#   EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
+#   EVERFLOW_REGISTRY=ghcr.io/real-limitless PUSH=true ./deploy/build-images.sh
 #
 # Local seed (preferred for product):
 #   ./deploy/local-registry.sh seed
@@ -211,5 +211,5 @@ Install stack:
 
 Publish to GHCR (maintainers):
   ${ENGINE} login ghcr.io
-  EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
+  EVERFLOW_REGISTRY=ghcr.io/real-limitless PUSH=true ./deploy/build-images.sh
 EOF

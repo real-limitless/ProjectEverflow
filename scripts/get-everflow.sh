@@ -13,9 +13,10 @@
 #   less get-everflow.sh
 #   bash get-everflow.sh
 #
-# Direct from GitHub (no custom website required):
+# Direct from GitHub (no custom website required).
+# Product code lives on Development-Everflow (CORE is concept/docs only).
 #
-#   curl -fsSL https://raw.githubusercontent.com/real-limitless/ProjectEverflow/main/scripts/get-everflow.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/real-limitless/ProjectEverflow/Development-Everflow/scripts/get-everflow.sh | bash
 #
 # What this script does:
 #   1. Checks Docker or Podman + Compose
@@ -25,7 +26,7 @@
 # Optional environment variables:
 #   EVERFLOW_DIR          Install directory (default: $HOME/everflow)
 #   EVERFLOW_REPO         Git remote (default: https://github.com/real-limitless/ProjectEverflow.git)
-#   EVERFLOW_VERSION      Branch or tag (default: main)
+#   EVERFLOW_VERSION      Branch or tag (default: Development-Everflow)
 #   EVERFLOW_REF          Alias for EVERFLOW_VERSION
 #   EVERFLOW_ACTION       install | menu | setup-admin  (default: install on non-TTY, menu on TTY)
 #   CONTAINER_ENGINE      docker | podman
@@ -41,7 +42,7 @@ set -euo pipefail
 
 EVERFLOW_DIR="${EVERFLOW_DIR:-${HOME}/everflow}"
 EVERFLOW_REPO="${EVERFLOW_REPO:-https://github.com/real-limitless/ProjectEverflow.git}"
-EVERFLOW_VERSION="${EVERFLOW_REF:-${EVERFLOW_VERSION:-main}}"
+EVERFLOW_VERSION="${EVERFLOW_REF:-${EVERFLOW_VERSION:-Development-Everflow}}"
 EVERFLOW_ACTION="${EVERFLOW_ACTION:-}"
 SKIP_CLONE="${SKIP_CLONE:-0}"
 EVERFLOW_NONINTERACTIVE="${EVERFLOW_NONINTERACTIVE:-0}"

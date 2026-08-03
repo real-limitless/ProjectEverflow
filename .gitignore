@@ -1,7 +1,20 @@
 # Secrets / local env
 .env
 .env.local
+.env.*.local
+.env.production
+.env.staging
+!.env.example
 *.pem
+*.key
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.p12
+*.pfx
+credentials.json
+*-credentials.json
 
 # Python
 __pycache__/
@@ -20,7 +33,14 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Tooling / generated
+# Tooling / generated / operator logs
 graphify-out/
 .cache/
 .everflow-install.log
+*.everflow-install.log
+
+# Local runtime data (if ever written under repo root)
+data/
+*.db
+*.sqlite
+*.sqlite3

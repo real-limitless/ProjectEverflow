@@ -112,6 +112,7 @@ apply_local_registry_env_defaults() {
     cur="$(env_get "${key}" || true)"
     # Empty, commented legacy, or old GHCR default → local registry
     if [[ -z "${cur}" ]] \
+      || [[ "${cur}" == ghcr.io/real-limitless/* ]] \
       || [[ "${cur}" == ghcr.io/limitless-rh/* ]] \
       || [[ "${cur}" == docker.io/searxng/* ]]; then
       env_set "${key}" "${host_val}"
@@ -126,6 +127,7 @@ apply_local_registry_env_defaults() {
   # Guest must use compose DNS for msb (inside sandbox-agent)
   cur="$(env_get SANDBOX_DEFAULT_IMAGE || true)"
   if [[ -z "${cur}" ]] \
+    || [[ "${cur}" == ghcr.io/real-limitless/* ]] \
     || [[ "${cur}" == ghcr.io/limitless-rh/* ]] \
     || [[ "${cur}" == localhost:*/everflow/* ]] \
     || [[ "${cur}" == everflow-sandbox-guest:* ]]; then

@@ -100,10 +100,10 @@ PUSH=true ./deploy/build-images.sh
 
 # Publish to GHCR
 docker login ghcr.io
-EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
+EVERFLOW_REGISTRY=ghcr.io/real-limitless PUSH=true ./deploy/build-images.sh
 
 # Versioned release
-EVERFLOW_IMAGE_TAG=v0.1.0 EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
+EVERFLOW_IMAGE_TAG=v0.1.0 EVERFLOW_REGISTRY=ghcr.io/real-limitless PUSH=true ./deploy/build-images.sh
 
 # Subset
 ONLY=backend,frontend ./deploy/build-images.sh

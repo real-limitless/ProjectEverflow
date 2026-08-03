@@ -5,7 +5,7 @@
 #   ./scripts/everflow install
 #
 # Maintainers can still publish to GHCR:
-#   EVERFLOW_REGISTRY=ghcr.io/limitless-rh PUSH=true ./deploy/build-images.sh
+#   EVERFLOW_REGISTRY=ghcr.io/real-limitless PUSH=true ./deploy/build-images.sh
 #
 # From source without seed: BUILD_FROM_SOURCE=1 ./scripts/everflow-install.sh
 #   or: docker compose up --build -d

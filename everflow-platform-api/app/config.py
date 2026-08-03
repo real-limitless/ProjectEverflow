@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     sandbox_agent_url: str = "http://localhost:8090"
     sandbox_agent_token: str = "change-me"
     # Prebaked guest image (./deploy/build-sandbox-guest.sh); override via SANDBOX_DEFAULT_IMAGE
-    sandbox_default_image: str = "ghcr.io/limitless-rh/everflow-sandbox-guest:dev"
+    sandbox_default_image: str = "ghcr.io/real-limitless/everflow-sandbox-guest:dev"
     # Keep in sync with sandbox-agent default; 2GiB OOMs under OpenCode+desktop+browser.
     sandbox_default_memory_mib: int = 3072
     sandbox_default_cpus: int = 2
