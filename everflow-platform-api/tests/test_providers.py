@@ -14,12 +14,13 @@ from app.services.credential_crypto import (
 
 def test_encrypt_roundtrip() -> None:
     clear_crypto_cache()
-    settings = Settings(secret_key="unit-test-secret-key-material", environment="test")
-    ct, nonce = encrypt_secret("sk-test-abc123xyz", settings)
+    settings = Settings(secret_key="unit-test-encryption-material", environment="test")
+    sample = "test-provider-key-abc123xyz"
+    ct, nonce = encrypt_secret(sample, settings)
     assert ct
-    assert "sk-test" not in ct
+    assert "test-provider-key" not in ct
     plain = decrypt_secret(ct, nonce, settings)
-    assert plain == "sk-test-abc123xyz"
+    assert plain == sample
     assert mask_secret(plain).endswith("xyz")
     clear_crypto_cache()
 
@@ -61,7 +62,7 @@ async def test_me_provider_lifecycle(client: AsyncClient, auth_headers: dict[str
         headers=auth_headers,
         json={
             "provider": "openrouter",
-            "api_key": "sk-or-v1-super-secret-key-1234",
+            "api_key": "test-openrouter-key-1234",
             "label": "Work OpenRouter",
             "scopes": ["chat", "embed"],
         },
@@ -73,7 +74,7 @@ async def test_me_provider_lifecycle(client: AsyncClient, auth_headers: dict[str
     assert "api_key" not in body
     assert "secret" not in body
     assert body["key_hint"].endswith("1234")
-    assert "super-secret" not in str(body)
+    assert "test-openrouter-key" not in str(body)
     cred_id = body["id"]
 
     listed = await client.get("/api/v1/me/providers", headers=auth_headers)
@@ -84,7 +85,7 @@ async def test_me_provider_lifecycle(client: AsyncClient, auth_headers: dict[str
     again = await client.post(
         "/api/v1/me/providers",
         headers=auth_headers,
-        json={"provider": "openrouter", "api_key": "sk-or-v1-rotated-key-9999"},
+        json={"provider": "openrouter", "api_key": "test-openrouter-key-9999"},
     )
     assert again.status_code == 201
     assert again.json()["id"] == cred_id
@@ -113,7 +114,7 @@ async def test_project_providers(client: AsyncClient, auth_headers: dict[str, st
     created = await client.post(
         f"/api/v1/projects/{project_id}/providers",
         headers=auth_headers,
-        json={"provider": "openai", "api_key": "sk-proj-abcdef123456"},
+        json={"provider": "openai", "api_key": "test-openai-key-abcdef123456"},
     )
     assert created.status_code == 201, created.text
     assert created.json()["owner_type"] == "project"
@@ -142,7 +143,7 @@ async def test_inject_without_sandbox(client: AsyncClient, auth_headers: dict[st
     await client.post(
         "/api/v1/me/providers",
         headers=auth_headers,
-        json={"provider": "openai", "api_key": "sk-inject-test-aaaa"},
+        json={"provider": "openai", "api_key": "test-openai-inject-aaaa"},
     )
 
     # Sandbox disabled in tests → inject reports not injected (no crash)
@@ -154,4 +155,4 @@ async def test_inject_without_sandbox(client: AsyncClient, auth_headers: dict[st
     body = inj.json()
     assert body["injected"] is False
     assert "env_keys" in body
-    assert "sk-inject" not in str(body)
+    assert "test-openai-inject" not in str(body)

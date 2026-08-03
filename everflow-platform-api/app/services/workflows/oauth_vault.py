@@ -170,9 +170,10 @@ class OAuthTokenSet:
 
     def to_engine_dict(self) -> dict[str, Any]:
         """Shape the dict the engine + node executors expect."""
+        refresh = self.refresh_token if self.refresh_token is not None else ""
         return {
             "accessToken": self.access_token,
-            "refreshToken": self.refresh_token or "",
+            "refreshToken": refresh,
             "expiresAt": self.expires_at,
             "scope": self.scope,
             "tokenType": self.token_type,
@@ -180,15 +181,32 @@ class OAuthTokenSet:
         }
 
 
+def _payload_str(payload: dict[str, Any], *keys: str) -> str:
+    """Return the first non-empty string value among ``keys`` (else empty)."""
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        text = value if isinstance(value, str) else str(value)
+        if text:
+            return text
+    return ""
+
+
 def _normalize_token_payload(payload: dict[str, Any]) -> OAuthTokenSet:
     expires_in = float(payload.get("expires_in") or 0)
+    token_type = _payload_str(payload, "token_type")
     return OAuthTokenSet(
-        access_token=str(payload.get("access_token") or ""),
+        access_token=_payload_str(payload, "access_token"),
         refresh_token=payload.get("refresh_token"),
         expires_at=time.time() + expires_in if expires_in else 0.0,
-        scope=str(payload.get("scope") or ""),
-        token_type=str(payload.get("token_type") or "Bearer"),
-        raw={k: v for k, v in payload.items() if k not in {"access_token", "refresh_token", "expires_in", "scope", "token_type"}},
+        scope=_payload_str(payload, "scope"),
+        token_type=token_type if token_type else "Bearer",
+        raw={
+            k: v
+            for k, v in payload.items()
+            if k not in {"access_token", "refresh_token", "expires_in", "scope", "token_type"}
+        },
     )
 
 
@@ -295,12 +313,13 @@ async def resolve_engine_credentials(
                 payload = {}
         if not isinstance(payload, dict):
             payload = {}
+        token_type = _payload_str(payload, "tokenType", "token_type")
         tok = OAuthTokenSet(
-            access_token=str(payload.get("accessToken") or payload.get("access_token") or ""),
+            access_token=_payload_str(payload, "accessToken", "access_token"),
             refresh_token=payload.get("refreshToken") or payload.get("refresh_token"),
             expires_at=float(payload.get("expiresAt") or 0),
-            scope=str(payload.get("scope") or ""),
-            token_type=str(payload.get("tokenType") or "Bearer"),
+            scope=_payload_str(payload, "scope"),
+            token_type=token_type if token_type else "Bearer",
             raw=payload,
         )
         if not tok.access_token:
