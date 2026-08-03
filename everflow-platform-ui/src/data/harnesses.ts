@@ -1,9 +1,30 @@
+export type HarnessCategory = 'ci' | 'runtime' | 'data' | 'ai' | 'deploy' | 'agent'
+
 export interface HarnessDef {
   id: string
   name: string
   description: string
-  category: 'ci' | 'runtime' | 'data' | 'ai' | 'deploy' | 'agent'
+  category: HarnessCategory
 }
+
+export const HARNESS_CATEGORY_LABELS: Record<HarnessCategory, string> = {
+  agent: 'Agent',
+  ai: 'AI',
+  ci: 'CI',
+  runtime: 'Runtime',
+  data: 'Data',
+  deploy: 'Deploy',
+}
+
+/** Stable tab order for the Harnesses catalog page. */
+export const HARNESS_CATEGORY_ORDER: HarnessCategory[] = [
+  'agent',
+  'ai',
+  'ci',
+  'runtime',
+  'data',
+  'deploy',
+]
 
 export const HARNESS_CATALOG: HarnessDef[] = [
   {

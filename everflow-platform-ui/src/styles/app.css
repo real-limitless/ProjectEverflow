@@ -3459,3 +3459,189 @@ button.panel-palette-chip.is-visible {
   top: 0.5rem;
   right: 0.5rem;
 }
+
+/* ── Harnesses catalog page ───────────────────────────────────────── */
+
+.hn-hero {
+  padding-block-end: 0.25rem;
+  background:
+    radial-gradient(ellipse 80% 60% at 10% 0%, color-mix(in srgb, var(--pf-t--global--color--brand--default) 18%, transparent), transparent 60%),
+    var(--pf-t--global--background--color--primary--default);
+}
+
+.hn-hero-inner {
+  max-width: 56rem;
+}
+
+.hn-hero-lead {
+  max-width: 42rem;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.hn-hero-search {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.hn-search {
+  max-width: 32rem;
+  flex: 1;
+}
+
+.hn-toolbar-section {
+  padding-block-end: 0;
+}
+
+.hn-filters-section {
+  padding-block: 0.5rem;
+}
+
+.hn-result-meta {
+  font-size: 0.85rem;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.hn-grid-section {
+  overflow: auto;
+}
+
+.hn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17.5rem, 1fr));
+  gap: 1rem;
+}
+
+.hn-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 12px;
+  background: var(--pf-t--global--background--color--primary--default);
+  min-height: 11rem;
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.hn-card:hover {
+  border-color: color-mix(in srgb, var(--pf-t--global--color--brand--default) 45%, var(--pf-t--global--border--color--default));
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 18%, transparent);
+  transform: translateY(-1px);
+}
+
+.hn-card-main {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem 1rem 0.5rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.hn-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.hn-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.hn-card-title {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.hn-card-desc {
+  margin: 0;
+  flex: 1;
+  font-size: 0.82rem;
+  color: var(--pf-t--global--text--color--subtle);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.hn-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.hn-card-kind {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pf-t--global--text--color--subtle);
+  font-weight: 600;
+}
+
+.hn-card-cmd {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: var(--pf-t--global--background--color--secondary--default);
+  border: 1px solid var(--pf-t--global--border--color--default);
+  color: var(--pf-t--global--text--color--regular);
+}
+
+.hn-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  padding: 0.65rem 1rem 0.9rem;
+  border-top: 1px solid var(--pf-t--global--border--color--default);
+  background: color-mix(in srgb, var(--pf-t--global--background--color--secondary--default) 55%, transparent);
+}
+
+.hn-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-radius: 14px;
+  color: #fff;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 18%, transparent);
+  user-select: none;
+  background: linear-gradient(145deg, #4a6cf7, #2a3f9d);
+}
+
+.hn-icon--agent {
+  background: linear-gradient(145deg, #7c3aed, #4c1d95);
+}
+
+.hn-icon--ai {
+  background: linear-gradient(145deg, #0ea5e9, #0369a1);
+}
+
+.hn-icon--ci {
+  background: linear-gradient(145deg, #10b981, #047857);
+}
+
+.hn-icon--runtime {
+  background: linear-gradient(145deg, #f59e0b, #b45309);
+}
+
+.hn-icon--data {
+  background: linear-gradient(145deg, #6366f1, #4338ca);
+}
+
+.hn-icon--deploy {
+  background: linear-gradient(145deg, #ef4444, #b91c1c);
+}

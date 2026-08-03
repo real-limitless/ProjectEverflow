@@ -4,6 +4,7 @@ import { PlaygroundPage } from '@/pages/PlaygroundPage'
 import { MarketplacePage } from '@/pages/MarketplacePage'
 import { MarketplaceDetailPage } from '@/pages/MarketplaceDetailPage'
 import { UsagePage } from '@/pages/UsagePage'
+import { HarnessesPage } from '@/pages/HarnessesPage'
 import { PlaceholderPage } from '@/pages/PlaceholderPage'
 import { DetachedPanelPage } from '@/pages/DetachedPanelPage'
 import { StudioToastHost } from '@/components/studio/StudioToastHost'
@@ -38,8 +39,7 @@ function AppRoutes() {
         <Route path="usage" element={<UsagePage />} />
         <Route path="marketplace" element={<MarketplacePage />} />
         <Route path="marketplace/:kind/:itemId" element={<MarketplaceDetailPage />} />
-        <Route path="plans" element={<PlaceholderPage title="Plans & Billing" />} />
-        <Route path="harnesses" element={<PlaceholderPage title="Harnesses" />} />
+        <Route path="harnesses" element={<HarnessesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

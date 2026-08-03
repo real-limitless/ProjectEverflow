@@ -11,19 +11,37 @@ This is a React port of the interactive prototype in [`../playground-v2-pf.html`
 - Zustand (dock layout + project state)
 - React Router 7
 
-## Quick start
+## Run with the product stack (supported)
+
+The UI is one service in a multi-service Compose stack. **Docker Compose or Podman Compose is the only supported way to run Everflow.**
+
+```bash
+# from repository root
+./scripts/everflow install
+# hot reload (still Compose):
+docker compose -f docker-compose.dev.yml up --build
+# or: podman compose -f docker-compose.dev.yml up --build
+```
+
+| Mode | UI URL |
+|------|--------|
+| Prod compose | http://localhost:3000 |
+| Dev compose | http://localhost:5173 |
+
+The UI talks only to the platform API (also in Compose). Do not run the UI alone as a substitute for the product stack.
+
+## Unit tests & local UI tooling (not a supported stack)
+
+Host Node is optional for **package unit tests**, typecheck, and production builds of this package only — not a supported full-stack Everflow runtime.
 
 ```bash
 cd everflow-platform-ui
 npm install
-npm run dev
-```
-
-Open [http://localhost:5173](http://localhost:5173).
-
-```bash
-npm run build    # production build
-npm run preview  # serve dist/
+npm test          # if configured
+npx tsc --noEmit
+npm run build     # production build
+# optional isolated Vite only (incomplete product stack):
+# npm run dev
 ```
 
 ## What you get (v1 demo)

@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@patternfly/react-charts": "^8.6.0",
+    "@patternfly/react-charts": "^8.6.1",
     "@patternfly/react-core": "^6.6.0",
     "@patternfly/react-icons": "^6.6.0",
     "@patternfly/react-styles": "^6.6.0",
