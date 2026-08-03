@@ -150,19 +150,21 @@ export function HarnessesPage() {
           }
           aria-label="Harness categories"
         >
-          <Tab
-            eventKey="all"
-            title={<TabTitleText>All ({counts.all})</TabTitleText>}
-          />
-          {HARNESS_CATEGORY_ORDER.filter((c) => (counts[c] || 0) > 0).map((c) => (
+          {(
+            [
+              { id: 'all' as const, label: `All (${counts.all})` },
+              ...HARNESS_CATEGORY_ORDER.filter((c) => (counts[c] || 0) > 0).map(
+                (c) => ({
+                  id: c as CategoryTab,
+                  label: `${HARNESS_CATEGORY_LABELS[c]} (${counts[c]})`,
+                }),
+              ),
+            ] as { id: CategoryTab; label: string }[]
+          ).map((t) => (
             <Tab
-              key={c}
-              eventKey={c}
-              title={
-                <TabTitleText>
-                  {HARNESS_CATEGORY_LABELS[c]} ({counts[c]})
-                </TabTitleText>
-              }
+              key={t.id}
+              eventKey={t.id}
+              title={<TabTitleText>{t.label}</TabTitleText>}
             />
           ))}
         </Tabs>
