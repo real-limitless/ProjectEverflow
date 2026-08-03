@@ -1,7 +1,7 @@
 import { ShieldCheck, Lock, Server, Waves } from "lucide-react";
 
 const badges = [
-  { icon: Server, label: "Self-hosted" },
+  { icon: Server, label: "Self-hosted Compose" },
   { icon: ShieldCheck, label: "Project isolation" },
   { icon: Lock, label: "Org-scoped access" },
 ];
@@ -11,24 +11,25 @@ const stack = [
   "OpenCode",
   "Claude Code",
   "FastAPI",
-  "React",
-  "Podman",
+  "PatternFly",
+  "Podman / Docker",
 ];
 
 const footerLinks = {
   Product: [
     { label: "Features", href: "#features" },
     { label: "Studio", href: "#studio" },
+    { label: "Screenshots", href: "#screenshots" },
     { label: "Architecture", href: "#architecture" },
     { label: "Workflow", href: "#workflow" },
     { label: "Capabilities", href: "#playground" },
   ],
   Platform: [
     { label: "MicroVM sandboxes", href: "#architecture" },
-    { label: "OpenCode agents", href: "#features" },
-    { label: "Live previews", href: "#playground" },
-    { label: "Deploy workbench", href: "#features" },
-    { label: "Knowledge maps", href: "#studio" },
+    { label: "Agent harnesses", href: "#features" },
+    { label: "Live previews", href: "#screenshots" },
+    { label: "Marketplace", href: "#playground" },
+    { label: "Workflows", href: "#workflow" },
   ],
   Resources: [
     {
@@ -37,15 +38,19 @@ const footerLinks = {
     },
     {
       label: "README",
-      href: "https://github.com/real-limitless/ProjectEverflow#readme",
+      href: "https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/README.md",
     },
     {
-      label: "Compose stack",
-      href: "https://github.com/real-limitless/ProjectEverflow#docker-compose",
+      label: "Roadmap",
+      href: "https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/ROADMAP.md",
     },
     {
-      label: "API health",
-      href: "#architecture",
+      label: "BETA-v0.0.1",
+      href: "https://github.com/real-limitless/ProjectEverflow/releases/tag/BETA-v0.0.1",
+    },
+    {
+      label: "Security",
+      href: "https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/SECURITY.md",
     },
   ],
   Community: [
@@ -59,7 +64,11 @@ const footerLinks = {
     },
     {
       label: "Contributing",
-      href: "https://github.com/real-limitless/ProjectEverflow",
+      href: "https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/CONTRIBUTING.md",
+    },
+    {
+      label: "Code of conduct",
+      href: "https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/CODE_OF_CONDUCT.md",
     },
   ],
 };
@@ -67,10 +76,9 @@ const footerLinks = {
 const TrustFooter = () => {
   return (
     <>
-      {/* Trust bar */}
-      <section className="py-16 border-t border-border/50">
+      <section className="border-t border-border/50 py-16">
         <div className="container mx-auto px-4 lg:px-8">
-          <div className="flex flex-wrap items-center justify-center gap-6 mb-12">
+          <div className="mb-12 flex flex-wrap items-center justify-center gap-6">
             {badges.map((badge) => (
               <div
                 key={badge.label}
@@ -98,26 +106,25 @@ const TrustFooter = () => {
         </div>
       </section>
 
-      {/* Footer */}
       <footer className="relative border-t border-border/50 bg-muted/30 py-16">
-        <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
+        <div className="absolute left-0 right-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
 
         <div className="container mx-auto px-4 lg:px-8">
           <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-6">
             <div className="lg:col-span-2">
-              <a href="#" className="flex items-center gap-2 mb-4">
+              <a href="#" className="mb-4 flex items-center gap-2">
                 <Waves className="h-6 w-6 text-primary" />
                 <span className="font-heading text-xl font-bold">everflow</span>
               </a>
-              <p className="text-sm text-muted-foreground leading-relaxed max-w-xs">
-                Governance-first AI development studio. Isolated microVMs, coding agents, live
-                previews, and deploy — self-hosted on your infrastructure.
+              <p className="max-w-xs text-sm leading-relaxed text-muted-foreground">
+                Governance-first collaborative AI apps on your infrastructure. Isolated microVMs,
+                coding agents, live previews, and workflows — self-hosted via Compose.
               </p>
             </div>
 
             {Object.entries(footerLinks).map(([title, links]) => (
               <div key={title}>
-                <h4 className="font-heading text-sm font-bold text-foreground mb-4">{title}</h4>
+                <h4 className="mb-4 font-heading text-sm font-bold text-foreground">{title}</h4>
                 <ul className="space-y-2">
                   {links.map((link) => (
                     <li key={link.label}>
@@ -126,7 +133,7 @@ const TrustFooter = () => {
                         {...(link.href.startsWith("http")
                           ? { target: "_blank", rel: "noopener noreferrer" }
                           : {})}
-                        className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                        className="text-sm text-muted-foreground transition-colors hover:text-foreground"
                       >
                         {link.label}
                       </a>
@@ -139,16 +146,24 @@ const TrustFooter = () => {
 
           <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-border/50 pt-8 sm:flex-row">
             <p className="text-sm text-muted-foreground">
-              © 2026 Everflow. Open source under the project license.
+              © 2026 Project Everflow. Apache License 2.0.
             </p>
             <div className="flex gap-4 text-sm text-muted-foreground">
               <a
                 href="https://github.com/real-limitless/ProjectEverflow"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:text-foreground transition-colors"
+                className="transition-colors hover:text-foreground"
               >
                 GitHub
+              </a>
+              <a
+                href="https://github.com/real-limitless/ProjectEverflow/releases/tag/BETA-v0.0.1"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition-colors hover:text-foreground"
+              >
+                Public beta
               </a>
             </div>
           </div>

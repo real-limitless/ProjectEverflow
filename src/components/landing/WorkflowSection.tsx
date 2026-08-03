@@ -1,57 +1,71 @@
 import { useState } from "react";
 import {
   FolderPlus,
+  GitBranch,
   Cpu,
   MessageSquare,
-  Code2,
   MonitorPlay,
   Rocket,
 } from "lucide-react";
+import ScreenshotFrame from "./ScreenshotFrame";
 
 const steps = [
   {
     icon: FolderPlus,
     label: "Create project",
     description:
-      "Multi-step wizard: pick a template, enable harnesses (OpenCode, Claude Code, CI, preview, deploy), and attach the project to your org.",
+      "Name the workspace, set a URL slug, and bind a new sandbox-backed project to your org.",
+    image: "/screenshots/playground/01-create-project.png",
+    imageAlt: "Create project dialog",
+  },
+  {
+    icon: GitBranch,
+    label: "Connect repos",
+    description:
+      "Attach Git remotes so agents and the code panel work on your real codebases.",
+    image: "/screenshots/playground/02-connect-repos.png",
+    imageAlt: "Connect repositories panel",
   },
   {
     icon: Cpu,
     label: "Boot microVM",
     description:
-      "The platform API provisions a sandbox via sandbox-agent. Create returns once the guest is up; harness install continues in the background on a prebaked image.",
+      "The platform API provisions a sandbox via sandbox-agent. Each project gets an isolated guest with harnesses ready.",
+    image: "/screenshots/01-playground-home.png",
+    imageAlt: "Playground home with projects",
   },
   {
     icon: MessageSquare,
     label: "Chat with agents",
     description:
-      "Open the Chat panel and stream OpenCode sessions — tool calls, file edits, and clarifying questions appear inline while the sandbox runs the work.",
-  },
-  {
-    icon: Code2,
-    label: "Edit & shell",
-    description:
-      "Jump into the Code panel or an interactive terminal. Multi-repo git, nested file trees, and live sessions stay available while you iterate.",
+      "Open Chat with OpenCode, Claude Code, or other harnesses — tools, skills, MCP, and questions stream in the workbench.",
+    image: "/screenshots/playground/11-agents-skills-tools.png",
+    imageAlt: "Agents skills and tools configuration",
   },
   {
     icon: MonitorPlay,
     label: "Live preview",
     description:
-      "Port discovery finds services in the guest. Mint a GUID-hosted preview endpoint and load the app with WebSocket HMR through the platform proxy.",
+      "Agents start your app in the sandbox; Preview streams it live. Pair with the code editor and terminal as you iterate.",
+    image: "/screenshots/playground/09-live-preview.png",
+    imageAlt: "Live preview of app from sandbox",
   },
   {
     icon: Rocket,
-    label: "Deploy",
+    label: "Automate & ship",
     description:
-      "Use the Deploy workbench for remote podman-compose style shipping — promote from sandbox iterate to infrastructure you control.",
+      "Use workflows, tests, and deploy surfaces to automate project tasks and promote beyond the sandbox when ready.",
+    image: "/screenshots/playground/13-workflows.png",
+    imageAlt: "Workflows automation panel",
   },
 ];
 
 const WorkflowSection = () => {
   const [activeStep, setActiveStep] = useState(0);
+  const active = steps[activeStep];
 
   return (
-    <section id="workflow" className="relative py-24 lg:py-32 bg-muted/30">
+    <section id="workflow" className="relative py-24 lg:py-32">
       <div className="container mx-auto px-4 lg:px-8">
         <div className="mx-auto mb-16 max-w-2xl text-center">
           <h2 className="font-heading text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">
@@ -59,11 +73,10 @@ const WorkflowSection = () => {
             <span className="gradient-text-indigo-teal">running preview</span>
           </h2>
           <p className="mt-4 text-lg text-muted-foreground">
-            Six steps the platform actually runs — not a slide-deck fantasy.
+            Six steps the platform actually runs — with live product captures, not slide art.
           </p>
         </div>
 
-        {/* Desktop horizontal timeline */}
         <div className="hidden lg:block">
           <div className="relative flex items-start justify-between">
             <div className="absolute top-8 left-8 right-8 h-0.5 bg-border" />
@@ -75,14 +88,15 @@ const WorkflowSection = () => {
             {steps.map((step, index) => (
               <button
                 key={step.label}
+                type="button"
                 onClick={() => setActiveStep(index)}
                 className="group relative z-10 flex w-40 flex-col items-center text-center"
               >
                 <div
                   className={`mb-3 flex h-16 w-16 items-center justify-center rounded-2xl border-2 transition-all duration-300 ${
                     index <= activeStep
-                      ? "bg-primary/10 border-primary/50 scale-110"
-                      : "bg-card border-border hover:border-muted-foreground/30"
+                      ? "scale-110 border-primary/50 bg-primary/10"
+                      : "border-border bg-card hover:border-muted-foreground/30"
                   }`}
                 >
                   <step.icon
@@ -102,39 +116,52 @@ const WorkflowSection = () => {
             ))}
           </div>
 
-          <div
-            className="mx-auto mt-10 max-w-lg glass rounded-2xl p-6 text-center animate-fade-in"
-            key={activeStep}
-          >
-            <p className="text-muted-foreground leading-relaxed">
-              {steps[activeStep].description}
-            </p>
+          <div className="mx-auto mt-12 grid max-w-5xl items-start gap-8 lg:grid-cols-2" key={activeStep}>
+            <div className="glass rounded-2xl p-6 sm:p-8">
+              <h3 className="font-heading text-xl font-bold text-foreground">{active.label}</h3>
+              <p className="mt-3 leading-relaxed text-muted-foreground">{active.description}</p>
+            </div>
+            <ScreenshotFrame
+              src={active.image}
+              alt={active.imageAlt}
+              className="animate-fade-in"
+            />
           </div>
         </div>
 
-        {/* Mobile vertical timeline */}
-        <div className="lg:hidden space-y-4">
+        <div className="space-y-4 lg:hidden">
           {steps.map((step, index) => (
             <button
               key={step.label}
+              type="button"
               onClick={() => setActiveStep(index)}
-              className={`flex w-full items-start gap-4 rounded-xl p-4 text-left transition-all ${
+              className={`flex w-full flex-col gap-4 rounded-xl p-4 text-left transition-all ${
                 index === activeStep ? "glass" : "hover:bg-muted/50"
               }`}
             >
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-                <step.icon className="h-6 w-6 text-primary" />
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+                  <step.icon className="h-6 w-6 text-primary" />
+                </div>
+                <div>
+                  <span className="font-heading text-sm font-bold text-foreground">
+                    {step.label}
+                  </span>
+                  {index === activeStep && (
+                    <p className="mt-1 animate-fade-in text-sm text-muted-foreground">
+                      {step.description}
+                    </p>
+                  )}
+                </div>
               </div>
-              <div>
-                <span className="font-heading text-sm font-bold text-foreground">
-                  {step.label}
-                </span>
-                {index === activeStep && (
-                  <p className="mt-1 text-sm text-muted-foreground animate-fade-in">
-                    {step.description}
-                  </p>
-                )}
-              </div>
+              {index === activeStep && (
+                <img
+                  src={step.image}
+                  alt={step.imageAlt}
+                  className="w-full rounded-xl border border-border/60"
+                  loading="lazy"
+                />
+              )}
             </button>
           ))}
         </div>

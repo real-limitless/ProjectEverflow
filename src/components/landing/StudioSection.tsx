@@ -9,58 +9,45 @@ import {
   FlaskConical,
   Workflow,
   Database,
+  Bot,
+  Wrench,
+  Monitor,
+  Briefcase,
 } from "lucide-react";
+import ScreenshotFrame from "./ScreenshotFrame";
 
 const panels = [
+  { icon: MessageSquare, name: "Chat", blurb: "Agent streaming, tools, and questions" },
+  { icon: Code2, name: "Code", blurb: "Tree explorer, multi-tab editor, git markers" },
+  { icon: Terminal, name: "Terminal", blurb: "Interactive shell + CLI harnesses" },
+  { icon: MonitorPlay, name: "Preview", blurb: "Live apps streamed from the sandbox" },
+  { icon: GitBranch, name: "Repos", blurb: "Remotes, history, and graph" },
+  { icon: BookOpen, name: "Knowledge", blurb: "Search, reader, mind maps" },
+  { icon: Bot, name: "Agents", blurb: "Skills, tools, MCP, plugins" },
+  { icon: Workflow, name: "Workflows", blurb: "Automation & CI-style profiles" },
+  { icon: Database, name: "Database", blurb: "SQL with optional AI assist" },
+  { icon: Monitor, name: "Desktop", blurb: "Full GUI desktop in the guest" },
+  { icon: FlaskConical, name: "Tests", blurb: "Sandbox test runs & results" },
+  { icon: Rocket, name: "Deploy", blurb: "Remote compose-style shipping" },
+  { icon: Wrench, name: "Tools", blurb: "HTTP tools & MCP servers" },
+  { icon: Briefcase, name: "Jobs", blurb: "Background task visibility" },
+];
+
+const workbenchShots = [
   {
-    icon: MessageSquare,
-    name: "Chat",
-    blurb: "OpenCode streaming, tools, and agent questions",
+    src: "/screenshots/playground/17-workbench-chat-code.png",
+    alt: "Workbench with chat and code panels docked",
+    caption: "Chat + Code docked — panels stay warm across tab switches.",
   },
   {
-    icon: Code2,
-    name: "Code",
-    blurb: "Multi-tab editor, nested explorer, git markers",
+    src: "/screenshots/playground/16-workbench-chat-preview.png",
+    alt: "Workbench with chat and live preview",
+    caption: "Chat + Preview — iterate while the app streams from the microVM.",
   },
   {
-    icon: Terminal,
-    name: "Terminal",
-    blurb: "Interactive shell inside the project microVM",
-  },
-  {
-    icon: MonitorPlay,
-    name: "Preview",
-    blurb: "GUID hosts, device modes, WebSocket HMR",
-  },
-  {
-    icon: GitBranch,
-    name: "Repos",
-    blurb: "Multi-repo workspace git, issues & PRs",
-  },
-  {
-    icon: BookOpen,
-    name: "Knowledge",
-    blurb: "Markdown workbench + Mermaid system maps",
-  },
-  {
-    icon: Rocket,
-    name: "Deploy",
-    blurb: "Podman-compose style remote deploy workbench",
-  },
-  {
-    icon: FlaskConical,
-    name: "Tests",
-    blurb: "Sandbox test runs and result summaries",
-  },
-  {
-    icon: Workflow,
-    name: "Workflows",
-    blurb: "Visual automation nodes next to your app",
-  },
-  {
-    icon: Database,
-    name: "Database",
-    blurb: "Harness-backed data tools for the project",
+    src: "/screenshots/playground/18-workbench-code-preview.png",
+    alt: "Workbench with code and preview panels",
+    caption: "Code + Preview — edit and verify in the same dock layout.",
   },
 ];
 
@@ -74,76 +61,32 @@ const StudioSection = () => {
             <span className="gradient-text-indigo-teal">studio workbench</span>
           </h2>
           <p className="mt-4 text-lg text-muted-foreground">
-            Playground v2 keeps panels alive across tab switches — chat, code, terminal, and
-            preview stay warm while you rearrange the dock.
+            PatternFly shell with a dock engine — chat, code, terminal, preview, and a dozen more
+            panels stay ready while you rearrange the layout.
           </p>
         </div>
 
-        {/* Mock workbench chrome */}
-        <div className="mx-auto mb-12 max-w-5xl overflow-hidden rounded-2xl border border-border/80 bg-card shadow-xl">
-          <div className="flex items-center gap-2 border-b border-border/60 bg-muted/50 px-4 py-3">
-            <div className="flex gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-muted-foreground/30" />
-              <span className="h-2.5 w-2.5 rounded-full bg-muted-foreground/30" />
-              <span className="h-2.5 w-2.5 rounded-full bg-muted-foreground/30" />
-            </div>
-            <span className="ml-2 font-mono text-xs text-muted-foreground">
-              everflow · playground · project sandbox ready
-            </span>
-            <span className="ml-auto rounded-full bg-primary/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
-              microVM live
-            </span>
-          </div>
-          <div className="grid gap-px bg-border/40 sm:grid-cols-3">
-            <div className="bg-background p-4 min-h-[140px]">
-              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                Chat · OpenCode
-              </div>
-              <div className="space-y-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
-                <p className="text-foreground/80">Add a health endpoint and wire the preview.</p>
-                <p className="text-primary/90">▸ tool · sandbox_write_file</p>
-                <p className="text-primary/90">▸ tool · terminal · npm run dev</p>
-                <p className="animate-pulse text-muted-foreground/70">streaming…</p>
-              </div>
-            </div>
-            <div className="bg-background p-4 min-h-[140px]">
-              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                Code · multi-tab
-              </div>
-              <pre className="overflow-hidden font-mono text-[11px] leading-relaxed text-muted-foreground">
-                <span className="text-primary/70">1</span>{" "}
-                <span className="text-foreground/70">@app.get</span>
-                <span className="text-primary">("/health")</span>
-                {"\n"}
-                <span className="text-primary/70">2</span>{" "}
-                <span className="text-foreground/70">def health():</span>
-                {"\n"}
-                <span className="text-primary/70">3</span>{" "}
-                <span className="text-muted-foreground">{"  return {"}</span>
-                <span className="text-primary">"ok"</span>
-                <span className="text-muted-foreground">{": True}"}</span>
-              </pre>
-            </div>
-            <div className="bg-background p-4 min-h-[140px]">
-              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-primary">
-                Preview · GUID host
-              </div>
-              <div className="rounded-lg border border-border/60 bg-muted/40 p-3">
-                <div className="mb-2 flex gap-1">
-                  <span className="h-1.5 w-8 rounded-full bg-primary/40" />
-                  <span className="h-1.5 w-12 rounded-full bg-muted-foreground/20" />
-                </div>
-                <div className="h-16 rounded bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center">
-                  <span className="font-mono text-[10px] text-muted-foreground">
-                    preview.everflow / ······.local
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="mx-auto mb-10 max-w-5xl">
+          <ScreenshotFrame
+            src="/screenshots/playground/07-code-editor.png"
+            alt="Everflow code editor panel with project tree"
+            caption="Code editor — browse the tree, open files, and edit inside the project sandbox workbench."
+          />
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mx-auto mb-14 grid max-w-6xl gap-6 lg:grid-cols-3">
+          {workbenchShots.map((shot) => (
+            <ScreenshotFrame
+              key={shot.src}
+              src={shot.src}
+              alt={shot.alt}
+              caption={shot.caption}
+              className="shadow-lg"
+            />
+          ))}
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
           {panels.map((panel) => (
             <div
               key={panel.name}
