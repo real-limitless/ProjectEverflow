@@ -18,6 +18,7 @@ The **CORE** branch holds concept and methodology. This file tracks the **softwa
 - **In-sandbox MCP** (`everflow-mcp`) — project/agent tools for harnesses (e.g. OpenCode)
 - **Workflow engine foundations** — n8n-inspired node catalog path (see `docs/workflows-n8n.md`); many integrations still maturing
 - **Live preview** — Host-based preview proxy for project endpoints
+- **Public beta tag** — `BETA-v0.0.1` (pin installs with `EVERFLOW_VERSION=BETA-v0.0.1`)
 
 ---
 
@@ -28,7 +29,7 @@ The **CORE** branch holds concept and methodology. This file tracks the **softwa
 - **Install polish** — clearer first-run errors, KVM detection, mock-vs-real sandbox guidance
 - **Workflow coverage** — deepen high-value nodes (HTTP, Git, cloud storage, AI providers) with real I/O and tests
 - **Hardening** — security reviews of sandbox proxy boundaries, credential storage, SSRF defaults
-- **Release tags** — pin installs with `EVERFLOW_VERSION=vX.Y.Z`
+- **Release cadence** — further beta/rc tags toward a stable `v1.x`
 
 ---
 

@@ -2,7 +2,13 @@
 
 ## Supported versions
 
-Security fixes target the **product branch** (`Development-Everflow`) and any published release tags. The **CORE** branch is documentation only.
+| Ref | Support |
+|-----|---------|
+| **`Development-Everflow`** | Active development; security fixes land here first |
+| **`BETA-v0.0.1`** and later release tags | Best-effort fixes; prefer upgrading to a newer tag or the product branch |
+| **`CORE`** | Documentation only — no runtime |
+
+The **CORE** branch is methodology only and does not ship the product stack.
 
 ## Reporting a vulnerability
 

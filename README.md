@@ -7,8 +7,9 @@ Teams build, review, and deploy AI-powered applications inside pre-approved boun
 | | |
 |---|---|
 | **License** | [Apache-2.0](LICENSE) |
+| **Latest public beta** | [`BETA-v0.0.1`](https://github.com/real-limitless/ProjectEverflow/releases/tag/BETA-v0.0.1) · [CHANGELOG](CHANGELOG.md) |
 | **Concept / methodology** | Branch [`CORE`](https://github.com/real-limitless/ProjectEverflow/tree/CORE) (default on GitHub) |
-| **Runnable product** | This branch: **`Development-Everflow`** |
+| **Runnable product** | This branch: **`Development-Everflow`** (or a release tag) |
 | **Roadmap** | [ROADMAP.md](ROADMAP.md) |
 | **Security** | [SECURITY.md](SECURITY.md) |
 | **Contributing** | [CONTRIBUTING.md](CONTRIBUTING.md) (DCO required; **no CLA**) |
@@ -132,14 +133,23 @@ Compose (Docker or Podman) is the **only** supported product runtime.
 
 ## Quick start (recommended)
 
-### 1. Clone the product branch
+### 1. Clone a product ref
+
+**Pinned public beta (recommended for first install):**
+
+```bash
+git clone -b BETA-v0.0.1 https://github.com/real-limitless/ProjectEverflow.git
+cd ProjectEverflow
+```
+
+**Latest development tip:**
 
 ```bash
 git clone -b Development-Everflow https://github.com/real-limitless/ProjectEverflow.git
 cd ProjectEverflow
 ```
 
-> **Note:** The default GitHub branch **`CORE`** is concept and methodology only. Install and run from **`Development-Everflow`** (or a release tag).
+> **Note:** The default GitHub branch **`CORE`** is concept and methodology only. Install and run from **`BETA-v0.0.1`**, another release tag, or **`Development-Everflow`**.
 
 ### 2. Run the install TUI
 
@@ -193,14 +203,19 @@ What it does: check Docker/Podman → clone into `~/everflow` (product branch) �
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `EVERFLOW_DIR` | `$HOME/everflow` | Install path |
-| `EVERFLOW_VERSION` | `Development-Everflow` | Git branch or tag |
+| `EVERFLOW_VERSION` | `Development-Everflow` | Git branch or tag (e.g. `BETA-v0.0.1`) |
 | `EVERFLOW_ACTION` | `menu` (TTY) / `install` | After download |
 | `EVERFLOW_NONINTERACTIVE=1` | — | Force `install` |
 | `EVERFLOW_REPO` | this GitHub repo | Override source |
 
 ```bash
+# Latest product branch
 EVERFLOW_NONINTERACTIVE=1 EVERFLOW_DIR=/opt/everflow \
   curl -fsSL https://raw.githubusercontent.com/real-limitless/ProjectEverflow/Development-Everflow/scripts/get-everflow.sh | bash
+
+# Pin first public beta
+EVERFLOW_VERSION=BETA-v0.0.1 EVERFLOW_NONINTERACTIVE=1 EVERFLOW_DIR=/opt/everflow \
+  curl -fsSL https://raw.githubusercontent.com/real-limitless/ProjectEverflow/BETA-v0.0.1/scripts/get-everflow.sh | bash
 ```
 
 Details: [`scripts/get-everflow.sh`](scripts/get-everflow.sh) · [`scripts/README.md`](scripts/README.md).
