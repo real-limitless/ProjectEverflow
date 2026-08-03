@@ -16,7 +16,15 @@ RUN npm run build
 # Serve stage
 FROM nginx:1.27-alpine
 
-COPY deploy/frontend-nginx.conf /etc/nginx/conf.d/default.conf
+# Template: entrypoint injects DNS resolvers from the container resolv.conf
+# (Podman uses the bridge gateway; Docker uses 127.0.0.11).
+COPY deploy/frontend-nginx.conf /etc/nginx/templates/default.conf.template
+COPY deploy/frontend-entrypoint.sh /frontend-entrypoint.sh
+RUN chmod +x /frontend-entrypoint.sh \
+  && cp /etc/nginx/templates/default.conf.template /etc/nginx/conf.d/default.conf \
+  && sed -i 's/__EVERFLOW_RESOLVERS__/127.0.0.11 10.89.0.1 10.88.0.1/g' /etc/nginx/conf.d/default.conf
+
 COPY --from=build /ui/dist /usr/share/nginx/html
 
 EXPOSE 80
+ENTRYPOINT ["/frontend-entrypoint.sh"]
