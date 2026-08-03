@@ -6,7 +6,11 @@ Instructions for AI coding agents working in this repository.
 
 **Project Everflow** is a governance-first collaborative AI app platform. Teams build, review, and deploy AI-powered applications inside pre-approved boundaries. Every **project** runs in an isolated [microsandbox](https://agentsandbox.dev/) microVM.
 
-Clients talk only to the Everflow API. An internal **sandbox-agent** owns KVM and the microsandbox SDK. See `README.md` for install, Compose, and local-dev details.
+Clients talk only to the Everflow API. An internal **sandbox-agent** owns KVM and the microsandbox SDK. See `README.md` for install and Compose details.
+
+**Supported runtime:** Docker Compose or Podman Compose only (`./scripts/everflow`, `docker-compose.yml`, `docker-compose.dev.yml`). Do not document bare-metal multi-service runs (host `npm` + host `uvicorn` + host agent) as a product path.
+
+**Open source norms:** No CLA — contributions use DCO (`Signed-off-by`). See `OPEN_SOURCE.md`, `DCO`, and `CONTRIBUTING.md`. Do not introduce CLA bots or copyright-assignment requirements.
 
 ## Repository layout
 
@@ -22,7 +26,7 @@ Clients talk only to the Everflow API. An internal **sandbox-agent** owns KVM an
 | `scripts/` | Install and catalog sync helpers. |
 | `graphify-out/` | Persistent codebase knowledge graph (query before browsing). |
 
-Compose: `frontend` + `backend` + `sandbox-agent` (`docker-compose.yml` / `docker-compose.dev.yml`).
+Compose (only supported full stack): `frontend` + `backend` + `sandbox-agent` + `registry` + `searxng` (`docker-compose.yml` / `docker-compose.dev.yml` via Docker or Podman Compose).
 
 ---
 

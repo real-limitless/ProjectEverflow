@@ -11,7 +11,85 @@ Teams build, review, and deploy AI-powered applications inside pre-approved boun
 | **Runnable product** | This branch: **`Development-Everflow`** |
 | **Roadmap** | [ROADMAP.md](ROADMAP.md) |
 | **Security** | [SECURITY.md](SECURITY.md) |
-| **Contributing** | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| **Contributing** | [CONTRIBUTING.md](CONTRIBUTING.md) (DCO required; **no CLA**) |
+| **Open source practices** | [OPEN_SOURCE.md](OPEN_SOURCE.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
+
+---
+
+## Screenshots
+
+Captured from a **live full stack** (Compose UI on `:3000` — not Vite demo / `npm run dev`). Real org, projects, and sandboxes.
+
+```bash
+./scripts/everflow start
+cd scripts/screenshots && npm install
+export EVERFLOW_EMAIL='you@example.com' EVERFLOW_PASSWORD='…'
+# App surfaces:
+node ../capture-screenshots.mjs --app-only
+# Playground guided shots (headed — you open Desktop/Chat, then snap):
+node ../capture-screenshots.mjs --interactive
+```
+
+Details: [`scripts/screenshots/README.md`](scripts/screenshots/README.md) · captions: [`docs/screenshots/CAPTIONS.md`](docs/screenshots/CAPTIONS.md)
+
+### App surfaces
+
+| Playground home | Marketplace |
+|-----------------|-------------|
+| ![Playground home](docs/screenshots/01-playground-home.png) | ![Marketplace](docs/screenshots/02-marketplace.png) |
+| *Workbench entry — open or create a project bound to an isolated microVM* | *Skills, tools, and MCP servers installable into project harnesses* |
+
+| Usage | Overview |
+|-------|----------|
+| ![Usage](docs/screenshots/03-usage.png) | ![Overview](docs/screenshots/04-overview.png) |
+| *Org AI token / activity metrics from real sessions* | *Org dashboard surface* |
+
+### Playground (Studio) — live components
+
+Shot against the live stack (real org/projects/sandboxes). More panels (Desktop, Chat, Code, …) added as we capture them.
+
+| Create Project | Connect repositories |
+|----------------|----------------------|
+| ![Create Project](docs/screenshots/playground/01-create-project.png) | ![Connect repos](docs/screenshots/playground/02-connect-repos.png) |
+| **Create Project** — name, description, and URL **slug**. Each project gets an isolated microVM sandbox. | **Connect repos** — attach Git remotes so the sandbox and agents work on your real codebases. |
+
+| Web search → Knowledge | Reader mode |
+|------------------------|-------------|
+| ![Web search and Knowledge](docs/screenshots/playground/03-web-search-knowledge.png) | ![Reader mode](docs/screenshots/playground/04-reader-mode.png) |
+| **Web search & Knowledge** — search the internet, review results, and promote pages into **Knowledge** for model grounding. | **Reader mode** — pull clean page text from a site (no chrome/clutter) for review and LLM grounding. |
+
+| Full website in Web search | Mind maps |
+|----------------------------|-----------|
+| ![Website view](docs/screenshots/playground/05-website-view.png) | ![Mind maps](docs/screenshots/playground/06-mind-maps.png) |
+| **Website view** — open the **full live page** inside Web search (**Website** vs **Reader**), not only extracted text. | **Mind maps** — AI-built or user-defined maps of project knowledge the models can use for grounding. |
+
+| Code editor | Git history & graph |
+|-------------|--------------------|
+| ![Code editor](docs/screenshots/playground/07-code-editor.png) | ![Git history and graph](docs/screenshots/playground/08-git-history-graph.png) |
+| **Code editor** — browse the project tree, open files, and edit the codebase in the workbench. | **Git** — view commit history, commit yourself or via AI, and inspect the **repo graph**. |
+
+| Live Preview (app in sandbox) | Full desktop environment |
+|-------------------------------|---------------------------|
+| ![Live Preview](docs/screenshots/playground/09-live-preview.png) | ![Desktop environment](docs/screenshots/playground/10-desktop-environment.png) |
+| **Live Preview** — the chatbot starts websites/apps **inside the project sandbox**; **Preview** streams them live with no extra host setup. | **Desktop** — a real GUI desktop in the sandbox so agents can build GUI apps or drive **interactive browsers** in a safe, isolated environment. |
+
+| Agents, skills, tools & MCP | SQL database |
+|-----------------------------|--------------|
+| ![Agents skills tools MCP](docs/screenshots/playground/11-agents-skills-tools.png) | ![SQL database](docs/screenshots/playground/12-sql-database.png) |
+| **One control plane** — create **agents**, attach **skills**, **web/HTTP tools**, **MCP servers**, and **OpenCode plugins** in one place. | **SQL** — run your own queries or use **AI** to explore project databases from the workbench. |
+
+| Workflows & CI/CD-style automation | Shared org skills |
+|------------------------------------|-------------------|
+| ![Workflows](docs/screenshots/playground/13-workflows.png) | ![Org shared skills](docs/screenshots/playground/14-org-shared-skills.png) |
+| **Workflows** — design automated pipelines and CI/CD-style profiles so agents and triggers run project tasks without manual glue. | **Shared skills** — people in the organization create **skills** that can be reused across projects. |
+
+More shots: [`docs/screenshots/playground/`](docs/screenshots/playground/) · captions: [`CAPTIONS.md`](docs/screenshots/CAPTIONS.md).
+
+```bash
+# while interactive capture is running:
+echo 'snap playground/desktop-chat.png Agent chat driving a full Linux desktop in the project microVM' \
+  > docs/screenshots/.capture-cmd
+```
 
 ---
 
@@ -20,13 +98,25 @@ Teams build, review, and deploy AI-powered applications inside pre-approved boun
 | Need | Notes |
 |------|--------|
 | **Linux** | Host with containers |
-| **Docker** or **Podman** | Compose V2 (`docker compose` / `podman compose`) |
+| **Docker** or **Podman** | Compose V2 (`docker compose` / `podman compose`) — **required** |
 | **`/dev/kvm`** | Real microVMs (`ls -l /dev/kvm`) |
 | Privileged containers + device passthrough | For `sandbox-agent` |
 
 Without KVM (CI/dev only): set `SANDBOX_MOCK=true` in `.env` — not for product use.
 
 No host Python or Node is required for the control plane.
+
+### Supported runtime (only)
+
+Everflow is a **multi-service** stack (frontend, backend, sandbox-agent, registry, searxng). Those services must run **together**.
+
+| Supported | Not supported |
+|-----------|----------------|
+| `./scripts/everflow` (install / start / upgrade) | Host `npm run dev` + host `uvicorn` as a product stack |
+| `docker compose` / `podman compose` with the repo Compose files | Starting only one package “to try Everflow” |
+| `docker-compose.dev.yml` for contributor hot reload | Documented bare-metal multi-process installs |
+
+Compose (Docker or Podman) is the **only** supported product runtime.
 
 ---
 
@@ -49,7 +139,7 @@ cd ProjectEverflow
 ./scripts/everflow install
 ```
 
-The wizard seeds an embedded local OCI registry, then starts the stack (frontend, backend, sandbox-agent, searxng).
+The wizard seeds an embedded local OCI registry, then starts the full **Compose** stack (frontend, backend, sandbox-agent, registry, searxng).
 
 ### 3. Create the first admin
 
@@ -162,14 +252,17 @@ Copy env template: `cp .env.example .env` (or let `./scripts/everflow install` c
 
 ## Development compose (hot reload)
 
+Full-stack development still uses **Compose** (bind-mounts for hot reload):
+
 ```bash
 docker compose -f docker-compose.dev.yml up --build
+# or: podman compose -f docker-compose.dev.yml up --build
 ```
 
 - UI: http://localhost:5173  
 - API: http://localhost:8000/docs  
 
-Bind-mounts use the `:Z` SELinux label (Fedora/RHEL/Podman). See package READMEs for host-side contributor workflows.
+Bind-mounts use the `:Z` SELinux label (Fedora/RHEL/Podman). Package READMEs document optional **unit tests** on the host; they are not a supported way to run the full platform. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
