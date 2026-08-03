@@ -2,11 +2,14 @@ import { useState, useEffect } from "react";
 import { Menu, X, Waves, Github } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+const GITHUB_URL = "https://github.com/real-limitless/ProjectEverflow";
+
 const navLinks = [
   { label: "Features", href: "#features" },
-  { label: "Playground", href: "#playground" },
-  { label: "Security", href: "#security" },
-  { label: "Community", href: "#community" },
+  { label: "Studio", href: "#studio" },
+  { label: "Architecture", href: "#architecture" },
+  { label: "Workflow", href: "#workflow" },
+  { label: "Capabilities", href: "#playground" },
 ];
 
 const Navbar = () => {
@@ -32,9 +35,11 @@ const Navbar = () => {
             <Waves className="h-7 w-7 text-primary transition-transform duration-300 group-hover:scale-110" />
           </div>
           <div className="flex flex-col">
-            <span className="font-heading text-xl font-bold tracking-tight text-foreground">Project Everflow</span>
+            <span className="font-heading text-xl font-bold tracking-tight text-foreground">
+              Project Everflow
+            </span>
             <span className="hidden text-[10px] font-medium uppercase tracking-widest text-muted-foreground sm:block">
-              Enterprise AI Vibecoding
+              AI studio · microVM sandboxes
             </span>
           </div>
         </a>
@@ -45,7 +50,7 @@ const Navbar = () => {
             <a
               key={link.label}
               href={link.href}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/10 hover:text-foreground"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/10 hover:text-foreground"
             >
               {link.label}
             </a>
@@ -54,14 +59,21 @@ const Navbar = () => {
 
         {/* Right CTA */}
         <div className="hidden items-center gap-3 lg:flex">
-          <a href="#" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-            Documentation
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Docs
           </a>
-          <Button variant="outline" size="sm" className="border-primary/50 text-primary hover:bg-primary/10">
-            <Github className="h-4 w-4 mr-1" /> Star on GitHub
+          <Button variant="outline" size="sm" className="border-primary/50 text-primary hover:bg-primary/10" asChild>
+            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
+              <Github className="h-4 w-4 mr-1" /> Star on GitHub
+            </a>
           </Button>
-          <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground">
-            Get Started
+          <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground" asChild>
+            <a href="#features">Get Started</a>
           </Button>
         </div>
 
@@ -90,13 +102,24 @@ const Navbar = () => {
               </a>
             ))}
             <hr className="border-border/50 my-2" />
-            <a href="#" className="px-4 py-2 text-sm text-muted-foreground">
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 text-sm text-muted-foreground"
+            >
               Documentation
             </a>
-            <Button variant="outline" className="border-primary/50 text-primary">
-              <Github className="h-4 w-4 mr-1" /> Star on GitHub
+            <Button variant="outline" className="border-primary/50 text-primary" asChild>
+              <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
+                <Github className="h-4 w-4 mr-1" /> Star on GitHub
+              </a>
             </Button>
-            <Button className="bg-primary text-primary-foreground">Get Started</Button>
+            <Button className="bg-primary text-primary-foreground" asChild>
+              <a href="#features" onClick={() => setIsMobileOpen(false)}>
+                Get Started
+              </a>
+            </Button>
           </div>
         </div>
       )}

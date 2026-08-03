@@ -12,13 +12,35 @@ const DualCTASection = () => {
             <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20">
               <User className="h-7 w-7 text-primary" />
             </div>
-            <h3 className="font-heading text-2xl font-bold lg:text-3xl">For Individuals</h3>
+            <h3 className="font-heading text-2xl font-bold lg:text-3xl">For builders</h3>
             <p className="mt-3 text-muted-foreground leading-relaxed">
-              Vibe code any project type — frontend, backend, or GUI — entirely on your local machine.
-              Your AI chatbot has full resource access with built-in safety. Clone the repo and start building in minutes.
+              Clone the monorepo, bring up Compose with mock sandboxes, and open the studio —
+              Chat, Code, Terminal, and Preview against a real project API. Swap in KVM microVMs
+              when you are ready for production-like isolation.
             </p>
-            <Button size="lg" className="mt-8 bg-primary hover:bg-primary/90 text-primary-foreground px-8 shadow-lg shadow-primary/20">
-              <Github className="h-5 w-5 mr-2" /> Clone & Start Building
+            <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
+              <li className="flex gap-2">
+                <span className="text-primary">▸</span> Docker Compose dev stack with HMR
+              </li>
+              <li className="flex gap-2">
+                <span className="text-primary">▸</span> Prebaked guest image for agents
+              </li>
+              <li className="flex gap-2">
+                <span className="text-primary">▸</span> UI demo mode without a backend
+              </li>
+            </ul>
+            <Button
+              size="lg"
+              className="mt-8 bg-primary hover:bg-primary/90 text-primary-foreground px-8 shadow-lg shadow-primary/20"
+              asChild
+            >
+              <a
+                href="https://github.com/real-limitless/ProjectEverflow"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Github className="h-5 w-5 mr-2" /> Clone & start building
+              </a>
             </Button>
           </div>
 
@@ -28,17 +50,44 @@ const DualCTASection = () => {
             <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20">
               <Building2 className="h-7 w-7 text-primary" />
             </div>
-            <h3 className="font-heading text-2xl font-bold lg:text-3xl">For Organizations</h3>
+            <h3 className="font-heading text-2xl font-bold lg:text-3xl">For organizations</h3>
             <p className="mt-3 text-muted-foreground leading-relaxed">
-              Self-host Everflow so all AI and data stays within your infrastructure.
-              Full control, compliance, and visibility — with enterprise-grade guardrails built in.
+              Self-host the platform API, sandbox-agent, and UI on your nodes. Give teams a
+              governed playground — project-scoped microVMs, org membership, and a single public
+              API surface — instead of unmanaged AI on laptops.
             </p>
+            <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
+              <li className="flex gap-2">
+                <span className="text-primary">▸</span> Org-scoped projects & membership
+              </li>
+              <li className="flex gap-2">
+                <span className="text-primary">▸</span> Isolation via microsandbox microVMs
+              </li>
+              <li className="flex gap-2">
+                <span className="text-primary">▸</span> Data and deploys stay on your infra
+              </li>
+            </ul>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Button size="lg" className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 shadow-lg shadow-primary/20">
-                Self-Host Guide
+              <Button
+                size="lg"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 shadow-lg shadow-primary/20"
+                asChild
+              >
+                <a href="#architecture">Self-host architecture</a>
               </Button>
-              <Button size="lg" variant="outline" className="border-primary/50 text-primary hover:bg-primary/10">
-                Talk to Community
+              <Button
+                size="lg"
+                variant="outline"
+                className="border-primary/50 text-primary hover:bg-primary/10"
+                asChild
+              >
+                <a
+                  href="https://github.com/real-limitless/ProjectEverflow"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Read the README
+                </a>
               </Button>
             </div>
           </div>
