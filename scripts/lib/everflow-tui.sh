@@ -46,7 +46,11 @@ tui_install_wizard() {
   echo ""
   echo "  Install wizard"
   echo "  ────────────────────────────────────────"
-  echo "  Flow: ask → install local registry → full stack"
+  echo "  Supported runtime: Docker Compose or Podman Compose only."
+  echo "  All services start together (frontend, backend, sandbox-agent,"
+  echo "  registry, searxng). Host process installs are not supported."
+  echo ""
+  echo "  Flow: ask → install local registry → full Compose stack"
   echo ""
 
   # ── Ask: how to populate the local registry ─────────────────────────────
@@ -82,7 +86,7 @@ tui_install_wizard() {
   echo ""
   echo "  Plan:"
   echo "    Phase 1 — start registry + seed (${REGISTRY_SEED_MODE})"
-  echo "    Phase 2 — start full Everflow stack"
+  echo "    Phase 2 — start full Everflow stack (all services via Compose)"
   echo ""
 
   # ── Ask: sandbox / environment ──────────────────────────────────────────
@@ -275,8 +279,13 @@ tui_main_menu() {
     clear 2>/dev/null || true
     print_banner
     tui_status_line 2>/dev/null || echo "  Stack: (status unavailable)"
+    if [[ -n "${ENGINE:-}" ]]; then
+      echo "  Engine: ${ENGINE} compose  ·  multi-service stack (Compose only)"
+    else
+      echo "  Runtime: Docker Compose or Podman Compose only"
+    fi
     echo ""
-    echo "  1) Install / start stack   (ask → registry → full install)"
+    echo "  1) Install / start stack   (ask → registry → full Compose install)"
     echo "  2) Status & health"
     echo "  3) Local registry…         (up / seed / status)"
     echo "  4) Create first admin (email + password + org)"

@@ -56,6 +56,7 @@ Ideas that appear in early product thinking but are **not** delivery promises:
 - Replacing general-purpose cloud IDEs or CI systems end-to-end
 - Shipping unvetted third-party marketplace code without org-level controls
 - Requiring host-installed Python/Node for the supported product install path
+- Supporting a host multi-process product runtime — **Compose only** (Docker or Podman); UI / API / sandbox-agent as separate host services is not a supported install
 
 ---
 

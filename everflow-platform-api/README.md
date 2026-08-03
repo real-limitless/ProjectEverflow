@@ -2,51 +2,53 @@
 
 Python **FastAPI** backend for the Everflow platform UI. Dual-database (SQLite by default, PostgreSQL via `DATABASE_URL`), JWT auth, optional GitHub/Google OAuth, and org/project CRUD.
 
-## Product install (Docker / Podman)
+## Run with the product stack (supported)
 
-The supported way to run the API in production/self-hosted is the root Compose stack
-(all services in containers):
+The API is one service in a multi-service Compose stack. **Docker Compose or Podman Compose is the only supported way to run Everflow** (API + UI + sandbox-agent + registry + searxng together).
 
 ```bash
 # from repository root
-./scripts/everflow-install.sh
-# or: docker compose up --build -d
+./scripts/everflow install
+# or interactive: ./scripts/everflow
+# direct Compose:
+#   docker compose up --build -d
+#   podman compose up --build -d
+# hot reload (still Compose):
+#   docker compose -f docker-compose.dev.yml up --build
 ```
 
-Migrations run inside the backend container entrypoint. First-run admin setup is in the UI.
+| Surface | URL (default) |
+|---------|----------------|
+| UI | http://localhost:3000 (prod compose) / http://localhost:5173 (dev compose) |
+| OpenAPI | http://localhost:8000/docs |
+| Health | `GET /api/v1/health` |
+| Ready (DB) | `GET /api/v1/ready` |
 
-## Contributor quick start (SQLite, host venv)
+Migrations run inside the backend container entrypoint. First-run admin: `./scripts/everflow setup-admin` or the UI wizard.
+
+## Unit tests & isolated API work (not a supported stack)
+
+Host venv + `uvicorn` is for **package unit tests** and isolated API debugging only. It is **not** a supported way to run the full Everflow platform.
 
 ```bash
 cd everflow-platform-api
 
-# Create venv and install (uv recommended)
 uv venv
 source .venv/bin/activate
 uv pip install -e ".[dev]"
 
-# Optional: copy env
-cp .env.example .env
-
-# Run migrations (Alembic — required before first start)
-./scripts/migrate.sh
-# or: alembic upgrade head
-
-# Start API (http://localhost:8000)
-uvicorn app.main:app --reload --port 8000
-# or: ./scripts/dev.sh
+cp .env.example .env   # optional
+./scripts/migrate.sh   # or: alembic upgrade head
+pytest
+# optional local API only (incomplete product stack):
+# uvicorn app.main:app --reload --port 8000
 ```
 
-- OpenAPI docs: [http://localhost:8000/docs](http://localhost:8000/docs)
-- Health: `GET /api/v1/health`
-- Ready (DB): `GET /api/v1/ready`
-
-## PostgreSQL
+### PostgreSQL (isolated tests)
 
 ```bash
 export DATABASE_URL="postgresql+asyncpg://everflow:everflow@localhost:5432/everflow"
 ./scripts/migrate.sh
-uvicorn app.main:app --reload --port 8000
 ```
 
 No code changes required — the same models and **same Alembic revision chain** work on both engines.

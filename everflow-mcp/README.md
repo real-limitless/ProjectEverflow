@@ -9,27 +9,35 @@ Stdio MCP server that lets **OpenCode** (and the Everflow Chat tab) create and m
 - Background jobs (detached sandbox processes — e.g. spin up a dev server)
 - Project / identity context
 
+## Where it runs
+
+**In the project microVM guest** (wired by sandbox-agent / OpenCode bootstrap), not as a host product service.
+
+The Everflow control plane itself runs only under **Docker Compose or Podman Compose** (`./scripts/everflow`). This package is installed into guest images / harness packs; it is not a Compose service you start on the host for operators.
+
 ## Environment
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `EVERFLOW_API_URL` | yes | Platform API base (guest: tunnel `http://127.0.0.1:18765`; host: `http://localhost:8000`) |
+| `EVERFLOW_API_URL` | yes | Platform API base (guest: tunnel `http://127.0.0.1:18765`) |
 | `EVERFLOW_TOKEN` | yes | Sandbox access token (`ef_sbox_…`) |
 | `EVERFLOW_PROJECT_ID` | yes | Bound project UUID |
 
-## Run
+## Unit tests / local packaging (not a product host service)
 
 ```bash
 cd everflow-mcp
 uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
-export EVERFLOW_API_URL=http://localhost:8000
-export EVERFLOW_TOKEN=ef_sbox_…
-export EVERFLOW_PROJECT_ID=…
-everflow-mcp
+pytest
+# optional stdio smoke (incomplete; needs a running Compose API + token):
+# export EVERFLOW_API_URL=http://localhost:8000
+# export EVERFLOW_TOKEN=ef_sbox_…
+# export EVERFLOW_PROJECT_ID=…
+# everflow-mcp
 ```
 
-OpenCode registers this as a local MCP (see sandbox-agent OpenCode ensure bootstrap).
+OpenCode registers this as a local MCP inside the sandbox (see sandbox-agent OpenCode ensure bootstrap).
 Hosts that prefix tools with the server name expose them as `everflow_<tool>` (e.g. `everflow_list_projects`).
 
 ## Tools

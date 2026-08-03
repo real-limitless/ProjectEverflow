@@ -1,5 +1,7 @@
 # Deploy artifacts
 
+These files build and seed container images for the **Compose stack**. Everflow’s only supported product runtime is **Docker Compose or Podman Compose** (`./scripts/everflow` at the repo root). Images here are not a host multi-process install path.
+
 | File | Purpose |
 |------|---------|
 | `local-registry.sh` | **Embedded registry** lifecycle: up, seed, mirror, export/import |

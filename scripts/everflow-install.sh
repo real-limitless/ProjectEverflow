@@ -2,6 +2,9 @@
 # Compatibility wrapper — prefer: ./scripts/everflow install
 # or interactive menu: ./scripts/everflow
 #
+# Supported runtime: Docker Compose or Podman Compose only (multi-service stack).
+# Host process installs of individual packages are not supported.
+#
 # Default: start stack from embedded local OCI registry (seed first if empty).
 # Seed:         ./deploy/local-registry.sh seed
 # From source:  BUILD_FROM_SOURCE=1 ./scripts/everflow-install.sh

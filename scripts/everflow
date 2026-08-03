@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Everflow control plane — install, lifecycle, and first-run admin setup.
 #
+# Supported runtime (only):
+#   Docker Compose or Podman Compose — multi-service stack.
+#   Frontend, backend, sandbox-agent, registry, and searxng run together.
+#   Running individual packages as host processes is not supported.
+#
 # Interactive menu (TTY):
 #   ./scripts/everflow
 #
@@ -11,7 +16,7 @@
 #   ./scripts/everflow uninstall [--volumes] [--env] [--yes]
 #   …
 #
-# Host: Docker or Podman + Compose. No host Python/Node required.
+# Host: Docker or Podman + Compose V2. No host Python/Node required.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,10 +53,15 @@ usage() {
   cat <<'EOF'
 Everflow control plane
 
+Supported runtime:
+  Docker Compose or Podman Compose only.
+  Everflow is a multi-service stack (frontend, backend, sandbox-agent,
+  registry, searxng). Starting packages as host processes is not supported.
+
 Usage:
   everflow                 Interactive menu (TTY) or this help (non-TTY)
   everflow menu            Force interactive menu
-  everflow install         Ask → install registry → full stack
+  everflow install         Ask → install registry → full Compose stack
   everflow registry …      Registry only (up|seed|status|export|import)
   everflow status          Health, containers, registry, setup flag
   everflow setup-admin     Create first platform admin + organization
@@ -68,7 +78,7 @@ Usage:
   everflow help            Show this help
 
 Install is always phased:
-  1) ask (wizard or env)  2) install local registry + seed  3) full stack
+  1) ask (wizard or env)  2) install local registry + seed  3) full Compose stack
 
 Install options (env):
   BUILD_FROM_SOURCE=1      Seed registry from source, then start stack

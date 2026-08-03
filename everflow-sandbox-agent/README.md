@@ -64,9 +64,34 @@ msb pull --insecure registry:5000/everflow/everflow-sandbox-guest:latest
 
 Stock images (`python`, `ubuntu:24.04`) still work; bootstrap will install tools on first use (slower, needs network).
 
-## Local run (mock mode)
+## Run with the product stack (supported)
 
-Without KVM / microsandbox, mock mode stores sandboxes in memory:
+The sandbox-agent is a **Compose service** (privileged, KVM passthrough). **Docker Compose or Podman Compose is the only supported product runtime** for Everflow — the agent, API, UI, registry, and searxng must run together.
+
+```bash
+# from repository root
+./scripts/everflow install
+# or full stack:
+docker compose up --build
+# hot reload agent (still Compose):
+docker compose -f docker-compose.dev.yml up --build sandbox-agent
+```
+
+**Do not use a plain `python:slim` image for product.** Real sandboxes need the official
+microsandbox runtime (`libkrunfw` + `msb`). Our Compose image is based on:
+
+`ghcr.io/superradcompany/microsandbox:latest`
+
+Requirements (product Compose):
+
+- Linux host with `/dev/kvm` (read/write)
+- `privileged: true` and device `/dev/kvm` (already in compose)
+- Persistent volume on `/root/.microsandbox` for guest images
+- `SANDBOX_MOCK=false` for real microVMs (default in product compose)
+
+## Unit tests (mock mode — not a supported stack)
+
+Without KVM / microsandbox, mock mode stores sandboxes in memory for **package unit tests** only. Host `uvicorn` is not a supported way to run the product agent.
 
 ```bash
 cd everflow-sandbox-agent
@@ -74,27 +99,9 @@ uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 export SANDBOX_AGENT_TOKEN=dev-token
 export SANDBOX_MOCK=true
-uvicorn app.main:app --reload --port 8090
+pytest
+# optional isolated agent only (incomplete product stack):
+# uvicorn app.main:app --reload --port 8090
 ```
-
-## Production (real microVMs)
-
-**Do not use a plain `python:slim` image.** Real sandboxes need the official
-microsandbox runtime (`libkrunfw` + `msb`). Our Compose image is based on:
-
-`ghcr.io/superradcompany/microsandbox:latest`
-
-```bash
-# SANDBOX_MOCK must be false (default in compose)
-docker compose up --build sandbox-agent
-```
-
-Requirements:
-
-- Linux host with `/dev/kvm` (read/write)
-- `privileged: true` and device `/dev/kvm` (already in compose)
-- Persistent volume on `/root/.microsandbox` for guest images
-
-Verified on this stack: `Sandbox.create` + `exec` print from a real microVM.
 
 Mock mode (`SANDBOX_MOCK=true`) exists only for CI without KVM — not for product use.

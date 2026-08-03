@@ -1,13 +1,15 @@
 # everflow-edge
 
-Lightweight agent that runs on **deploy hosts** (VMs / bare metal) alongside Traefik and Docker Compose.
+Lightweight agent that runs on **deploy hosts** alongside Traefik and **Docker/Podman Compose**.
+
+The main Everflow control plane (UI, API, sandbox-agent) is also **Compose-only** on the product host (`./scripts/everflow`). Edge is a separate Compose stack on each deploy host — not a host multi-process install.
 
 MVP (Issue 15 P3/P4): health + heartbeat stubs, sample Traefik file-provider routes, and a remote `docker compose up` path from the platform API (`deploy_remote.py`).
 
 ## Role in the deploy flow
 
 ```
-Platform UI / API
+Platform UI / API  (Compose on control plane)
     │  SSH (deploy key) + rsync compose project
     ▼
 Deploy host
@@ -16,24 +18,13 @@ Deploy host
     └── Your app stack  (docker compose -f … up -d)
 ```
 
-1. Install Docker + Traefik compose on the host (`../scripts/everflow-edge-install.sh`).
+1. Install Docker/Podman + Traefik compose on the host (`../scripts/everflow-edge-install.sh`).
 2. Add the Everflow **deploy public key** to `~/.ssh/authorized_keys` for the deploy user.
 3. Platform calls `POST /api/v1/projects/{id}/deploy/runs` with host credentials + routes.
 4. API SSHs in, syncs the compose project, writes Traefik `Host(\`domain\`)` rules, runs `docker compose up -d`.
 5. Traefik reloads the dynamic file and routes traffic to `service:port`.
 
-## Local run (agent only)
-
-```bash
-cd everflow-edge
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-uvicorn app.main:app --host 0.0.0.0 --port 9100
-curl -s localhost:9100/health
-curl -s -X POST localhost:9100/heartbeat -H 'content-type: application/json' -d '{}'
-```
-
-## Traefik sample
+## Supported edge run path (Compose)
 
 See [`traefik/`](traefik/):
 
@@ -47,6 +38,18 @@ See [`traefik/`](traefik/):
 sudo mkdir -p /etc/everflow/dynamic
 sudo cp traefik/dynamic/routes.yml.example /etc/everflow/dynamic/routes.yml
 cd traefik && docker compose up -d
+# or: podman compose up -d
+```
+
+## Unit tests / isolated edge agent (not the product path)
+
+```bash
+cd everflow-edge
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+pytest
+# optional isolated agent only (prefer Compose on deploy hosts):
+# uvicorn app.main:app --host 0.0.0.0 --port 9100
 ```
 
 Edit `/etc/everflow/dynamic/routes.yml` (or let the platform write `.everflow/traefik-routes.yml` and sync/symlink it). Traefik watches the directory and hot-reloads.

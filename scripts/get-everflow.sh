@@ -19,9 +19,12 @@
 #   curl -fsSL https://raw.githubusercontent.com/real-limitless/ProjectEverflow/Development-Everflow/scripts/get-everflow.sh | bash
 #
 # What this script does:
-#   1. Checks Docker or Podman + Compose
+#   1. Checks Docker or Podman + Compose (required — only supported runtime)
 #   2. Downloads ProjectEverflow (git clone or GitHub archive)
 #   3. Runs ./scripts/everflow install  (or interactive menu on TTY)
+#
+# Supported runtime: Docker Compose or Podman Compose only.
+# Everflow is a multi-service stack; host process installs are not supported.
 #
 # Optional environment variables:
 #   EVERFLOW_DIR          Install directory (default: $HOME/everflow)
@@ -35,7 +38,7 @@
 #   SKIP_CLONE=1          Reuse existing EVERFLOW_DIR without re-downloading
 #   EVERFLOW_NONINTERACTIVE=1  Force non-interactive install (no menu)
 #
-# Host needs: bash, curl or wget, git (preferred) or tar+gzip, Docker or Podman.
+# Host needs: bash, curl or wget, git (preferred) or tar+gzip, Docker or Podman + Compose.
 # No host Python/Node required for the control plane.
 # =============================================================================
 set -euo pipefail
@@ -79,7 +82,8 @@ print_banner() {
   cat <<'EOF'
 
   Everflow — remote install
-  Self-hosted AI app platform (Docker / Podman)
+  Self-hosted multi-service stack via Docker Compose / Podman Compose
+  (individual host services are not a supported install path)
 
 EOF
 }
@@ -116,6 +120,9 @@ check_engine() {
   fi
   die "need Docker or Podman on the host.
 
+  Everflow runs only under Docker Compose or Podman Compose.
+  Running UI / API / sandbox-agent as host processes is not supported.
+
   Install Docker Engine: https://docs.docker.com/engine/install/
   or Podman:           https://podman.io/getting-started/installation
   then re-run this script."
@@ -142,7 +149,10 @@ check_compose() {
     ok "docker-compose available"
     return
   fi
-  die "${engine} Compose plugin not found. Install Compose V2 (docker compose / podman compose)."
+  die "${engine} Compose plugin not found.
+
+  Everflow is a multi-service stack; Compose is the only supported runtime.
+  Install Compose V2 (docker compose / podman compose), then re-run."
 }
 
 clone_or_update() {

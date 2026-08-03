@@ -70,8 +70,11 @@ print_banner() {
  |_|   |_|  \___// |\___|\___|\__|_____| \_/ \___|_|  |_| |_|\___/ \_/\_/
                |__/
 BANNER
+  printf '%s%s%s\n' "${c0}${c2}" \
+    '   Self-hosted AI app platform  ·  multi-service Compose stack' \
+    "${c0}"
   printf '%s%s%s\n\n' "${c0}${c2}" \
-    '         Self-hosted AI app platform  ·  control plane' \
+    '   Docker Compose or Podman Compose only — not host processes' \
     "${c0}"
 }
 
@@ -185,7 +188,9 @@ detect_engine() {
     echo podman
     return
   fi
-  echo "error: need docker or podman on the host (no other install path)." >&2
+  echo "error: need Docker or Podman on the host." >&2
+  echo "       Everflow runs only under Docker Compose or Podman Compose." >&2
+  echo "       Running UI / API / sandbox-agent as host processes is not supported." >&2
   echo "       Install Docker Engine or Podman, then re-run this tool." >&2
   exit 1
 }
@@ -215,7 +220,8 @@ compose() {
     return
   fi
   echo "error: ${ENGINE} compose plugin not found." >&2
-  echo "       Install the Compose V2 plugin (docker compose / podman compose)." >&2
+  echo "       Everflow is a multi-service stack; Compose is the only supported runtime." >&2
+  echo "       Install Compose V2 (docker compose / podman compose), then re-run." >&2
   exit 1
 }
 
