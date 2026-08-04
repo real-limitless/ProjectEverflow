@@ -2,8 +2,18 @@
 FROM node:22-bookworm-slim AS build
 
 WORKDIR /ui
+
+# Low-memory hosts: cap V8 heap and keep npm install single-flight (avoids
+# "Exit handler never called" when the build is OOM-killed mid-npm).
+ENV NODE_OPTIONS=--max-old-space-size=1536 \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+
 COPY everflow-platform-ui/package.json everflow-platform-ui/package-lock.json ./
-RUN npm ci
+RUN npm ci --no-audit --no-fund
 COPY everflow-platform-ui/ ./
 
 # Empty = same-origin /api (nginx proxies to backend). Required for prebuilt
