@@ -63,36 +63,29 @@ detect_engine() {
   fi
 }
 
-# True when the CLI is Podman (including `docker` as podman-docker shim).
+# True when the selected ENGINE is Podman (including docker→podman shim).
+# Never treat "podman is installed alongside docker" as Podman mode — that mixed
+# the Docker image store (pull) with the Podman store (tag/push) → image not known.
 is_podman_cli() {
-  if [[ "${ENGINE}" == "podman" ]]; then
-    return 0
-  fi
+  case "${ENGINE}" in
+    podman) return 0 ;;
+  esac
+  # docker binary is actually podman (podman-docker package)
   if command -v podman >/dev/null 2>&1 && [[ "$(command -v docker 2>/dev/null || true)" == "$(command -v podman 2>/dev/null || true)" ]]; then
     return 0
   fi
-  # podman-docker / docker-podman packages print this on every invoke
-  if "${ENGINE}" version 2>&1 | grep -qiE 'podman|Emulate Docker CLI using podman'; then
+  # Only sniff the engine binary itself — do not grep `docker info` (false positives)
+  if [[ "${ENGINE}" == "docker" ]] && "${ENGINE}" version 2>&1 | head -n 5 | grep -qiE 'podman|Emulate Docker CLI using podman'; then
     return 0
-  fi
-  if [[ -f /etc/containers/nodocker ]] || [[ -f /etc/containers/registries.conf ]]; then
-    if "${ENGINE}" info 2>/dev/null | grep -qi podman; then
-      return 0
-    fi
   fi
   return 1
 }
 
-# Prefer real podman binary when docker is a shim (cleaner flags, less noise).
-podman_bin() {
-  if command -v podman >/dev/null 2>&1; then
-    command -v podman
-  else
-    echo "${ENGINE}"
-  fi
-}
-
 ENGINE="$(detect_engine)"
+# Prefer explicit CONTAINER_ENGINE when caller (scripts/everflow) sets it
+if [[ -n "${CONTAINER_ENGINE:-}" ]]; then
+  ENGINE="${CONTAINER_ENGINE}"
+fi
 export ENGINE CONTAINER_ENGINE="${ENGINE}"
 
 compose() {
@@ -114,13 +107,14 @@ compose() {
 # Allow HTTP push/pull to the embedded registry (localhost is plain HTTP).
 # Podman: drop-in registries.conf + --tls-verify=false on push.
 # Docker: requires daemon insecure-registries (we only warn if missing).
+# Always pull/tag/push with the same ${ENGINE} binary (one image store).
 ensure_insecure_local_registry() {
   local host_only="${HOST_REG%%/*}" # localhost:5000
   local loc_host="${host_only%:*}"
   local loc_port="${host_only##*:}"
   [[ "${loc_port}" == "${loc_host}" ]] && loc_port="${PORT}"
 
-  if is_podman_cli || command -v podman >/dev/null 2>&1; then
+  if [[ "${ENGINE}" == "podman" ]] || is_podman_cli; then
     local conf_dir conf
     conf_dir="${HOME}/.config/containers/registries.conf.d"
     conf="${conf_dir}/everflow-local-registry.conf"
@@ -148,9 +142,13 @@ EOF
     ok "Docker already allows insecure ${host_only}"
     return 0
   fi
-  # Best-effort parse of docker info Registry Config
+  # Best-effort parse of docker info Registry Config / default loopback CIDRs
   if "${ENGINE}" info --format '{{json .RegistryConfig.InsecureRegistryCIDRs}}' 2>/dev/null | grep -qE "localhost|127.0.0.0"; then
     ok "Docker insecure registry CIDR may cover localhost"
+    return 0
+  fi
+  if "${ENGINE}" info 2>/dev/null | grep -A20 -i 'Insecure Registries' | grep -qE '127\.0\.0\.0/8|::1/128'; then
+    ok "Docker loopback insecure CIDR covers ${host_only}"
     return 0
   fi
   warn "Docker may reject HTTP pushes to ${host_only}."
@@ -161,8 +159,8 @@ EOF
 
 engine_push() {
   local ref="$1"
-  if is_podman_cli || command -v podman >/dev/null 2>&1; then
-    "$(podman_bin)" push --tls-verify=false "${ref}"
+  if [[ "${ENGINE}" == "podman" ]]; then
+    podman push --tls-verify=false "${ref}"
     return
   fi
   "${ENGINE}" push "${ref}"
@@ -170,22 +168,29 @@ engine_push() {
 
 engine_pull() {
   local ref="$1"
-  if [[ "${ref}" == localhost:* || "${ref}" == 127.0.0.1:* || "${ref}" == registry:* ]]; then
-    if is_podman_cli || command -v podman >/dev/null 2>&1; then
-      "$(podman_bin)" pull --tls-verify=false "${ref}"
-      return
+  if [[ "${ENGINE}" == "podman" ]]; then
+    if [[ "${ref}" == localhost:* || "${ref}" == 127.0.0.1:* || "${ref}" == registry:* ]]; then
+      podman pull --tls-verify=false "${ref}"
+    else
+      podman pull "${ref}"
     fi
+    return
   fi
   "${ENGINE}" pull "${ref}"
 }
 
 engine_tag() {
   local src="$1" dest="$2"
-  if is_podman_cli || command -v podman >/dev/null 2>&1; then
-    "$(podman_bin)" tag "${src}" "${dest}"
+  "${ENGINE}" tag "${src}" "${dest}"
+}
+
+engine_image_exists() {
+  local ref="$1"
+  if [[ "${ENGINE}" == "podman" ]]; then
+    podman image exists "${ref}" 2>/dev/null
     return
   fi
-  "${ENGINE}" tag "${src}" "${dest}"
+  "${ENGINE}" image inspect "${ref}" >/dev/null 2>&1
 }
 
 host_ref() {
@@ -226,6 +231,7 @@ wait_registry() {
 }
 
 cmd_up() {
+  log "container engine: ${ENGINE}"
   ensure_insecure_local_registry
   log "Starting registry service (${COMPOSE_FILE})"
   compose -f "${COMPOSE_FILE}" up -d registry
@@ -239,7 +245,12 @@ cmd_up() {
 push_image() {
   local src="$1"
   local dest="$2"
-  log "Push ${dest}"
+  log "Push ${dest} (engine=${ENGINE})"
+  if ! engine_image_exists "${src}"; then
+    warn "image not in ${ENGINE} store: ${src}"
+    warn "pull and push must use the same engine (set CONTAINER_ENGINE=docker or podman)."
+    return 1
+  fi
   engine_tag "${src}" "${dest}"
   if ! engine_push "${dest}"; then
     warn "push failed for ${dest}"
@@ -259,6 +270,9 @@ mirror_one() {
   dest="$(host_ref "${local_name}")"
   log "Mirror ${src} → ${dest}"
   engine_pull "${src}"
+  if ! engine_image_exists "${src}"; then
+    die "after pull, ${src} missing from ${ENGINE} store — check CONTAINER_ENGINE / docker vs podman"
+  fi
   push_image "${src}" "${dest}"
 }
 
@@ -278,16 +292,11 @@ cmd_build_push() {
   cmd_up
   local only="${ONLY:-}"
   log "Building Everflow images → ${HOST_REG}/${NS} tag=${TAG}"
-  # Prefer podman binary for build/push so --tls-verify works even when ENGINE=docker shim
-  local build_engine="${ENGINE}"
-  if is_podman_cli || command -v podman >/dev/null 2>&1; then
-    build_engine="$(podman_bin)"
-  fi
   EVERFLOW_REGISTRY="${HOST_REG}/${NS}" \
     EVERFLOW_IMAGE_TAG="${TAG}" \
     PUSH=true \
     ONLY="${only}" \
-    CONTAINER_ENGINE="${build_engine}" \
+    CONTAINER_ENGINE="${ENGINE}" \
     EVERFLOW_PUSH_TLS_VERIFY=false \
     MICRO_SANDBOX_BASE="${MICRO_SANDBOX_BASE:-$(host_ref upstream-microsandbox)}" \
     "${ROOT}/deploy/build-images.sh"
