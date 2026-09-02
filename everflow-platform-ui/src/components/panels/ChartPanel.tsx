@@ -4,6 +4,11 @@ import {
   Checkbox,
   FormSelect,
   FormSelectOption,
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalHeader,
+  ModalVariant,
   Spinner,
   TextArea,
   TextInput,
@@ -35,7 +40,7 @@ function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 }
 
-export function ChartPanel() {
+export function ChartPanel({ embedded = false }: { embedded?: boolean }) {
   const projectId = usePlaygroundStore((s) => s.currentProjectId)
   const openPanelType = usePlaygroundStore((s) => s.openPanelType)
   const [chart, setChart] = useState<ChartSnapshot | null>(null)
@@ -60,7 +65,6 @@ export function ChartPanel() {
     }
     try {
       const [snap, tm] = await Promise.all([
-        // Always load Floor so hidden conductors can be skipped without flattening the tree.
         getChart(projectId, { includeSystem: true }),
         listTeams(projectId),
       ])
@@ -153,12 +157,12 @@ export function ChartPanel() {
   }
 
   return (
-    <div className="chart-layout">
+    <div className={`chart-layout${embedded ? ' is-embedded' : ''}`}>
       <div className="chart-canvas">
         <header className="chart-head">
-          <h2>Org chart</h2>
+          {embedded ? null : <h2>Org chart</h2>}
           <p>Reporting lines. A live run lights the path. Select a bot to configure it.</p>
-          <div className="chart-head__actions">
+          <div className="chart-head__row">
             <Button
               size="sm"
               variant="secondary"
@@ -181,7 +185,7 @@ export function ChartPanel() {
             >
               Export yaml
             </Button>
-            <Button size="sm" onClick={() => setAdding((v) => !v)}>
+            <Button size="sm" onClick={() => setAdding(true)}>
               Add seat
             </Button>
             <Checkbox
@@ -191,48 +195,44 @@ export function ChartPanel() {
               onChange={(_e, v) => setShowSystem(v)}
             />
           </div>
+          <div className="chart-head__teams">
+            {teams.map((t) => (
+              <span key={t.id} className="chart-team-chip">
+                @{t.mention}
+                <button
+                  type="button"
+                  aria-label={`Remove @${t.mention}`}
+                  onClick={() => void act(() => deleteTeam(projectId, t.id))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <span className="chart-team-add">
+              <TextInput
+                value={teamName}
+                onChange={(_e, v) => setTeamName(v)}
+                aria-label="New team name"
+                placeholder="New team"
+              />
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  void act(async () => {
+                    const slug = slugify(teamName)
+                    if (!slug) return
+                    await createTeam(projectId, { name: teamName, slug, mention: slug })
+                    setTeamName('')
+                  })
+                }
+              >
+                Add team
+              </Button>
+            </span>
+          </div>
         </header>
         {error ? <div className="room-error">{error}</div> : null}
-        {adding ? (
-          <div className="chart-add">
-            <TextInput value={addName} onChange={(_e, v) => setAddName(v)} aria-label="New seat name" />
-            <FormSelect value={addTemplate} onChange={(_e, v) => setAddTemplate(v)} aria-label="Template">
-              {['scout', 'docs', 'sec', 'scribe', 'product', 'qa'].map((t) => (
-                <FormSelectOption key={t} value={t} label={t} />
-              ))}
-            </FormSelect>
-            <FormSelect value={addTeamId} onChange={(_e, v) => setAddTeamId(v)} aria-label="Team">
-              <FormSelectOption value="" label="No team" />
-              {teams.map((t) => (
-                <FormSelectOption key={t.id} value={t.id} label={`@${t.mention}`} />
-              ))}
-            </FormSelect>
-            <FormSelect value={addReportsTo} onChange={(_e, v) => setAddReportsTo(v)} aria-label="Reports to">
-              <FormSelectOption value="" label="Reports to (none)" />
-              {visibleSeats.map((s) => (
-                <FormSelectOption key={s.id} value={s.id} label={s.name} />
-              ))}
-            </FormSelect>
-            <Button
-              size="sm"
-              onClick={() =>
-                void act(async () => {
-                  await addSeat(projectId, {
-                    name: addName,
-                    slug: slugify(addName) || `seat-${Date.now()}`,
-                    template: addTemplate,
-                    kind: 'bot',
-                    team_id: addTeamId || null,
-                    reports_to_id: addReportsTo || null,
-                  })
-                  setAdding(false)
-                })
-              }
-            >
-              Add
-            </Button>
-          </div>
-        ) : null}
 
         <div className="org-tree" role="tree" aria-label="Organization chart">
           {roots.map((s) => (
@@ -246,45 +246,6 @@ export function ChartPanel() {
               onSelect={setSelectedId}
             />
           ))}
-        </div>
-
-        <div className="chart-teams">
-          <div className="room-rail__title">Teams</div>
-          <ul className="chart-teams__list">
-            {teams.map((t) => (
-              <li key={t.id}>
-                <span>@{t.mention}</span>
-                <Button
-                  size="sm"
-                  variant="plain"
-                  onClick={() => void act(() => deleteTeam(projectId, t.id))}
-                >
-                  Remove
-                </Button>
-              </li>
-            ))}
-          </ul>
-          <div className="chart-add chart-add--inline">
-            <TextInput
-              value={teamName}
-              onChange={(_e, v) => setTeamName(v)}
-              aria-label="New team name"
-              placeholder="New team"
-            />
-            <Button
-              size="sm"
-              onClick={() =>
-                void act(async () => {
-                  const slug = slugify(teamName)
-                  if (!slug) return
-                  await createTeam(projectId, { name: teamName, slug, mention: slug })
-                  setTeamName('')
-                })
-              }
-            >
-              Add team
-            </Button>
-          </div>
         </div>
         {yaml ? <pre className="chart-yaml">{yaml}</pre> : null}
       </div>
@@ -314,9 +275,74 @@ export function ChartPanel() {
             }
           />
         ) : (
-          <p>Select a seat to set job, prompt, tools, skills, and model pool.</p>
+          <p className="chart-inspector__empty">Select a seat.</p>
         )}
       </aside>
+
+      <Modal
+        variant={ModalVariant.small}
+        isOpen={adding}
+        onClose={() => setAdding(false)}
+        aria-label="Add seat"
+      >
+        <ModalHeader title="Add seat" />
+        <ModalBody>
+          <div className="chart-add-form">
+            <label>
+              Name
+              <TextInput value={addName} onChange={(_e, v) => setAddName(v)} aria-label="New seat name" />
+            </label>
+            <label>
+              Template
+              <FormSelect value={addTemplate} onChange={(_e, v) => setAddTemplate(v)} aria-label="Template">
+                {['scout', 'docs', 'sec', 'scribe', 'product', 'qa'].map((t) => (
+                  <FormSelectOption key={t} value={t} label={t} />
+                ))}
+              </FormSelect>
+            </label>
+            <label>
+              Team
+              <FormSelect value={addTeamId} onChange={(_e, v) => setAddTeamId(v)} aria-label="Team">
+                <FormSelectOption value="" label="No team" />
+                {teams.map((t) => (
+                  <FormSelectOption key={t.id} value={t.id} label={`@${t.mention}`} />
+                ))}
+              </FormSelect>
+            </label>
+            <label>
+              Reports to
+              <FormSelect value={addReportsTo} onChange={(_e, v) => setAddReportsTo(v)} aria-label="Reports to">
+                <FormSelectOption value="" label="None" />
+                {visibleSeats.map((s) => (
+                  <FormSelectOption key={s.id} value={s.id} label={s.name} />
+                ))}
+              </FormSelect>
+            </label>
+          </div>
+        </ModalBody>
+        <ModalFooter>
+          <Button
+            onClick={() =>
+              void act(async () => {
+                await addSeat(projectId, {
+                  name: addName,
+                  slug: slugify(addName) || `seat-${Date.now()}`,
+                  template: addTemplate,
+                  kind: 'bot',
+                  team_id: addTeamId || null,
+                  reports_to_id: addReportsTo || null,
+                })
+                setAdding(false)
+              })
+            }
+          >
+            Add
+          </Button>
+          <Button variant="link" onClick={() => setAdding(false)}>
+            Cancel
+          </Button>
+        </ModalFooter>
+      </Modal>
     </div>
   )
 }
@@ -340,25 +366,28 @@ function OrgBranch({
   const team = teams.find((t) => t.id === seat.team_id)
   return (
     <div className="org-branch" role="treeitem" aria-expanded={kids.length > 0}>
-      <SeatCard
-        seat={seat}
-        team={team}
-        lit={pathSlugs.has(seat.slug)}
-        selected={seat.id === selectedId}
-        onSelect={() => onSelect(seat.id)}
-      />
+      <div className={`org-node${kids.length > 0 ? ' is-parent' : ''}`}>
+        <SeatCard
+          seat={seat}
+          team={team}
+          lit={pathSlugs.has(seat.slug)}
+          selected={seat.id === selectedId}
+          onSelect={() => onSelect(seat.id)}
+        />
+      </div>
       {kids.length > 0 ? (
         <div className="org-kids" role="group">
           {kids.map((child) => (
-            <OrgBranch
-              key={child.id}
-              seat={child}
-              childrenOf={childrenOf}
-              teams={teams}
-              pathSlugs={pathSlugs}
-              selectedId={selectedId}
-              onSelect={onSelect}
-            />
+            <div key={child.id} className="org-kid">
+              <OrgBranch
+                seat={child}
+                childrenOf={childrenOf}
+                teams={teams}
+                pathSlugs={pathSlugs}
+                selectedId={selectedId}
+                onSelect={onSelect}
+              />
+            </div>
           ))}
         </div>
       ) : null}
@@ -382,7 +411,7 @@ function SeatCard({
   return (
     <button
       type="button"
-      className={`seat-card${seat.kind === 'bot' ? ' is-bot' : ' is-human'}${lit ? ' is-lit' : ''}${selected ? ' is-selected' : ''}`}
+      className={`seat-card${seat.kind === 'human' ? ' is-human' : ''}${lit ? ' is-lit' : ''}${selected ? ' is-selected' : ''}`}
       onClick={onSelect}
     >
       <span className="seat-card__name">{seat.name}</span>
@@ -391,6 +420,8 @@ function SeatCard({
     </button>
   )
 }
+
+const PERMS = ['allow', 'ask', 'deny'] as const
 
 function SeatInspector({
   seat,
@@ -478,57 +509,81 @@ function SeatInspector({
       .map((s) => s.trim())
       .filter(Boolean)
 
+  const reportsName = byId[seat.reports_to_id || '']?.name
+
   return (
     <>
       <h3>{seat.name}</h3>
       <p className="chart-inspector__meta">
-        {seat.kind} · {seat.role} · {seat.status}
-        {seat.paused ? ' · paused' : ''}
-        {byId[seat.reports_to_id || ''] ? ` · reports to ${byId[seat.reports_to_id || ''].name}` : ''}
+        {seat.kind}
+        {seat.paused ? ', paused' : ''}
+        {reportsName ? `, reports to ${reportsName}` : ''}
       </p>
 
-      <label className="chart-field">
-        Job responsibilities
-        <TextArea value={description} onChange={(_e, v) => setDescription(v)} rows={3} aria-label="Job responsibilities" />
-      </label>
-      <label className="chart-field">
-        Instruction prompt
-        <TextArea value={prompt} onChange={(_e, v) => setPrompt(v)} rows={5} aria-label="Instruction prompt" />
-      </label>
-      <label className="chart-field">
-        Skills
-        <TextInput value={skills} onChange={(_e, v) => setSkills(v)} aria-label="Skills" placeholder="comma-separated skill ids" />
-      </label>
-      <label className="chart-field">
-        Model pool
-        <TextInput
-          value={models}
-          onChange={(_e, v) => setModels(v)}
-          aria-label="Preferred models"
-          placeholder="provider/model, …"
+      <section className="chart-group">
+        <h4>Job</h4>
+        <label className="chart-field">
+          Responsibilities
+          <TextArea
+            value={description}
+            onChange={(_e, v) => setDescription(v)}
+            rows={3}
+            aria-label="Job responsibilities"
+          />
+        </label>
+      </section>
+
+      <section className="chart-group">
+        <h4>Instructions</h4>
+        <label className="chart-field">
+          Prompt
+          <TextArea value={prompt} onChange={(_e, v) => setPrompt(v)} rows={5} aria-label="Instruction prompt" />
+        </label>
+      </section>
+
+      <section className="chart-group">
+        <h4>Skills and models</h4>
+        <label className="chart-field">
+          Skills
+          <TextInput
+            value={skills}
+            onChange={(_e, v) => setSkills(v)}
+            aria-label="Skills"
+            placeholder="skill ids"
+          />
+        </label>
+        <label className="chart-field">
+          Model pool
+          <TextInput
+            value={models}
+            onChange={(_e, v) => setModels(v)}
+            aria-label="Preferred models"
+            placeholder="provider/model"
+          />
+          <Button size="sm" variant="secondary" onClick={() => setBrowseOpen(true)}>
+            Browse models
+          </Button>
+        </label>
+        <ModelBrowseModal
+          isOpen={browseOpen}
+          onClose={() => setBrowseOpen(false)}
+          models={catalog}
+          selectedId={split(models)[0] || ''}
+          pinnedIds={split(models)}
+          onSelect={(id) => {
+            const pool = split(models)
+            setModels([id, ...pool.filter((m) => m !== id)].join(', '))
+            setBrowseOpen(false)
+          }}
+          onTogglePin={(id) => {
+            const pool = split(models)
+            setModels((pool.includes(id) ? pool.filter((m) => m !== id) : [...pool, id]).join(', '))
+          }}
         />
-        <Button size="sm" variant="secondary" onClick={() => setBrowseOpen(true)}>
-          Browse models
-        </Button>
-      </label>
-      <ModelBrowseModal
-        isOpen={browseOpen}
-        onClose={() => setBrowseOpen(false)}
-        models={catalog}
-        selectedId={split(models)[0] || ''}
-        pinnedIds={split(models)}
-        onSelect={(id) => {
-          const pool = split(models)
-          setModels([id, ...pool.filter((m) => m !== id)].join(', '))
-          setBrowseOpen(false)
-        }}
-        onTogglePin={(id) => {
-          const pool = split(models)
-          setModels((pool.includes(id) ? pool.filter((m) => m !== id) : [...pool, id]).join(', '))
-        }}
-      />
-      <div className="chart-field">
-        <span>MCP / tools</span>
+      </section>
+
+      <section className="chart-group">
+        <h4>Tools</h4>
         <div className="chart-chips">
           {OPENCODE_TOOL_PERMISSIONS.map((t) => {
             const on = tools.includes(t.id)
@@ -547,45 +602,51 @@ function SeatInspector({
           })}
         </div>
         {tools.map((t) => (
-          <label key={t} className="chart-perm">
-            {t}
-            <FormSelect
-              value={permission[t] || 'allow'}
-              onChange={(_e, v) => setPermission((p) => ({ ...p, [t]: v }))}
-              aria-label={`${t} permission`}
-            >
-              <FormSelectOption value="allow" label="allow" />
-              <FormSelectOption value="ask" label="ask" />
-              <FormSelectOption value="deny" label="deny" />
-            </FormSelect>
-          </label>
-        ))}
-      </div>
-      <label className="chart-field">
-        Team
-        <FormSelect value={teamId} onChange={(_e, v) => setTeamId(v)} aria-label="Team">
-          <FormSelectOption value="" label="No team" />
-          {teams.map((t) => (
-            <FormSelectOption key={t.id} value={t.id} label={`@${t.mention}`} />
-          ))}
-        </FormSelect>
-      </label>
-      {seat.kind === 'bot' ? (
-        <label className="chart-field">
-          Reports to
-          <FormSelect value={reportsTo} onChange={(_e, v) => setReportsTo(v)} aria-label="Reports to">
-            <FormSelectOption value="" label="(none)" />
-            {seats
-              .filter((s) => s.id !== seat.id && !s.fired)
-              .map((s) => (
-                <FormSelectOption key={s.id} value={s.id} label={s.name} />
+          <div key={t} className="chart-perm">
+            <span>{t}</span>
+            <div className="chart-seg" role="group" aria-label={`${t} permission`}>
+              {PERMS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className={(permission[t] || 'allow') === p ? 'is-on' : ''}
+                  onClick={() => setPermission((prev) => ({ ...prev, [t]: p }))}
+                >
+                  {p}
+                </button>
               ))}
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <section className="chart-group">
+        <h4>Placement</h4>
+        <label className="chart-field">
+          Team
+          <FormSelect value={teamId} onChange={(_e, v) => setTeamId(v)} aria-label="Team">
+            <FormSelectOption value="" label="No team" />
+            {teams.map((t) => (
+              <FormSelectOption key={t.id} value={t.id} label={`@${t.mention}`} />
+            ))}
           </FormSelect>
         </label>
-      ) : null}
+        {seat.kind === 'bot' ? (
+          <label className="chart-field">
+            Reports to
+            <FormSelect value={reportsTo} onChange={(_e, v) => setReportsTo(v)} aria-label="Reports to">
+              <FormSelectOption value="" label="None" />
+              {seats
+                .filter((s) => s.id !== seat.id && !s.fired)
+                .map((s) => (
+                  <FormSelectOption key={s.id} value={s.id} label={s.name} />
+                ))}
+            </FormSelect>
+          </label>
+        ) : null}
+      </section>
 
       <Button
-        size="sm"
         onClick={() =>
           void onSave({
             description,
@@ -620,12 +681,16 @@ function SeatInspector({
                 Pause
               </Button>
             )}
-            <Button size="sm" variant="danger" onClick={() => void onRemove()}>
-              Remove
-            </Button>
           </>
         ) : null}
       </div>
+      {seat.kind === 'bot' ? (
+        <div className="chart-inspector__remove">
+          <Button size="sm" variant="danger" onClick={() => void onRemove()}>
+            Remove
+          </Button>
+        </div>
+      ) : null}
     </>
   )
 }

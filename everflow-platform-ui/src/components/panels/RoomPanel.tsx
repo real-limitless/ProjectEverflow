@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Checkbox, FormSelect, FormSelectOption, Spinner, TextArea, TextInput } from '@patternfly/react-core'
+import { Button, Checkbox, Spinner, TextArea, TextInput } from '@patternfly/react-core'
 import { isDemoMode } from '@/lib/api'
 import {
   createChannel,
@@ -38,7 +38,6 @@ export function RoomPanel() {
   const [error, setError] = useState<string | null>(null)
   const [showSystem, setShowSystem] = useState(false)
   const [newChannel, setNewChannel] = useState('')
-  const [newChannelTeam, setNewChannelTeam] = useState('')
   const [newTeam, setNewTeam] = useState('')
 
   const seatById = useMemo(() => Object.fromEntries(seats.map((s) => [s.id, s])), [seats])
@@ -62,7 +61,7 @@ export function RoomPanel() {
       const ship = ch.find((c) => c.slug === 'ship') || ch[0]
       const cid = ship?.id || null
       setChannelId((prev) => (prev && ch.some((c) => c.id === prev) ? prev : cid))
-      const useId = (channelId && ch.some((c) => c.id === channelId) ? channelId : cid)
+      const useId = channelId && ch.some((c) => c.id === channelId) ? channelId : cid
       if (useId) {
         const msgs = await listMessages(projectId, useId)
         setMessages(msgs)
@@ -104,11 +103,7 @@ export function RoomPanel() {
     return <div className="room-empty">Open a project to use the room.</div>
   }
   if (isDemoMode()) {
-    return (
-      <div className="room-empty">
-        Room needs a live project. Create or open a project (not demo mode).
-      </div>
-    )
+    return <div className="room-empty">Room needs a live project. Create or open a project.</div>
   }
   if (loading) {
     return (
@@ -153,23 +148,13 @@ export function RoomPanel() {
             </Button>
           </div>
         ))}
-        <div className="chart-add chart-add--stack">
+        <div className="room-rail__add">
           <TextInput
             value={newChannel}
             onChange={(_e, v) => setNewChannel(v)}
             aria-label="New channel name"
-            placeholder="new channel"
+            placeholder="New channel"
           />
-          <FormSelect
-            value={newChannelTeam}
-            onChange={(_e, v) => setNewChannelTeam(v)}
-            aria-label="Channel team"
-          >
-            <FormSelectOption value="" label="No team" />
-            {teams.map((t) => (
-              <FormSelectOption key={t.id} value={t.id} label={`@${t.mention}`} />
-            ))}
-          </FormSelect>
           <Button
             size="sm"
             onClick={() =>
@@ -177,11 +162,7 @@ export function RoomPanel() {
                 const slug = slugify(newChannel)
                 if (!slug) return
                 try {
-                  await createChannel(projectId, {
-                    name: newChannel,
-                    slug,
-                    team_id: newChannelTeam || null,
-                  })
+                  await createChannel(projectId, { name: newChannel, slug })
                   setNewChannel('')
                   await refresh()
                 } catch (e) {
@@ -190,43 +171,42 @@ export function RoomPanel() {
               })()
             }
           >
-            Add channel
+            Add
           </Button>
         </div>
 
-        <div className="room-rail__title" style={{ marginTop: 16 }}>
-          Teams
+        <div className="room-rail__title">Teams</div>
+        <div className="room-mentions">
+          {teams.map((t) => (
+            <span key={t.id} className="chart-team-chip">
+              <button type="button" className="chart-chip" onClick={() => insertMention(t.mention)}>
+                @{t.mention}
+              </button>
+              <button
+                type="button"
+                aria-label={`Remove @${t.mention}`}
+                onClick={() =>
+                  void (async () => {
+                    try {
+                      await deleteTeam(projectId, t.id)
+                      await refresh()
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : 'Remove team failed')
+                    }
+                  })()
+                }
+              >
+                ×
+              </button>
+            </span>
+          ))}
         </div>
-        {teams.map((t) => (
-          <div key={t.id} className="room-ch-row">
-            <button type="button" className="room-ch" onClick={() => insertMention(t.mention)}>
-              @{t.mention}
-            </button>
-            <Button
-              size="sm"
-              variant="plain"
-              aria-label={`Remove @${t.mention}`}
-              onClick={() =>
-                void (async () => {
-                  try {
-                    await deleteTeam(projectId, t.id)
-                    await refresh()
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : 'Remove team failed')
-                  }
-                })()
-              }
-            >
-              ×
-            </Button>
-          </div>
-        ))}
-        <div className="chart-add chart-add--stack">
+        <div className="room-rail__add">
           <TextInput
             value={newTeam}
             onChange={(_e, v) => setNewTeam(v)}
             aria-label="New team name"
-            placeholder="new team"
+            placeholder="New team"
           />
           <Button
             size="sm"
@@ -244,7 +224,7 @@ export function RoomPanel() {
               })()
             }
           >
-            Add team
+            Add
           </Button>
         </div>
         <Checkbox
@@ -264,9 +244,7 @@ export function RoomPanel() {
         {run ? <RunCard run={run} /> : null}
         <div className="room-msgs">
           {messages.length === 0 ? (
-            <p className="room-hint">
-              Speak in #ship. Bots pick up the work and hand it along the path.
-            </p>
+            <p className="room-hint">Speak in the channel. Bots pick up the work and hand it along.</p>
           ) : (
             messages.map((m) => (
               <article key={m.id} className={`room-msg room-msg--${m.kind}`}>
@@ -282,30 +260,27 @@ export function RoomPanel() {
             ))
           )}
         </div>
-        <div className="room-mentions">
-          {teams.map((t) => (
-            <button key={t.id} type="button" className="chart-chip" onClick={() => insertMention(t.mention)}>
-              @{t.mention}
-            </button>
-          ))}
-          {seats
-            .filter((s) => s.kind === 'bot')
-            .map((s) => (
-              <button key={s.id} type="button" className="chart-chip" onClick={() => insertMention(s.slug)}>
-                @{s.slug}
+        <div className="room-composer">
+          <div className="room-mentions">
+            {teams.map((t) => (
+              <button key={t.id} type="button" className="chart-chip" onClick={() => insertMention(t.mention)}>
+                @{t.mention}
               </button>
             ))}
-        </div>
-        <div className="room-composer">
-          <TextArea
-            value={draft}
-            onChange={(_e, v) => setDraft(v)}
-            aria-label="Message"
-            rows={3}
-          />
-          <Button variant="primary" onClick={() => void send()} isDisabled={sending || !draft.trim()}>
-            Send
-          </Button>
+            {seats
+              .filter((s) => s.kind === 'bot')
+              .map((s) => (
+                <button key={s.id} type="button" className="chart-chip" onClick={() => insertMention(s.slug)}>
+                  @{s.slug}
+                </button>
+              ))}
+          </div>
+          <div className="room-composer__row">
+            <TextArea value={draft} onChange={(_e, v) => setDraft(v)} aria-label="Message" rows={3} />
+            <Button variant="primary" onClick={() => void send()} isDisabled={sending || !draft.trim()}>
+              Send
+            </Button>
+          </div>
         </div>
       </section>
 
@@ -315,7 +290,7 @@ export function RoomPanel() {
           <button
             key={s.id}
             type="button"
-            className={`room-seat${s.kind === 'bot' ? ' is-bot' : ''}${s.paused ? ' is-paused' : ''}`}
+            className={`room-seat${s.paused ? ' is-paused' : ''}`}
             onClick={() => {
               if (s.kind === 'bot') openPanelType('terminal')
             }}
@@ -334,7 +309,7 @@ function RunCard({ run }: { run: OrgRun }) {
   return (
     <div className="run-card" aria-label="Run card">
       <div className="run-card__title">
-        Pipeline · {run.title.slice(0, 48)} · {run.status}
+        {run.title.slice(0, 48)} ({run.status})
       </div>
       <ol className="run-card__steps">
         {run.nodes.map((n) => (

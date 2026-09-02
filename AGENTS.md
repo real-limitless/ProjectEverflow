@@ -108,6 +108,7 @@ For anything beyond this sketch, **query the graph** — do not invent connectio
 - Match existing style in the package you edit; prefer minimal, focused diffs.
 - Platform API: FastAPI + Alembic migrations under `everflow-platform-api/alembic/versions/`.
 - UI: React + TypeScript; panel/shell structure under `everflow-platform-ui/src/components/`.
+- UI visual work: read `.cursor/skills/frontend-design/SKILL.md` first (same text in `.claude/skills/frontend-design/`). Keep Everflow / PatternFly chrome; do not invent a second brand.
 - Tests live next to each package (`tests/`). Run the package’s usual test command when you change behavior.
 - Do not commit secrets (`.env`, tokens, keys). Follow `.env.example` for required vars.
 - Do not create commits or PRs unless the user asks.

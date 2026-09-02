@@ -1,38 +1,4 @@
-/* Room · Chart · triple mode — PatternFly tokens, Everflow chrome */
-
-.triple-mode {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-inline: 0.75rem;
-  padding: 3px;
-  border: 1px solid var(--pf-t--global--border--color--default);
-  border-radius: 999px;
-  background: var(--pf-t--global--background--color--secondary--default);
-}
-
-.triple-mode__btn {
-  border: 0;
-  background: transparent;
-  color: var(--pf-t--global--text--color--subtle);
-  font: inherit;
-  font-size: 0.8rem;
-  font-weight: 600;
-  padding: 0.25rem 0.7rem;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.triple-mode__btn.is-active {
-  background: #e8a317;
-  color: #0b0d10;
-}
-
-.triple-mode__hint {
-  font-size: 0.65rem;
-  color: var(--pf-t--global--text--color--subtle);
-  padding-inline: 0.4rem 0.55rem;
-}
+/* Room and Chart — PatternFly tokens, Everflow gold only for selected / live path / Send */
 
 .room-layout,
 .chart-layout {
@@ -46,12 +12,12 @@
 .room-rail,
 .room-roster,
 .chart-inspector {
-  width: 18.5rem;
+  width: 15.5rem;
   flex-shrink: 0;
   border-inline-end: 1px solid var(--pf-t--global--border--color--default);
   background: var(--pf-t--global--background--color--secondary--default);
   overflow: auto;
-  padding: 0.75rem;
+  padding: 0.85rem 0.75rem;
 }
 
 .room-roster,
@@ -61,16 +27,14 @@
 }
 
 .chart-inspector {
-  width: 20rem;
+  width: 22rem;
 }
 
 .room-rail__title {
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 0.8rem;
+  font-weight: 600;
   color: var(--pf-t--global--text--color--subtle);
-  margin-bottom: 0.4rem;
+  margin: 0 0 0.45rem;
 }
 
 .room-ch,
@@ -85,25 +49,19 @@
   color: inherit;
   font: inherit;
   font-size: 0.85rem;
-  padding: 0.35rem 0.45rem;
+  padding: 0.4rem 0.5rem;
   border-radius: 6px;
   cursor: pointer;
 }
 
-.room-ch.is-active,
+.room-ch.is-active {
+  background: var(--pf-t--global--background--color--primary--default);
+  box-shadow: inset 2px 0 0 #e8a317;
+}
+
 .room-seat:hover,
 .room-ch:hover {
   background: var(--pf-t--global--background--color--primary--default);
-}
-
-.room-ch--static {
-  cursor: default;
-  opacity: 0.8;
-}
-
-.room-seat.is-bot {
-  border: 1px dashed #e8a31766;
-  margin-bottom: 0.25rem;
 }
 
 .room-seat.is-paused {
@@ -147,11 +105,60 @@
   font-size: 1.05rem;
 }
 
+.chart-layout.is-embedded .chart-head h2 {
+  display: none;
+}
+
 .room-head__meta,
 .chart-head p {
   margin: 0.2rem 0 0;
   color: var(--pf-t--global--text--color--subtle);
   font-size: 0.8rem;
+}
+
+.chart-head__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.55rem;
+}
+
+.chart-head__teams {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.55rem;
+}
+
+.chart-team-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.2rem 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.chart-team-chip button {
+  border: 0;
+  background: transparent;
+  color: var(--pf-t--global--text--color--subtle);
+  cursor: pointer;
+  padding: 0 0.25rem;
+  font: inherit;
+}
+
+.chart-team-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.chart-team-add input {
+  width: 7.5rem;
 }
 
 .room-msgs {
@@ -181,9 +188,16 @@
 
 .room-composer {
   display: flex;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.45rem;
   padding: 0.75rem;
   border-top: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.room-composer__row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
 }
 
 .room-composer textarea {
@@ -204,7 +218,7 @@
   margin: 0.75rem 1rem 0;
   padding: 0.75rem;
   border: 1px solid var(--pf-t--global--border--color--default);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--pf-t--global--background--color--secondary--default);
 }
 
@@ -228,13 +242,12 @@
   flex-direction: column;
   gap: 0.1rem;
   padding: 0.35rem 0.55rem;
-  border-radius: 999px;
+  border-radius: 6px;
   border: 1px solid var(--pf-t--global--border--color--default);
   font-size: 0.72rem;
 }
 
-.run-step--running,
-.run-step--done {
+.run-step--running {
   border-color: #e8a317;
 }
 
@@ -247,26 +260,15 @@
   border-color: #ff4d6d;
 }
 
-.chart-head__actions {
-  display: flex;
-  gap: 0.4rem;
-  margin-top: 0.5rem;
-}
-
-.chart-tree,
 .org-tree {
   display: flex;
-  flex-wrap: wrap;
   justify-content: center;
   align-items: flex-start;
-  gap: 1.5rem;
-  padding: 1.25rem 1rem 1.5rem;
+  gap: 2rem;
+  flex: 1;
+  min-height: 0;
+  padding: 1.5rem 1rem 2rem;
   overflow: auto;
-}
-
-.org-tree:has(> .org-branch:only-child) {
-  flex-direction: column;
-  align-items: center;
 }
 
 .org-branch {
@@ -275,73 +277,189 @@
   align-items: center;
 }
 
+.org-node {
+  position: relative;
+  z-index: 1;
+}
+
+.org-node.is-parent::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -1.15rem;
+  width: 1px;
+  height: 1.15rem;
+  background: var(--pf-t--global--border--color--default);
+}
+
 .org-kids {
   display: flex;
   justify-content: center;
-  flex-wrap: wrap;
-  gap: 1.25rem;
-  margin-top: 1.1rem;
-  padding-top: 1.1rem;
-  border-top: 2px solid var(--pf-t--global--border--color--default);
+  align-items: flex-start;
+  padding-top: 1.15rem;
 }
 
-.chart-add {
+.org-kid {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  padding: 0.75rem 1rem;
-  align-items: center;
-}
-
-.chart-add--inline,
-.chart-add--stack {
-  padding: 0.4rem 0;
-}
-
-.chart-add--stack {
   flex-direction: column;
-  align-items: stretch;
-}
-
-.chart-teams {
-  padding: 0 1rem 1rem;
-}
-
-.chart-teams__list {
-  list-style: none;
-  margin: 0 0 0.5rem;
-  padding: 0;
-}
-
-.chart-teams__list li {
-  display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
+  padding: 1.15rem 0.65rem 0;
+}
+
+.org-kid::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 1.15rem;
+  background: var(--pf-t--global--border--color--default);
+}
+
+.org-kid::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  height: 1px;
+  background: var(--pf-t--global--border--color--default);
+  width: 100%;
+}
+
+.org-kid:first-child::after {
+  left: 50%;
+  width: 50%;
+}
+
+.org-kid:last-child::after {
+  left: auto;
+  right: 50%;
+  width: 50%;
+}
+
+.org-kid:only-child::after {
+  display: none;
+}
+
+.seat-card {
+  width: 8.75rem;
+  text-align: start;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--secondary--default);
+  color: inherit;
+  cursor: pointer;
+}
+
+.seat-card:hover {
+  border-color: var(--pf-t--global--text--color--subtle);
+}
+
+.seat-card:focus-visible {
+  outline: 2px solid #e8a317;
+  outline-offset: 2px;
+}
+
+.seat-card.is-lit,
+.seat-card.is-selected {
+  border-color: #e8a317;
+}
+
+.seat-card.is-selected {
+  box-shadow: 0 0 0 1px #e8a317;
+}
+
+.seat-card__name {
+  display: block;
+  font-weight: 600;
   font-size: 0.85rem;
+}
+
+.seat-card__role,
+.seat-card__team {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.chart-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.chart-add-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .chart-field {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  margin: 0.55rem 0;
-  font-size: 0.75rem;
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.chart-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0 0 0.9rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.chart-group:last-of-type {
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.chart-group h4 {
+  margin: 0;
+  font-size: 0.8rem;
   font-weight: 600;
 }
 
 .chart-perm {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.4rem;
-  font-size: 0.72rem;
-  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 500;
 }
 
-.chart-chip.is-on {
+.chart-seg {
+  display: inline-flex;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.chart-seg button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.68rem;
+  padding: 0.15rem 0.4rem;
+  cursor: pointer;
+}
+
+.chart-seg button + button {
+  border-inline-start: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.chart-seg button.is-on {
   background: #e8a317;
   color: #0b0d10;
-  border-color: #e8a317;
 }
 
 .room-ch-row {
@@ -353,101 +471,69 @@
   flex: 1;
 }
 
+.room-rail__add {
+  display: flex;
+  gap: 0.3rem;
+  margin: 0.4rem 0 1rem;
+}
+
+.room-rail__add input {
+  flex: 1;
+  min-width: 0;
+}
+
 .room-mentions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-  padding: 0 0.75rem;
-}
-
-.seat-card {
-  width: 9.5rem;
-  text-align: start;
-  padding: 0.65rem 0.7rem;
-  border-radius: 12px;
-  border: 1px solid var(--pf-t--global--border--color--default);
-  background: var(--pf-t--global--background--color--secondary--default);
-  color: inherit;
-  cursor: pointer;
-}
-
-.seat-card.is-bot {
-  border-style: dashed;
-  border-color: #e8a317;
-}
-
-.seat-card.is-human {
-  border-style: solid;
-}
-
-.seat-card.is-lit {
-  box-shadow: 0 0 0 2px #e8a31788;
-}
-
-.seat-card.is-selected {
-  outline: 2px solid #7eb6ff;
-}
-
-.seat-card__name {
-  display: block;
-  font-weight: 700;
-  font-size: 0.85rem;
-}
-
-.seat-card__role,
-.seat-card__reports {
-  display: block;
-  font-size: 0.7rem;
-  color: var(--pf-t--global--text--color--subtle);
-}
-
-.chart-inspector h3 {
-  margin: 0 0 0.25rem;
-}
-
-.chart-inspector__meta {
-  font-size: 0.75rem;
-  color: var(--pf-t--global--text--color--subtle);
 }
 
 .chart-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
-  margin: 0.5rem 0;
 }
 
 .chart-chip {
-  font-size: 0.65rem;
-  padding: 0.1rem 0.4rem;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.45rem;
   border-radius: 999px;
   border: 1px solid var(--pf-t--global--border--color--default);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
-.chart-dl {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.2rem 0.5rem;
+.chart-chip.is-on {
+  background: #e8a317;
+  color: #0b0d10;
+  border-color: #e8a317;
+}
+
+.chart-inspector h3 {
+  margin: 0 0 0.15rem;
+  font-size: 1.05rem;
+}
+
+.chart-inspector__meta {
   font-size: 0.75rem;
-}
-
-.chart-dl dt {
   color: var(--pf-t--global--text--color--subtle);
+  margin: 0 0 0.85rem;
 }
 
-.chart-inspector__btns,
-.chart-hire {
+.chart-inspector__empty {
+  color: var(--pf-t--global--text--color--subtle);
+  font-size: 0.85rem;
+}
+
+.chart-inspector__btns {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 0.4rem;
   margin-top: 0.75rem;
 }
 
-.chart-reparent {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.75rem;
+.chart-inspector__remove {
   margin-top: 0.75rem;
 }
 
@@ -460,9 +546,61 @@
   background: var(--pf-t--global--background--color--secondary--default);
 }
 
+.overview-chart {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.overview-chart__intro {
+  padding: 0 0 0.75rem;
+}
+
+.overview-chart__intro h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.overview-chart__intro p {
+  margin: 0.35rem 0 0;
+  max-width: 42rem;
+  color: var(--pf-t--global--text--color--subtle);
+  font-size: 0.9rem;
+}
+
 .overview-chart__host {
-  height: min(80vh, 720px);
+  flex: 1;
+  min-height: 0;
   border: 1px solid var(--pf-t--global--border--color--default);
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  .room-layout,
+  .chart-layout {
+    flex-wrap: wrap;
+  }
+
+  .room-rail,
+  .room-roster,
+  .chart-inspector {
+    width: 100%;
+    max-height: 14rem;
+  }
+
+  .org-tree {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seat-card,
+  .room-ch,
+  .chart-chip,
+  .chart-seg button {
+    transition: none;
+  }
 }
