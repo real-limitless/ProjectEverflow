@@ -49,6 +49,10 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
       SANDBOX_MOCK: ${SANDBOX_MOCK:-false}
+      # auto → microVM when KVM_CREATE_VCPU works; else same guest image via Docker
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-auto}
+      DOCKER_HOST: unix:///var/run/docker.sock
+      CONTAINER_IMAGE_REWRITE: ${CONTAINER_IMAGE_REWRITE:-registry:5000=127.0.0.1:5000}
       # Guest image for project microVMs — msb uses compose DNS (registry:5000)
       DEFAULT_IMAGE: ${SANDBOX_DEFAULT_IMAGE:-registry:5000/everflow/everflow-sandbox-guest:latest}
       VOLUME_STRATEGY: ${VOLUME_STRATEGY:-auto}
@@ -59,6 +63,9 @@ services:
     volumes:
       - msb_data:/root/.microsandbox
       - project_workspaces:/workspaces
+      # Sibling-container fallback when nested KVM cannot create a vCPU
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker:ro
       # Hot reload: agent source from the host (:Z for SELinux/Podman)
       - ./everflow-sandbox-agent/app:/app/app:Z
       # Sync MCP package into guest on OpenCode ensure (stale guest images keep old tools otherwise)

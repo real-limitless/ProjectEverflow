@@ -1,5 +1,4 @@
 import type { ComponentType, SVGProps } from 'react'
-import TachometerAltIcon from '@patternfly/react-icons/dist/esm/icons/tachometer-alt-icon'
 import ChartLineIcon from '@patternfly/react-icons/dist/esm/icons/chart-line-icon'
 import CommentsIcon from '@patternfly/react-icons/dist/esm/icons/comments-icon'
 import CubeIcon from '@patternfly/react-icons/dist/esm/icons/cube-icon'
@@ -14,7 +13,6 @@ export interface NavItemDef {
 }
 
 export const NAV_ITEMS: NavItemDef[] = [
-  { id: 'overview', label: 'Org chart', path: '/overview', icon: TachometerAltIcon },
   { id: 'usage', label: 'Usage', path: '/usage', icon: ChartLineIcon },
   {
     id: 'playground',

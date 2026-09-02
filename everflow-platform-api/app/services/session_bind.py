@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.data.starter_roster import DEFAULT_CONSTITUTION_MD, starter_agent_pack
+from app.data.starter_roster import DEFAULT_CONSTITUTION_MD, opencode_agent_payload, starter_agent_pack
 from app.models.org import Seat
 from app.models.project import Project
 from app.services.sandbox_agent_client import SandboxAgentClient, SandboxAgentError
@@ -41,6 +41,7 @@ async def attach_seat_session(
     seat.opencode_session_id = _synthetic_session_id(seat)
     seat.status = "idle"
     await _maybe_write_workspace_law(project, seat, settings)
+    await sync_seat_to_harness(project, seat, settings)
     await session.commit()
     await session.refresh(seat)
     return seat
@@ -120,6 +121,38 @@ async def _write_sandbox_file(
         cmd="sh",
         args=["-c", f"cat > {path} << 'EVERFLOW_EOF'\n{body}EVERFLOW_EOF"],
     )
+
+
+async def sync_seat_to_harness(project: Project, seat: Seat, settings: Settings) -> None:
+    """Best-effort: write this seat's prompt/tools/models into the OpenCode pack."""
+    if seat.kind != "bot" or not seat.agent_slug:
+        return
+    if project.sandbox_status != "running" or not project.sandbox_name:
+        return
+    spec = {
+        "kind": seat.kind,
+        "agent_slug": seat.agent_slug,
+        "description": seat.description or "",
+        "prompt": seat.prompt or "",
+        "permission": dict(seat.permission or {}),
+        "role": seat.role,
+    }
+    payload = opencode_agent_payload(spec)
+    if not payload:
+        return
+    if seat.preferred_models:
+        payload["model"] = seat.preferred_models[0]
+        payload["everflow_models_preferred"] = list(seat.preferred_models)
+    try:
+        client = SandboxAgentClient(settings)
+        await client.put_opencode_harness(
+            project.sandbox_name,
+            {"agents": [payload]},
+        )
+    except SandboxAgentError as exc:
+        logger.info("harness sync skipped project=%s seat=%s: %s", project.id, seat.slug, exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("harness sync failed project=%s seat=%s: %s", project.id, seat.slug, exc)
 
 
 def roster_pack_for_harness() -> list[dict]:

@@ -33,6 +33,9 @@ export interface Seat {
   budget_tokens: number
   permission: Record<string, string>
   tools: string[]
+  prompt: string
+  skills: string[]
+  preferred_models: string[]
   status: string
 }
 

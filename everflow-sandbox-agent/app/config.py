@@ -17,8 +17,17 @@ class Settings(BaseSettings):
     # development|staging|production|test — production/staging refuse default tokens and mock.
     environment: str = "development"
     sandbox_agent_token: str = "change-me"
-    # Explicit true → mock. False/None → real microsandbox (fail if KVM/SDK missing).
+    # Explicit true → mock. False/None → real guest (microVM or container fallback).
     sandbox_mock: bool | None = False
+    # auto | microsandbox | container — auto uses microVMs when KVM_CREATE_VCPU works,
+    # otherwise boots the same guest image as a Docker container (nested Cloud Agent).
+    sandbox_runtime: str = "auto"
+    docker_bin: str = "docker"
+    docker_host: str | None = None
+    # Host-docker image rewrite (compose DNS → dockerd). Comma-separated src=dst.
+    container_image_rewrite: str = "registry:5000=127.0.0.1:5000"
+    container_network: str | None = None
+    workspace_docker_volume: str | None = None
     # Guest microVM image (msb pulls via compose DNS into local registry)
     default_image: str = "registry:5000/everflow/everflow-sandbox-guest:latest"
     default_cpus: int = 2

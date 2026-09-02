@@ -592,7 +592,7 @@ export function AgentsPanel() {
               <>
                 <div className="section-label">Org seats</div>
                 <p className="lc-meta" style={{ marginTop: 0, marginBottom: 12 }}>
-                  Starter roster bound to OpenCode agents. Open Chart to hire, pause, fire, or attach.
+                  Starter roster bound to OpenCode agents. Open Chart to add, remove, pause, or attach.
                 </p>
                 {seats
                   .filter((s) => !s.fired)

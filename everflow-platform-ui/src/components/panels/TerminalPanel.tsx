@@ -40,6 +40,8 @@ export function TerminalPanel() {
   const catalogVersion = usePlaygroundStore((s) => s.catalogVersion)
   const prefill = usePlaygroundStore((s) => s.terminalPrefill)
   const clearTerminalPrefill = usePlaygroundStore((s) => s.clearTerminalPrefill)
+  const sessionRequest = usePlaygroundStore((s) => s.terminalSessionRequest)
+  const clearTerminalSessionRequest = usePlaygroundStore((s) => s.clearTerminalSessionRequest)
   const patchProjectSandbox = usePlaygroundStore((s) => s.patchProjectSandbox)
   const p = getProject(currentProjectId)
   void catalogVersion
@@ -47,7 +49,7 @@ export function TerminalPanel() {
   const [sessions, setSessions] = useState<SessionMeta[]>(() => [newSessionMeta(0)])
   const [activeId, setActiveId] = useState(() => sessions[0]?.id ?? '')
   const [recreating, setRecreating] = useState(false)
-  const [wsStatus, setWsStatus] = useState<string>('')
+  const [, setWsStatus] = useState<string>('')
   const handlesRef = useRef<Record<string, InteractiveTerminalHandle | SandboxXtermHandle | null>>(
     {},
   )
@@ -119,6 +121,25 @@ export function TerminalPanel() {
     clearTerminalPrefill()
   }, [prefill, active, clearTerminalPrefill])
 
+  useEffect(() => {
+    if (!sessionRequest) return
+    setSessions((prev) => {
+      const existing = prev.find((s) => s.name === sessionRequest.name)
+      if (existing) {
+        setActiveId(existing.id)
+        return prev
+      }
+      const next: SessionMeta = {
+        id: `sh-${Date.now()}-adv-${Math.random().toString(36).slice(2, 5)}`,
+        name: sessionRequest.name,
+        cmd: sessionRequest.cmd,
+      }
+      setActiveId(next.id)
+      return [...prev, next]
+    })
+    clearTerminalSessionRequest()
+  }, [sessionRequest, clearTerminalSessionRequest])
+
   const doRecreate = async () => {
     if (!p?.fromApi || !currentProjectId || recreating) return
     setRecreating(true)
@@ -181,20 +202,13 @@ export function TerminalPanel() {
   return (
     <div className="term-wrap term-wrap--xterm">
       <div className="term-toolbar">
-        <span>
-          sandbox · {p?.name || '—'}
-          {p?.fromApi ? ` · ${p.sandboxName || 'unprovisioned'}` : ''} ·{' '}
-          {sessions.length} session{sessions.length === 1 ? '' : 's'}
-          {wsStatus ? ` · ${wsStatus}` : ''}
-        </span>
+        <span>{active?.name || 'Shell'}</span>
         <Button variant="link" size="sm" onClick={clearActive}>
           Clear
         </Button>
-        {useInteractive && sandboxReady ? (
-          <Button variant="link" size="sm" onClick={() => addSession('opencode')}>
-            + opencode
-          </Button>
-        ) : null}
+        <Button variant="link" size="sm" onClick={() => addSession()} aria-label="New shell">
+          New
+        </Button>
         {useInteractive && sandboxReady ? (
           <Button
             variant="link"

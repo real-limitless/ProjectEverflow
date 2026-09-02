@@ -74,6 +74,24 @@ async def create_channel(
     return ch
 
 
+@router.delete(
+    "/projects/{project_id}/channels/{channel_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_channel(
+    channel_id: UUID,
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_async_session),
+) -> None:
+    principal.require_scope("room:rw")
+    ch = await session.get(Channel, channel_id)
+    if ch is None or ch.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    await session.delete(ch)
+    await session.commit()
+
+
 @router.get(
     "/projects/{project_id}/channels/{channel_id}/messages",
     response_model=list[ChannelMessageRead],

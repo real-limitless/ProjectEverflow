@@ -874,8 +874,6 @@ async def opencode_ensure(
         # tools). Host-path ensure is only for MockSandboxBackend / pure host workspaces.
         # Previously a bind-mounted host workspace caused ensure_host → no opencode on
         # the agent image → silent fake server with demo models (OpenRouter Auto, etc.).
-        from app.msb import MicrosandboxBackend
-
         host_ws_path = (
             Path(workspace)
             if workspace
@@ -884,7 +882,7 @@ async def opencode_ensure(
             else None
         )
         use_host_opencode = (
-            not isinstance(backend, MicrosandboxBackend)
+            not getattr(backend, "guest_opencode", False)
             and host_ws_path is not None
             and host_ws_path.is_dir()
         )

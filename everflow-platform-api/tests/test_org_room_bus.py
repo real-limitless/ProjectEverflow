@@ -97,7 +97,11 @@ async def test_seat_attach_pause_fire_reparent(
 ) -> None:
     pid = await _project(client, auth_headers, "bind")
     await client.post(f"/api/v1/projects/{pid}/org/ensure", headers=auth_headers)
-    seats = (await client.get(f"/api/v1/projects/{pid}/seats", headers=auth_headers)).json()
+    seats = (
+        await client.get(
+            f"/api/v1/projects/{pid}/seats?include_system=true", headers=auth_headers
+        )
+    ).json()
     floor = next(s for s in seats if s["slug"] == "floor")
     product = next(s for s in seats if s["slug"] == "product")
     you = next(s for s in seats if s["slug"] == "you")
@@ -319,3 +323,132 @@ async def test_bus_handoff_and_export(
     assert yaml.status_code == 200
     assert "eng-build" in yaml.text
     assert "reports_to:" in yaml.text
+
+
+@pytest.mark.asyncio
+async def test_chart_hides_conductor_unless_include_system(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    pid = await _project(client, auth_headers, "hide-floor")
+    await client.post(f"/api/v1/projects/{pid}/org/ensure", headers=auth_headers)
+    hidden = await client.get(f"/api/v1/projects/{pid}/chart", headers=auth_headers)
+    assert hidden.status_code == 200
+    slugs = {s["slug"] for s in hidden.json()["seats"]}
+    assert "floor" not in slugs
+    assert "you" in slugs and "product" in slugs
+    shown = await client.get(
+        f"/api/v1/projects/{pid}/chart?include_system=true", headers=auth_headers
+    )
+    assert "floor" in {s["slug"] for s in shown.json()["seats"]}
+    roster = await client.get(f"/api/v1/projects/{pid}/seats", headers=auth_headers)
+    assert "floor" not in {s["slug"] for s in roster.json()}
+
+
+@pytest.mark.asyncio
+async def test_patch_seat_prompt_skills_models(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    pid = await _project(client, auth_headers, "patch-seat")
+    await client.post(f"/api/v1/projects/{pid}/org/ensure", headers=auth_headers)
+    seats = (await client.get(f"/api/v1/projects/{pid}/seats", headers=auth_headers)).json()
+    product = next(s for s in seats if s["slug"] == "product")
+    assert "prompt" in product
+    patch = await client.patch(
+        f"/api/v1/projects/{pid}/seats/{product['id']}",
+        headers=auth_headers,
+        json={
+            "description": "Own the ship sentence.",
+            "prompt": "You are Product. Gate scope.",
+            "skills": ["ship-review"],
+            "preferred_models": ["anthropic/claude-sonnet-4"],
+            "tools": ["read", "webfetch"],
+        },
+    )
+    assert patch.status_code == 200, patch.text
+    body = patch.json()
+    assert body["description"] == "Own the ship sentence."
+    assert "Gate scope" in body["prompt"]
+    assert body["skills"] == ["ship-review"]
+    assert body["preferred_models"] == ["anthropic/claude-sonnet-4"]
+    assert "webfetch" in body["tools"]
+
+
+@pytest.mark.asyncio
+async def test_add_and_remove_seat(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    pid = await _project(client, auth_headers, "add-rm")
+    await client.post(f"/api/v1/projects/{pid}/org/ensure", headers=auth_headers)
+    created = await client.post(
+        f"/api/v1/projects/{pid}/seats",
+        headers=auth_headers,
+        json={"name": "Intern", "slug": "intern", "template": "scout", "kind": "bot"},
+    )
+    assert created.status_code == 201, created.text
+    sid = created.json()["id"]
+    removed = await client.post(
+        f"/api/v1/projects/{pid}/seats/{sid}/fire", headers=auth_headers
+    )
+    assert removed.json()["fired"] is True
+
+
+@pytest.mark.asyncio
+async def test_channel_and_team_create_delete(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    pid = await _project(client, auth_headers, "ch-team")
+    await client.post(f"/api/v1/projects/{pid}/org/ensure", headers=auth_headers)
+    team = await client.post(
+        f"/api/v1/projects/{pid}/teams",
+        headers=auth_headers,
+        json={"name": "QA", "slug": "qa-desk", "mention": "qa-desk", "lane": "line"},
+    )
+    assert team.status_code == 201, team.text
+    tid = team.json()["id"]
+    ch = await client.post(
+        f"/api/v1/projects/{pid}/channels",
+        headers=auth_headers,
+        json={"name": "qa", "slug": "qa", "team_id": tid},
+    )
+    assert ch.status_code == 201, ch.text
+    gone_ch = await client.delete(
+        f"/api/v1/projects/{pid}/channels/{ch.json()['id']}", headers=auth_headers
+    )
+    assert gone_ch.status_code == 204
+    gone_team = await client.delete(
+        f"/api/v1/projects/{pid}/teams/{tid}", headers=auth_headers
+    )
+    assert gone_team.status_code == 204
+    blocked = await client.delete(
+        f"/api/v1/projects/{pid}/teams/"
+        + (
+            await client.get(f"/api/v1/projects/{pid}/teams", headers=auth_headers)
+        ).json()[0]["id"],
+        headers=auth_headers,
+    )
+    # Starter teams still have seats
+    assert blocked.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_patch_reports_to_rejects_cycle(
+    client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    pid = await _project(client, auth_headers, "cycle-seat")
+    await client.post(f"/api/v1/projects/{pid}/org/ensure", headers=auth_headers)
+    seats = (await client.get(f"/api/v1/projects/{pid}/seats", headers=auth_headers)).json()
+    you = next(s for s in seats if s["slug"] == "you")
+    product = next(s for s in seats if s["slug"] == "product")
+    bad = await client.patch(
+        f"/api/v1/projects/{pid}/seats/{you['id']}",
+        headers=auth_headers,
+        json={"reports_to_id": product["id"]},
+    )
+    assert bad.status_code == 400
+    ok = await client.patch(
+        f"/api/v1/projects/{pid}/seats/{product['id']}",
+        headers=auth_headers,
+        json={"reports_to_id": you["id"]},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["reports_to_id"] == you["id"]

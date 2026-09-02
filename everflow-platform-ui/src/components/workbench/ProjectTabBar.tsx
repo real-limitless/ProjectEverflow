@@ -14,11 +14,11 @@ import {
 import CogIcon from '@patternfly/react-icons/dist/esm/icons/cog-icon'
 import PlusIcon from '@patternfly/react-icons/dist/esm/icons/plus-icon'
 import SaveIcon from '@patternfly/react-icons/dist/esm/icons/save-icon'
+import TopologyIcon from '@patternfly/react-icons/dist/esm/icons/topology-icon'
 import { PROJECTS, getProject, isSeedProjectId } from '@/data/projects'
 import { getSandboxStatus, isDemoMode } from '@/lib/api'
 import type { NamedLayoutSnapshot } from '@/lib/namedLayouts'
 import { withEffectiveSandboxStatus } from '@/lib/sandboxReady'
-import { TripleModeToggle } from '@/components/org/TripleModeToggle'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 interface ContextMenuState {
@@ -36,6 +36,7 @@ export function ProjectTabBar() {
   const deleteProject = usePlaygroundStore((s) => s.deleteProject)
   const setOpenProjectModal = usePlaygroundStore((s) => s.setOpenProjectModal)
   const openProjectSettings = usePlaygroundStore((s) => s.openProjectSettings)
+  const openPanelType = usePlaygroundStore((s) => s.openPanelType)
   const patchProjectSandbox = usePlaygroundStore((s) => s.patchProjectSandbox)
   const resetLayout = usePlaygroundStore((s) => s.resetLayout)
   const saveNamedLayout = usePlaygroundStore((s) => s.saveNamedLayout)
@@ -174,8 +175,19 @@ export function ProjectTabBar() {
             )
           })}
         </div>
-        <TripleModeToggle />
         <div className="project-tabs-actions">
+          <Button
+            className="pg-org-chart"
+            variant="secondary"
+            size="sm"
+            aria-label="Org chart"
+            title="Org chart for this project"
+            isDisabled={!currentProjectId}
+            onClick={() => openPanelType('chart')}
+            icon={<TopologyIcon />}
+          >
+            Org chart
+          </Button>
           <Dropdown
             isOpen={layoutOpen}
             onOpenChange={setLayoutOpen}

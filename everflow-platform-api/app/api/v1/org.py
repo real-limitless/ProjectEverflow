@@ -1,10 +1,11 @@
-"""Teams, seats, chart, constitution, hire/pause/fire/attach."""
+"""Teams, seats, chart, constitution, add/pause/remove/attach."""
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +36,7 @@ from app.services.org_graph import (
     hire_defaults,
     list_chart,
     reparent_seat,
+    would_cycle,
 )
 from app.services.session_bind import (
     attach_seat_session,
@@ -44,6 +46,8 @@ from app.services.session_bind import (
     write_constitution_to_sandbox,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["org"])
 
 
@@ -51,7 +55,16 @@ def _seat_read(seat: Seat) -> SeatRead:
     data = SeatRead.model_validate(seat)
     data.permission = dict(seat.permission or {})
     data.tools = [str(t) for t in (seat.tools or [])]
+    data.prompt = seat.prompt or ""
+    data.skills = [str(t) for t in (seat.skills or [])]
+    data.preferred_models = [str(t) for t in (seat.preferred_models or [])]
     return data
+
+
+def _filter_seats(seats: list[Seat], include_system: bool) -> list[Seat]:
+    if include_system:
+        return seats
+    return [s for s in seats if not s.is_conductor]
 
 
 async def _get_seat(session: AsyncSession, project_id: UUID, seat_id: UUID) -> Seat:
@@ -92,21 +105,24 @@ async def ensure_org(
 
 @router.get("/projects/{project_id}/chart", response_model=ChartRead)
 async def get_chart(
+    include_system: bool = Query(default=False),
     project: Project = Depends(get_project_for_principal),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
 ) -> ChartRead:
     principal.require_scope("org:read")
-    teams, seats = await list_chart(session, project)
+    teams, seats = await list_chart(session, project, include_system=include_system)
     if not seats:
         teams, seats, _ = await ensure_starter_company(session, project, owner=principal.user)
+        seats = _filter_seats(seats, include_system)
+    visible = {s.id for s in seats}
     return ChartRead(
         teams=[TeamRead.model_validate(t) for t in teams],
         seats=[_seat_read(s) for s in seats],
         edges=[
             ChartEdge(from_id=s.reports_to_id, to_id=s.id)
             for s in seats
-            if s.reports_to_id
+            if s.reports_to_id and s.reports_to_id in visible
         ],
         constitution_md=project.constitution_md or DEFAULT_CONSTITUTION_MD,
     )
@@ -226,8 +242,36 @@ async def update_team(
     return team
 
 
+@router.delete("/projects/{project_id}/teams/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_team(
+    team_id: UUID,
+    project: Project = Depends(get_project_for_principal),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_async_session),
+) -> None:
+    principal.require_scope("org:rw")
+    team = await session.get(Team, team_id)
+    if team is None or team.project_id != project.id:
+        raise HTTPException(status_code=404, detail="Team not found")
+    assigned = await session.scalar(
+        select(Seat.id).where(
+            Seat.project_id == project.id,
+            Seat.team_id == team_id,
+            Seat.fired.is_(False),
+        ).limit(1)
+    )
+    if assigned is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Remove or reassign seats on this team before deleting it",
+        )
+    await session.delete(team)
+    await session.commit()
+
+
 @router.get("/projects/{project_id}/seats", response_model=list[SeatRead])
 async def list_seats(
+    include_system: bool = Query(default=False),
     project: Project = Depends(get_project_for_principal),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_async_session),
@@ -236,7 +280,8 @@ async def list_seats(
     result = await session.execute(
         select(Seat).where(Seat.project_id == project.id).order_by(Seat.name)
     )
-    return [_seat_read(s) for s in result.scalars().all()]
+    seats = list(result.scalars().all())
+    return [_seat_read(s) for s in _filter_seats(seats, include_system)]
 
 
 @router.post(
@@ -270,6 +315,9 @@ async def create_seat(
         budget_tokens=body.budget_tokens,
         permission=body.permission or defaults.get("permission") or {},
         tools=list(body.tools or defaults.get("tools") or []),
+        prompt=body.prompt or defaults.get("prompt") or "",
+        skills=list(body.skills or defaults.get("skills") or []),
+        preferred_models=list(body.preferred_models or defaults.get("preferred_models") or []),
     )
     session.add(seat)
     await session.commit()
@@ -299,10 +347,32 @@ async def update_seat(
     principal.require_scope("org:rw")
     seat = await _get_seat(session, project.id, seat_id)
     data = body.model_dump(exclude_unset=True)
+    reports_changed = "reports_to_id" in data
+    new_parent = data.pop("reports_to_id", None) if reports_changed else None
     for key, value in data.items():
         setattr(seat, key, value)
+    if reports_changed:
+        result = await session.execute(select(Seat).where(Seat.project_id == project.id))
+        all_seats = list(result.scalars().all())
+        if new_parent is not None:
+            parent = next((s for s in all_seats if s.id == new_parent), None)
+            if parent is None:
+                raise HTTPException(status_code=400, detail="Parent seat not found")
+            if parent.fired:
+                raise HTTPException(status_code=400, detail="Cannot report to a removed seat")
+        if would_cycle(all_seats, seat.id, new_parent):
+            raise HTTPException(
+                status_code=400, detail="Reports-to would create a reporting cycle"
+            )
+        seat.reports_to_id = new_parent
     await session.commit()
     await session.refresh(seat)
+    try:
+        from app.services.session_bind import sync_seat_to_harness
+
+        await sync_seat_to_harness(project, seat, get_settings())
+    except Exception as exc:  # noqa: BLE001
+        logger.info("harness sync after seat patch failed seat=%s: %s", seat.slug, exc)
     return _seat_read(seat)
 
 
