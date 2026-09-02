@@ -53,17 +53,6 @@ export function ChartPanel() {
   const [addReportsTo, setAddReportsTo] = useState('')
   const [teamName, setTeamName] = useState('')
 
-  const selected = chart?.seats.find((s) => s.id === selectedId) || null
-  const byId = useMemo(
-    () => Object.fromEntries((chart?.seats || []).map((s) => [s.id, s])),
-    [chart],
-  )
-  const pathSlugs = new Set(
-    (runs[0]?.nodes || [])
-      .map((n) => chart?.seats.find((s) => s.id === n.seat_id)?.slug)
-      .filter(Boolean) as string[],
-  )
-
   const refresh = useCallback(async () => {
     if (!projectId || isDemoMode()) {
       setLoading(false)
@@ -71,7 +60,8 @@ export function ChartPanel() {
     }
     try {
       const [snap, tm] = await Promise.all([
-        getChart(projectId, { includeSystem: showSystem }),
+        // Always load Floor so hidden conductors can be skipped without flattening the tree.
+        getChart(projectId, { includeSystem: true }),
         listTeams(projectId),
       ])
       setChart(snap)
@@ -82,7 +72,7 @@ export function ChartPanel() {
     } finally {
       setLoading(false)
     }
-  }, [projectId, showSystem])
+  }, [projectId])
 
   useEffect(() => {
     void refresh()
@@ -99,15 +89,49 @@ export function ChartPanel() {
     }
   }
 
-  const roots = useMemo(() => {
+  const visibleSeats = useMemo(() => {
     const seats = chart?.seats || []
-    const ids = new Set(seats.map((s) => s.id))
-    return seats.filter((s) => !s.reports_to_id || !ids.has(s.reports_to_id))
-  }, [chart])
+    if (showSystem) return seats
+    return seats.filter((s) => !s.is_conductor)
+  }, [chart, showSystem])
+
+  const visibleIds = useMemo(() => new Set(visibleSeats.map((s) => s.id)), [visibleSeats])
+
+  const parentOf = useCallback(
+    (seat: Seat): string | null => {
+      const all = Object.fromEntries((chart?.seats || []).map((s) => [s.id, s]))
+      const seen = new Set<string>()
+      let cur = seat.reports_to_id
+      while (cur) {
+        if (seen.has(cur)) return null
+        seen.add(cur)
+        if (visibleIds.has(cur)) return cur
+        cur = all[cur]?.reports_to_id || null
+      }
+      return null
+    },
+    [chart, visibleIds],
+  )
+
+  const roots = useMemo(
+    () => visibleSeats.filter((s) => !parentOf(s)),
+    [visibleSeats, parentOf],
+  )
 
   const childrenOf = useCallback(
-    (id: string) => (chart?.seats || []).filter((s) => s.reports_to_id === id),
+    (id: string) => visibleSeats.filter((s) => parentOf(s) === id),
+    [visibleSeats, parentOf],
+  )
+
+  const selected = visibleSeats.find((s) => s.id === selectedId) || null
+  const byId = useMemo(
+    () => Object.fromEntries((chart?.seats || []).map((s) => [s.id, s])),
     [chart],
+  )
+  const pathSlugs = new Set(
+    (runs[0]?.nodes || [])
+      .map((n) => chart?.seats.find((s) => s.id === n.seat_id)?.slug)
+      .filter(Boolean) as string[],
   )
 
   if (!projectId) return <div className="room-empty">Open a project to use the org chart.</div>
@@ -179,7 +203,7 @@ export function ChartPanel() {
             </FormSelect>
             <FormSelect value={addReportsTo} onChange={(_e, v) => setAddReportsTo(v)} aria-label="Reports to">
               <FormSelectOption value="" label="Reports to (none)" />
-              {(chart?.seats || []).map((s) => (
+              {visibleSeats.map((s) => (
                 <FormSelectOption key={s.id} value={s.id} label={s.name} />
               ))}
             </FormSelect>
@@ -263,7 +287,7 @@ export function ChartPanel() {
         {selected ? (
           <SeatInspector
             seat={selected}
-            seats={chart?.seats || []}
+            seats={visibleSeats}
             teams={teams}
             byId={byId}
             onSave={(body) => act(() => updateSeat(projectId, selected.id, body))}
