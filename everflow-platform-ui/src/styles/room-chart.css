@@ -46,7 +46,7 @@
 .room-rail,
 .room-roster,
 .chart-inspector {
-  width: 13.5rem;
+  width: 18.5rem;
   flex-shrink: 0;
   border-inline-end: 1px solid var(--pf-t--global--border--color--default);
   background: var(--pf-t--global--background--color--secondary--default);
@@ -58,6 +58,10 @@
 .chart-inspector {
   border-inline-end: 0;
   border-inline-start: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.chart-inspector {
+  width: 20rem;
 }
 
 .room-rail__title {
@@ -249,11 +253,105 @@
   margin-top: 0.5rem;
 }
 
-.chart-tree {
+.chart-tree,
+.org-tree {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.6rem;
-  padding: 1rem;
+  justify-content: center;
+  gap: 1.5rem;
+  padding: 1.25rem 1rem 1.5rem;
+  overflow: auto;
+}
+
+.org-branch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.org-kids {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin-top: 1.1rem;
+  padding-top: 1.1rem;
+  border-top: 2px solid var(--pf-t--global--border--color--default);
+}
+
+.chart-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.75rem 1rem;
+  align-items: center;
+}
+
+.chart-add--inline,
+.chart-add--stack {
+  padding: 0.4rem 0;
+}
+
+.chart-add--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.chart-teams {
+  padding: 0 1rem 1rem;
+}
+
+.chart-teams__list {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+}
+
+.chart-teams__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.chart-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.55rem 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.chart-perm {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  margin-top: 0.25rem;
+}
+
+.chart-chip.is-on {
+  background: #e8a317;
+  color: #0b0d10;
+  border-color: #e8a317;
+}
+
+.room-ch-row {
+  display: flex;
+  align-items: center;
+}
+
+.room-ch-row .room-ch {
+  flex: 1;
+}
+
+.room-mentions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0 0.75rem;
 }
 
 .seat-card {

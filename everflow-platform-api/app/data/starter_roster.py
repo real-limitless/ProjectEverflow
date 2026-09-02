@@ -100,7 +100,7 @@ STARTER_SEATS: list[dict[str, Any]] = [
         "permission": {},
         "tools": [],
         "prompt": "",
-        "description": "Approve deploy/merge. Fire any seat.",
+        "description": "Approve deploy/merge. Remove any seat.",
     },
     {
         "slug": "floor",

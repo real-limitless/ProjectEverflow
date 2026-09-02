@@ -79,6 +79,9 @@ class Seat(Base):
     budget_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     permission: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     tools: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    skills: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    preferred_models: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="idle")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

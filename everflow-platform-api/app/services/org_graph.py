@@ -67,6 +67,13 @@ async def ensure_starter_company(
     created: list[Seat] = []
     for spec in STARTER_SEATS:
         if spec["slug"] in seats:
+            existing = seats[spec["slug"]]
+            if not (existing.prompt or "").strip() and spec.get("prompt"):
+                existing.prompt = spec["prompt"]
+            if not existing.skills and spec.get("skills"):
+                existing.skills = list(spec["skills"])
+            if not existing.preferred_models and spec.get("preferred_models"):
+                existing.preferred_models = list(spec["preferred_models"])
             continue
         team = teams.get(spec["team"]) if spec.get("team") else None
         seat = Seat(
@@ -83,6 +90,9 @@ async def ensure_starter_company(
             worktree_path=spec.get("worktree_path"),
             permission=dict(spec.get("permission") or {}),
             tools=list(spec.get("tools") or []),
+            prompt=spec.get("prompt") or "",
+            skills=list(spec.get("skills") or []),
+            preferred_models=list(spec.get("preferred_models") or []),
             owner_user_id=owner.id if owner and spec["kind"] == "human" else (
                 owner.id if owner else None
             ),
@@ -196,7 +206,12 @@ async def walk_reports_to_human(
     return None
 
 
-async def list_chart(session: AsyncSession, project: Project) -> tuple[list[Team], list[Seat]]:
+async def list_chart(
+    session: AsyncSession,
+    project: Project,
+    *,
+    include_system: bool = True,
+) -> tuple[list[Team], list[Seat]]:
     teams = list(
         (
             await session.execute(
@@ -204,13 +219,10 @@ async def list_chart(session: AsyncSession, project: Project) -> tuple[list[Team
             )
         ).scalars().all()
     )
-    seats = list(
-        (
-            await session.execute(
-                select(Seat).where(Seat.project_id == project.id, Seat.fired.is_(False)).order_by(Seat.lane, Seat.name)
-            )
-        ).scalars().all()
-    )
+    q = select(Seat).where(Seat.project_id == project.id, Seat.fired.is_(False))
+    if not include_system:
+        q = q.where(Seat.is_conductor.is_(False))
+    seats = list((await session.execute(q.order_by(Seat.lane, Seat.name))).scalars().all())
     return teams, seats
 
 
@@ -269,5 +281,8 @@ def hire_defaults(template: str) -> dict:
             "worktree_path": None,
             "permission": {"read": "allow", "edit": "deny", "bash": "deny"},
             "tools": ["read"],
+            "prompt": "",
+            "skills": [],
+            "preferred_models": [],
             "description": "",
         }

@@ -1,23 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Spinner, TextArea } from '@patternfly/react-core'
+import { Button, Checkbox, FormSelect, FormSelectOption, Spinner, TextArea, TextInput } from '@patternfly/react-core'
 import { isDemoMode } from '@/lib/api'
 import {
+  createChannel,
+  createTeam,
+  deleteChannel,
+  deleteTeam,
   getRun,
   listChannels,
   listMessages,
   listSeats,
+  listTeams,
   postMessage,
 } from '@/lib/orgApi'
 import { usePlaygroundStore } from '@/store/playgroundStore'
-import type { Channel, ChannelMessage, OrgRun, Seat } from '@/types/org'
+import type { Channel, ChannelMessage, OrgRun, Seat, Team } from '@/types/org'
 
 const DEMO_SENTENCE =
   'Talk to Product and the Eng team. When they complete, have DevOps deploy to staging and QA test everything.'
 
+function slugify(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
 export function RoomPanel() {
   const projectId = usePlaygroundStore((s) => s.currentProjectId)
-  const setSurfaceMode = usePlaygroundStore((s) => s.setSurfaceMode)
+  const openPanelType = usePlaygroundStore((s) => s.openPanelType)
   const [channels, setChannels] = useState<Channel[]>([])
+  const [teams, setTeams] = useState<Team[]>([])
   const [channelId, setChannelId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChannelMessage[]>([])
   const [seats, setSeats] = useState<Seat[]>([])
@@ -26,6 +36,10 @@ export function RoomPanel() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showSystem, setShowSystem] = useState(false)
+  const [newChannel, setNewChannel] = useState('')
+  const [newChannelTeam, setNewChannelTeam] = useState('')
+  const [newTeam, setNewTeam] = useState('')
 
   const seatById = useMemo(() => Object.fromEntries(seats.map((s) => [s.id, s])), [seats])
   const active = channels.find((c) => c.id === channelId)
@@ -37,13 +51,18 @@ export function RoomPanel() {
     }
     setError(null)
     try {
-      const [ch, st] = await Promise.all([listChannels(projectId), listSeats(projectId)])
+      const [ch, st, tm] = await Promise.all([
+        listChannels(projectId),
+        listSeats(projectId, { includeSystem: showSystem }),
+        listTeams(projectId),
+      ])
       setChannels(ch)
       setSeats(st.filter((s) => !s.fired))
+      setTeams(tm)
       const ship = ch.find((c) => c.slug === 'ship') || ch[0]
       const cid = ship?.id || null
-      setChannelId((prev) => prev || cid)
-      const useId = cid
+      setChannelId((prev) => (prev && ch.some((c) => c.id === prev) ? prev : cid))
+      const useId = (channelId && ch.some((c) => c.id === channelId) ? channelId : cid)
       if (useId) {
         const msgs = await listMessages(projectId, useId)
         setMessages(msgs)
@@ -55,7 +74,7 @@ export function RoomPanel() {
     } finally {
       setLoading(false)
     }
-  }, [projectId])
+  }, [projectId, showSystem, channelId])
 
   useEffect(() => {
     void refresh()
@@ -75,6 +94,10 @@ export function RoomPanel() {
     } finally {
       setSending(false)
     }
+  }
+
+  const insertMention = (handle: string) => {
+    setDraft((d) => (d.trim() ? `${d.replace(/\s+$/, '')} @${handle} ` : `@${handle} `))
   }
 
   if (!projectId) {
@@ -100,26 +123,136 @@ export function RoomPanel() {
       <aside className="room-rail" aria-label="Channels">
         <div className="room-rail__title">Channels</div>
         {channels.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            className={`room-ch${c.id === channelId ? ' is-active' : ''}`}
-            onClick={() => {
-              setChannelId(c.id)
-              void listMessages(projectId, c.id).then(setMessages)
-            }}
-          >
-            #{c.slug}
-          </button>
+          <div key={c.id} className="room-ch-row">
+            <button
+              type="button"
+              className={`room-ch${c.id === channelId ? ' is-active' : ''}`}
+              onClick={() => {
+                setChannelId(c.id)
+                void listMessages(projectId, c.id).then(setMessages)
+              }}
+            >
+              #{c.slug}
+            </button>
+            <Button
+              size="sm"
+              variant="plain"
+              aria-label={`Remove #${c.slug}`}
+              onClick={() =>
+                void (async () => {
+                  try {
+                    await deleteChannel(projectId, c.id)
+                    await refresh()
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : 'Remove channel failed')
+                  }
+                })()
+              }
+            >
+              ×
+            </Button>
+          </div>
         ))}
+        <div className="chart-add chart-add--stack">
+          <TextInput
+            value={newChannel}
+            onChange={(_e, v) => setNewChannel(v)}
+            aria-label="New channel name"
+            placeholder="new channel"
+          />
+          <FormSelect
+            value={newChannelTeam}
+            onChange={(_e, v) => setNewChannelTeam(v)}
+            aria-label="Channel team"
+          >
+            <FormSelectOption value="" label="No team" />
+            {teams.map((t) => (
+              <FormSelectOption key={t.id} value={t.id} label={`@${t.mention}`} />
+            ))}
+          </FormSelect>
+          <Button
+            size="sm"
+            onClick={() =>
+              void (async () => {
+                const slug = slugify(newChannel)
+                if (!slug) return
+                try {
+                  await createChannel(projectId, {
+                    name: newChannel,
+                    slug,
+                    team_id: newChannelTeam || null,
+                  })
+                  setNewChannel('')
+                  await refresh()
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : 'Add channel failed')
+                }
+              })()
+            }
+          >
+            Add channel
+          </Button>
+        </div>
+
         <div className="room-rail__title" style={{ marginTop: 16 }}>
           Teams
         </div>
-        {['eng', 'services'].map((m) => (
-          <div key={m} className="room-ch room-ch--static">
-            @{m}
+        {teams.map((t) => (
+          <div key={t.id} className="room-ch-row">
+            <button type="button" className="room-ch" onClick={() => insertMention(t.mention)}>
+              @{t.mention}
+            </button>
+            <Button
+              size="sm"
+              variant="plain"
+              aria-label={`Remove @${t.mention}`}
+              onClick={() =>
+                void (async () => {
+                  try {
+                    await deleteTeam(projectId, t.id)
+                    await refresh()
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : 'Remove team failed')
+                  }
+                })()
+              }
+            >
+              ×
+            </Button>
           </div>
         ))}
+        <div className="chart-add chart-add--stack">
+          <TextInput
+            value={newTeam}
+            onChange={(_e, v) => setNewTeam(v)}
+            aria-label="New team name"
+            placeholder="new team"
+          />
+          <Button
+            size="sm"
+            onClick={() =>
+              void (async () => {
+                const slug = slugify(newTeam)
+                if (!slug) return
+                try {
+                  await createTeam(projectId, { name: newTeam, slug, mention: slug })
+                  setNewTeam('')
+                  await refresh()
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : 'Add team failed')
+                }
+              })()
+            }
+          >
+            Add team
+          </Button>
+        </div>
+        <Checkbox
+          id="room-show-system"
+          label="Show system seats"
+          isChecked={showSystem}
+          onChange={(_e, v) => setShowSystem(v)}
+        />
       </aside>
 
       <section className="room-main">
@@ -132,7 +265,7 @@ export function RoomPanel() {
         <div className="room-msgs">
           {messages.length === 0 ? (
             <p className="room-hint">
-              Speak in #ship. Floor compiles a run. Each node is a seat you can open in Harness.
+              Speak in #ship. Bots pick up the work and hand it along the path.
             </p>
           ) : (
             messages.map((m) => (
@@ -141,7 +274,7 @@ export function RoomPanel() {
                   {m.author_seat_id
                     ? seatById[m.author_seat_id]?.name || 'Seat'
                     : m.kind === 'run_event'
-                      ? 'Floor'
+                      ? 'System'
                       : 'You'}
                 </div>
                 <div className="room-msg__body">{m.body}</div>
@@ -149,11 +282,25 @@ export function RoomPanel() {
             ))
           )}
         </div>
+        <div className="room-mentions">
+          {teams.map((t) => (
+            <button key={t.id} type="button" className="chart-chip" onClick={() => insertMention(t.mention)}>
+              @{t.mention}
+            </button>
+          ))}
+          {seats
+            .filter((s) => s.kind === 'bot')
+            .map((s) => (
+              <button key={s.id} type="button" className="chart-chip" onClick={() => insertMention(s.slug)}>
+                @{s.slug}
+              </button>
+            ))}
+        </div>
         <div className="room-composer">
           <TextArea
             value={draft}
             onChange={(_e, v) => setDraft(v)}
-            aria-label="Message #ship"
+            aria-label="Message"
             rows={3}
           />
           <Button variant="primary" onClick={() => void send()} isDisabled={sending || !draft.trim()}>
@@ -170,7 +317,7 @@ export function RoomPanel() {
             type="button"
             className={`room-seat${s.kind === 'bot' ? ' is-bot' : ''}${s.paused ? ' is-paused' : ''}`}
             onClick={() => {
-              if (s.kind === 'bot') setSurfaceMode('harness')
+              if (s.kind === 'bot') openPanelType('terminal')
             }}
             title={s.description}
           >

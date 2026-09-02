@@ -9,8 +9,9 @@ export function OverviewPage() {
       <PageSection aria-labelledby="overview-title">
         <h1 id="overview-title">Org chart</h1>
         <p>
-          The org chart is the control plane. Hire, pause, fire, and attach a harness from a
-          seat. {currentProjectId ? '' : 'Open a project from Playground first.'}
+          The org chart is the control plane. Add or remove bots, set their job and model
+          pool, and pause a session from a seat.{' '}
+          {currentProjectId ? '' : 'Open a project from Playground first.'}
         </p>
       </PageSection>
       <PageSection isFilled className="overview-chart">

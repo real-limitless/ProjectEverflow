@@ -56,6 +56,9 @@ class SeatCreate(BaseModel):
     budget_tokens: int = 0
     permission: dict[str, Any] | None = None
     tools: list[str] = Field(default_factory=list)
+    prompt: str = ""
+    skills: list[str] = Field(default_factory=list)
+    preferred_models: list[str] = Field(default_factory=list)
     template: str | None = None
 
 
@@ -71,6 +74,9 @@ class SeatUpdate(BaseModel):
     budget_tokens: int | None = None
     permission: dict[str, Any] | None = None
     tools: list[str] | None = None
+    prompt: str | None = None
+    skills: list[str] | None = None
+    preferred_models: list[str] | None = None
     status: str | None = None
     worktree_path: str | None = None
     opencode_session_id: str | None = None
@@ -99,6 +105,9 @@ class SeatRead(BaseModel):
     budget_tokens: int
     permission: dict[str, Any] = Field(default_factory=dict)
     tools: list[str] = Field(default_factory=list)
+    prompt: str = ""
+    skills: list[str] = Field(default_factory=list)
+    preferred_models: list[str] = Field(default_factory=list)
     status: str
     created_at: datetime
     updated_at: datetime
@@ -108,9 +117,9 @@ class SeatRead(BaseModel):
     def coerce_permission(cls, v: object) -> dict[str, Any]:
         return dict(v) if isinstance(v, dict) else {}
 
-    @field_validator("tools", mode="before")
+    @field_validator("tools", "skills", "preferred_models", mode="before")
     @classmethod
-    def coerce_tools(cls, v: object) -> list[str]:
+    def coerce_str_list(cls, v: object) -> list[str]:
         if not isinstance(v, list):
             return []
         return [str(t) for t in v]
