@@ -108,9 +108,8 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_guest != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    # Pre-existing ghcr.io/real-limitless/everflow-sandbox-guest (Jul 2026)
-    # is public but not linked to this repo. GITHUB_TOKEN cannot overwrite it
-    # until a maintainer connects the package to ProjectEverflow (docs/images.md).
+    # Guest package must stay linked to this repo (docs/images.md). An unlinked
+    # pre-existing package yields permission_denied: write_package on push.
     steps:
       - name: Checkout
         uses: actions/checkout@v4

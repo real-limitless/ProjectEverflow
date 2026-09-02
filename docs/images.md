@@ -44,29 +44,25 @@ These are mirrored from other registries into the local registry during seed:
 
 `BETA-v0.0.1` shipped **without** a guaranteed published multi-arch GHCR set.
 
-### Publish status (after merge of #7)
+### Publish status (after #7)
 
-Control-plane packages **are** on GHCR and linked to this repo (public,
-`linux/amd64`, tags `latest` / `sha-446eb19` / `branch-Development-Everflow`):
+All four required packages are on GHCR, public, linked to this repo
+(`linux/amd64`, tags `latest` / `sha-446eb19` / `branch-Development-Everflow`):
 
 - `ghcr.io/real-limitless/everflow-frontend`
 - `ghcr.io/real-limitless/everflow-backend`
 - `ghcr.io/real-limitless/everflow-sandbox-agent`
+- `ghcr.io/real-limitless/everflow-sandbox-guest`
 
-`everflow-sandbox-guest` already existed (public, tags `latest` + `dev` from
-2026-07-21) but is **not linked** to `real-limitless/ProjectEverflow`.
-`GITHUB_TOKEN` therefore gets `permission_denied: write_package` on push.
-The guest **image builds** in CI; only the overwrite is blocked.
+The guest package already existed (2026-07-21) and was initially **unlinked**,
+so the first `GITHUB_TOKEN` push failed with `write_package`. After connecting
+it to **ProjectEverflow**, CI overwrote `latest` (old `dev` tag remains).
 
-A maintainer must connect that package to this repository, then re-run
-**Actions → Publish images**:
+If a later guest push is denied, reconnect the package:
 
 1. Open [everflow-sandbox-guest](https://github.com/users/real-limitless/packages/container/package/everflow-sandbox-guest).
 2. **Package settings** → connect repository **ProjectEverflow**.
 3. Re-run [Publish images](https://github.com/real-limitless/ProjectEverflow/actions/workflows/publish-images.yml).
-
-Until that link exists, `INSTALL_MODE=ghcr` will fail honestly on the guest
-image (use `BUILD_FROM_SOURCE=1` / `INSTALL_MODE=build`).
 
 ## How `INSTALL_MODE=ghcr` is supposed to work
 
