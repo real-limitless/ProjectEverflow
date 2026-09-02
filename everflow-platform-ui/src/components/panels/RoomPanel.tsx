@@ -1,7 +1,30 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Button, Checkbox, Spinner, TextArea, TextInput } from '@patternfly/react-core'
+import {
+  Button,
+  Checkbox,
+  Dropdown,
+  DropdownItem,
+  DropdownList,
+  Label,
+  LabelGroup,
+  MenuToggle,
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalHeader,
+  ModalVariant,
+  Nav,
+  NavItem,
+  NavList,
+  Spinner,
+  TextArea,
+  TextInput,
+} from '@patternfly/react-core'
+import EllipsisVIcon from '@patternfly/react-icons/dist/esm/icons/ellipsis-v-icon'
+import PlusIcon from '@patternfly/react-icons/dist/esm/icons/plus-icon'
 import { isDemoMode } from '@/lib/api'
 import {
+  attachSeat,
   createChannel,
   createTeam,
   deleteChannel,
@@ -26,6 +49,7 @@ function slugify(value: string): string {
 export function RoomPanel() {
   const projectId = usePlaygroundStore((s) => s.currentProjectId)
   const openPanelType = usePlaygroundStore((s) => s.openPanelType)
+  const requestTerminalSession = usePlaygroundStore((s) => s.requestTerminalSession)
   const [channels, setChannels] = useState<Channel[]>([])
   const [teams, setTeams] = useState<Team[]>([])
   const [channelId, setChannelId] = useState<string | null>(null)
@@ -37,8 +61,14 @@ export function RoomPanel() {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSystem, setShowSystem] = useState(false)
+  const [addChannelOpen, setAddChannelOpen] = useState(false)
+  const [addTeamOpen, setAddTeamOpen] = useState(false)
   const [newChannel, setNewChannel] = useState('')
   const [newTeam, setNewTeam] = useState('')
+  const [channelMenu, setChannelMenu] = useState<string | null>(null)
+  const [teamMenu, setTeamMenu] = useState<string | null>(null)
+  const [seatMenu, setSeatMenu] = useState<string | null>(null)
+  const [participants, setParticipants] = useState<Seat[]>([])
 
   const seatById = useMemo(() => Object.fromEntries(seats.map((s) => [s.id, s])), [seats])
   const active = channels.find((c) => c.id === channelId)
@@ -79,6 +109,10 @@ export function RoomPanel() {
     void refresh()
   }, [refresh])
 
+  useEffect(() => {
+    setParticipants([])
+  }, [channelId])
+
   const send = async () => {
     if (!projectId || !channelId || !draft.trim()) return
     setSending(true)
@@ -99,6 +133,55 @@ export function RoomPanel() {
     setDraft((d) => (d.trim() ? `${d.replace(/\s+$/, '')} @${handle} ` : `@${handle} `))
   }
 
+  const selectChannel = (id: string) => {
+    setChannelId(id)
+    if (projectId) void listMessages(projectId, id).then(setMessages)
+  }
+
+  const addToChannel = (seat: Seat) => {
+    insertMention(seat.slug)
+    setParticipants((prev) => (prev.some((p) => p.id === seat.id) ? prev : [...prev, seat]))
+  }
+
+  const advancedConversation = async (seat: Seat) => {
+    if (!projectId) return
+    try {
+      if (seat.kind === 'bot') await attachSeat(projectId, seat.id)
+      requestTerminalSession({ name: `@${seat.slug}`, cmd: 'opencode' })
+      openPanelType('terminal')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Attach seat failed')
+    }
+  }
+
+  const submitChannel = async () => {
+    if (!projectId) return
+    const slug = slugify(newChannel)
+    if (!slug) return
+    try {
+      await createChannel(projectId, { name: newChannel, slug })
+      setNewChannel('')
+      setAddChannelOpen(false)
+      await refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Add channel failed')
+    }
+  }
+
+  const submitTeam = async () => {
+    if (!projectId) return
+    const slug = slugify(newTeam)
+    if (!slug) return
+    try {
+      await createTeam(projectId, { name: newTeam, slug, mention: slug })
+      setNewTeam('')
+      setAddTeamOpen(false)
+      await refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Add team failed')
+    }
+  }
+
   if (!projectId) {
     return <div className="room-empty">Open a project to use the room.</div>
   }
@@ -116,117 +199,131 @@ export function RoomPanel() {
   return (
     <div className="room-layout">
       <aside className="room-rail" aria-label="Channels">
-        <div className="room-rail__title">Channels</div>
-        {channels.map((c) => (
-          <div key={c.id} className="room-ch-row">
-            <button
-              type="button"
-              className={`room-ch${c.id === channelId ? ' is-active' : ''}`}
-              onClick={() => {
-                setChannelId(c.id)
-                void listMessages(projectId, c.id).then(setMessages)
-              }}
-            >
-              #{c.slug}
-            </button>
-            <Button
-              size="sm"
-              variant="plain"
-              aria-label={`Remove #${c.slug}`}
-              onClick={() =>
-                void (async () => {
-                  try {
-                    await deleteChannel(projectId, c.id)
-                    await refresh()
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : 'Remove channel failed')
-                  }
-                })()
-              }
-            >
-              ×
-            </Button>
-          </div>
-        ))}
-        <div className="room-rail__add">
-          <TextInput
-            value={newChannel}
-            onChange={(_e, v) => setNewChannel(v)}
-            aria-label="New channel name"
-            placeholder="New channel"
-          />
+        <div className="room-rail__head">
+          <div className="room-rail__title">Channels</div>
           <Button
+            variant="plain"
             size="sm"
-            onClick={() =>
-              void (async () => {
-                const slug = slugify(newChannel)
-                if (!slug) return
-                try {
-                  await createChannel(projectId, { name: newChannel, slug })
-                  setNewChannel('')
-                  await refresh()
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : 'Add channel failed')
-                }
-              })()
-            }
-          >
-            Add
-          </Button>
+            aria-label="Add channel"
+            icon={<PlusIcon />}
+            onClick={() => setAddChannelOpen(true)}
+          />
         </div>
+        <Nav aria-label="Channels" onSelect={(_e, item) => selectChannel(String(item.itemId))}>
+          <NavList>
+            {channels.map((c) => (
+              <NavItem key={c.id} itemId={c.id} isActive={c.id === channelId} preventDefault to={`#${c.slug}`}>
+                <span className="room-nav-row">
+                  <span>#{c.slug}</span>
+                  <span
+                    className="room-nav-kebab"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <Dropdown
+                      isOpen={channelMenu === c.id}
+                      onOpenChange={(open) => setChannelMenu(open ? c.id : null)}
+                      onSelect={() => setChannelMenu(null)}
+                      popperProps={{ position: 'right' }}
+                      toggle={(toggleRef) => (
+                        <MenuToggle
+                          ref={toggleRef}
+                          variant="plain"
+                          aria-label={`#${c.slug} actions`}
+                          onClick={() => setChannelMenu((id) => (id === c.id ? null : c.id))}
+                          icon={<EllipsisVIcon />}
+                        />
+                      )}
+                    >
+                      <DropdownList>
+                        <DropdownItem
+                          onClick={() =>
+                            void (async () => {
+                              try {
+                                await deleteChannel(projectId, c.id)
+                                await refresh()
+                              } catch (e) {
+                                setError(e instanceof Error ? e.message : 'Remove channel failed')
+                              }
+                            })()
+                          }
+                        >
+                          Delete
+                        </DropdownItem>
+                      </DropdownList>
+                    </Dropdown>
+                  </span>
+                </span>
+              </NavItem>
+            ))}
+          </NavList>
+        </Nav>
 
-        <div className="room-rail__title">Teams</div>
-        <div className="room-mentions">
-          {teams.map((t) => (
-            <span key={t.id} className="chart-team-chip">
-              <button type="button" className="chart-chip" onClick={() => insertMention(t.mention)}>
-                @{t.mention}
-              </button>
-              <button
-                type="button"
-                aria-label={`Remove @${t.mention}`}
-                onClick={() =>
-                  void (async () => {
-                    try {
-                      await deleteTeam(projectId, t.id)
-                      await refresh()
-                    } catch (e) {
-                      setError(e instanceof Error ? e.message : 'Remove team failed')
-                    }
-                  })()
-                }
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-        <div className="room-rail__add">
-          <TextInput
-            value={newTeam}
-            onChange={(_e, v) => setNewTeam(v)}
-            aria-label="New team name"
-            placeholder="New team"
-          />
+        <div className="room-rail__head">
+          <div className="room-rail__title">Teams</div>
           <Button
+            variant="plain"
             size="sm"
-            onClick={() =>
-              void (async () => {
-                const slug = slugify(newTeam)
-                if (!slug) return
-                try {
-                  await createTeam(projectId, { name: newTeam, slug, mention: slug })
-                  setNewTeam('')
-                  await refresh()
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : 'Add team failed')
-                }
-              })()
-            }
-          >
-            Add
-          </Button>
+            aria-label="Add team"
+            icon={<PlusIcon />}
+            onClick={() => setAddTeamOpen(true)}
+          />
         </div>
+        <Nav aria-label="Teams">
+          <NavList>
+            {teams.map((t) => (
+              <NavItem
+                key={t.id}
+                itemId={t.id}
+                preventDefault
+                to={`#@${t.mention}`}
+                onClick={() => insertMention(t.mention)}
+              >
+                <span className="room-nav-row">
+                  <span>@{t.mention}</span>
+                  <span
+                    className="room-nav-kebab"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <Dropdown
+                      isOpen={teamMenu === t.id}
+                      onOpenChange={(open) => setTeamMenu(open ? t.id : null)}
+                      onSelect={() => setTeamMenu(null)}
+                      popperProps={{ position: 'right' }}
+                      toggle={(toggleRef) => (
+                        <MenuToggle
+                          ref={toggleRef}
+                          variant="plain"
+                          aria-label={`@${t.mention} actions`}
+                          onClick={() => setTeamMenu((id) => (id === t.id ? null : t.id))}
+                          icon={<EllipsisVIcon />}
+                        />
+                      )}
+                    >
+                      <DropdownList>
+                        <DropdownItem
+                          onClick={() =>
+                            void (async () => {
+                              try {
+                                await deleteTeam(projectId, t.id)
+                                await refresh()
+                              } catch (e) {
+                                setError(e instanceof Error ? e.message : 'Remove team failed')
+                              }
+                            })()
+                          }
+                        >
+                          Delete
+                        </DropdownItem>
+                      </DropdownList>
+                    </Dropdown>
+                  </span>
+                </span>
+              </NavItem>
+            ))}
+          </NavList>
+        </Nav>
         <Checkbox
           id="room-show-system"
           label="Show system seats"
@@ -239,6 +336,19 @@ export function RoomPanel() {
         <header className="room-head">
           <h2>#{active?.slug || 'ship'}</h2>
           <span className="room-head__meta">Thread is the audit log</span>
+          {participants.length > 0 ? (
+            <LabelGroup className="room-head__people" aria-label="Channel participants" numLabels={6}>
+              {participants.map((p) => (
+                <Label
+                  key={p.id}
+                  variant="outline"
+                  onClose={() => setParticipants((prev) => prev.filter((x) => x.id !== p.id))}
+                >
+                  @{p.slug}
+                </Label>
+              ))}
+            </LabelGroup>
+          ) : null}
         </header>
         {error ? <div className="room-error">{error}</div> : null}
         {run ? <RunCard run={run} /> : null}
@@ -287,20 +397,94 @@ export function RoomPanel() {
       <aside className="room-roster" aria-label="Roster">
         <div className="room-rail__title">Seats</div>
         {seats.map((s) => (
-          <button
+          <Dropdown
             key={s.id}
-            type="button"
-            className={`room-seat${s.paused ? ' is-paused' : ''}`}
-            onClick={() => {
-              if (s.kind === 'bot') openPanelType('terminal')
-            }}
-            title={s.description}
+            isOpen={seatMenu === s.id}
+            onOpenChange={(open) => setSeatMenu(open ? s.id : null)}
+            onSelect={() => setSeatMenu(null)}
+            popperProps={{ position: 'left' }}
+            toggle={(toggleRef) => (
+              <MenuToggle
+                ref={toggleRef}
+                className={`room-seat${s.paused ? ' is-paused' : ''}`}
+                onClick={() => setSeatMenu((id) => (id === s.id ? null : s.id))}
+                aria-label={`${s.name} seat actions`}
+              >
+                <span className={`room-pip room-pip--${s.status}`} />
+                <span>{s.name}</span>
+              </MenuToggle>
+            )}
           >
-            <span className={`room-pip room-pip--${s.status}`} />
-            <span>{s.name}</span>
-          </button>
+            <DropdownList>
+              <DropdownItem onClick={() => insertMention(s.slug)}>Mention</DropdownItem>
+              <DropdownItem onClick={() => addToChannel(s)}>Add to channel</DropdownItem>
+              {s.kind === 'bot' ? (
+                <DropdownItem onClick={() => void advancedConversation(s)}>
+                  Advanced conversation
+                </DropdownItem>
+              ) : null}
+            </DropdownList>
+          </Dropdown>
         ))}
       </aside>
+
+      <Modal
+        variant={ModalVariant.small}
+        isOpen={addChannelOpen}
+        onClose={() => setAddChannelOpen(false)}
+        aria-labelledby="add-channel-title"
+      >
+        <ModalHeader title="Add channel" labelId="add-channel-title" />
+        <ModalBody>
+          <TextInput
+            id="new-channel-name"
+            value={newChannel}
+            onChange={(_e, v) => setNewChannel(v)}
+            placeholder="e.g. ship"
+            aria-label="Channel name"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void submitChannel()
+            }}
+          />
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="primary" isDisabled={!slugify(newChannel)} onClick={() => void submitChannel()}>
+            Add
+          </Button>
+          <Button variant="link" onClick={() => setAddChannelOpen(false)}>
+            Cancel
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        variant={ModalVariant.small}
+        isOpen={addTeamOpen}
+        onClose={() => setAddTeamOpen(false)}
+        aria-labelledby="add-team-title"
+      >
+        <ModalHeader title="Add team" labelId="add-team-title" />
+        <ModalBody>
+          <TextInput
+            id="new-team-name"
+            value={newTeam}
+            onChange={(_e, v) => setNewTeam(v)}
+            placeholder="e.g. eng"
+            aria-label="Team name"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void submitTeam()
+            }}
+          />
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="primary" isDisabled={!slugify(newTeam)} onClick={() => void submitTeam()}>
+            Add
+          </Button>
+          <Button variant="link" onClick={() => setAddTeamOpen(false)}>
+            Cancel
+          </Button>
+        </ModalFooter>
+      </Modal>
     </div>
   )
 }

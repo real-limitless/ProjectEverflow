@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Button,
   Checkbox,
@@ -13,9 +13,16 @@ import {
   TextArea,
   TextInput,
 } from '@patternfly/react-core'
+import SearchMinusIcon from '@patternfly/react-icons/dist/esm/icons/search-minus-icon'
+import SearchPlusIcon from '@patternfly/react-icons/dist/esm/icons/search-plus-icon'
+import { TypeaheadMultiSelect, type TypeaheadOption } from '@/components/org/TypeaheadMultiSelect'
 import { isDemoMode } from '@/lib/api'
 import { CHAT_MODELS, type CatalogItem } from '@/data/chatCatalog'
-import { OPENCODE_TOOL_PERMISSIONS } from '@/lib/harness/opencodePack'
+import {
+  getOpenCodeHarness,
+  OPENCODE_TOOL_PERMISSIONS,
+  skillFromPack,
+} from '@/lib/harness/opencodePack'
 import { listProviders } from '@/lib/opencode/client'
 import {
   addSeat,
@@ -40,6 +47,15 @@ function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 }
 
+const ZOOM_MIN = 0.7
+const ZOOM_MAX = 1.6
+const ZOOM_STEP = 0.15
+const ZOOM_DEFAULT = 1
+
+function clampZoom(value: number): number {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value * 100) / 100))
+}
+
 export function ChartPanel({ embedded = false }: { embedded?: boolean }) {
   const projectId = usePlaygroundStore((s) => s.currentProjectId)
   const openPanelType = usePlaygroundStore((s) => s.openPanelType)
@@ -57,6 +73,9 @@ export function ChartPanel({ embedded = false }: { embedded?: boolean }) {
   const [addTeamId, setAddTeamId] = useState('')
   const [addReportsTo, setAddReportsTo] = useState('')
   const [teamName, setTeamName] = useState('')
+  const [zoom, setZoom] = useState(ZOOM_DEFAULT)
+  const treeViewportRef = useRef<HTMLDivElement>(null)
+  const requestTerminalSession = usePlaygroundStore((s) => s.requestTerminalSession)
 
   const refresh = useCallback(async () => {
     if (!projectId || isDemoMode()) {
@@ -81,6 +100,19 @@ export function ChartPanel({ embedded = false }: { embedded?: boolean }) {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    const el = treeViewportRef.current
+    if (!el) return
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      const delta = event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP
+      setZoom((prev) => clampZoom(prev + delta))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
 
   const act = async (fn: () => Promise<unknown>) => {
     if (!projectId) return
@@ -194,6 +226,32 @@ export function ChartPanel({ embedded = false }: { embedded?: boolean }) {
               isChecked={showSystem}
               onChange={(_e, v) => setShowSystem(v)}
             />
+            <div className="chart-zoom" role="group" aria-label="Zoom reporting tree">
+              <Button
+                variant="control"
+                size="sm"
+                aria-label="Zoom out"
+                isDisabled={zoom <= ZOOM_MIN}
+                onClick={() => setZoom((z) => clampZoom(z - ZOOM_STEP))}
+                icon={<SearchMinusIcon />}
+              />
+              <Button
+                variant="control"
+                size="sm"
+                aria-label="Reset zoom"
+                onClick={() => setZoom(ZOOM_DEFAULT)}
+              >
+                {Math.round(zoom * 100)}%
+              </Button>
+              <Button
+                variant="control"
+                size="sm"
+                aria-label="Zoom in"
+                isDisabled={zoom >= ZOOM_MAX}
+                onClick={() => setZoom((z) => clampZoom(z + ZOOM_STEP))}
+                icon={<SearchPlusIcon />}
+              />
+            </div>
           </div>
           <div className="chart-head__teams">
             {teams.map((t) => (
@@ -234,18 +292,32 @@ export function ChartPanel({ embedded = false }: { embedded?: boolean }) {
         </header>
         {error ? <div className="room-error">{error}</div> : null}
 
-        <div className="org-tree" role="tree" aria-label="Organization chart">
-          {roots.map((s) => (
-            <OrgBranch
-              key={s.id}
-              seat={s}
-              childrenOf={childrenOf}
-              teams={teams}
-              pathSlugs={pathSlugs}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-            />
-          ))}
+        <div
+          ref={treeViewportRef}
+          className="org-tree-viewport"
+          aria-label="Reporting tree viewport"
+        >
+          <div
+            className="org-tree-scale"
+            style={{
+              transform: `scale(${zoom})`,
+              width: `${100 / zoom}%`,
+            }}
+          >
+            <div className="org-tree" role="tree" aria-label="Organization chart">
+              {roots.map((s) => (
+                <OrgBranch
+                  key={s.id}
+                  seat={s}
+                  childrenOf={childrenOf}
+                  teams={teams}
+                  pathSlugs={pathSlugs}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                />
+              ))}
+            </div>
+          </div>
         </div>
         {yaml ? <pre className="chart-yaml">{yaml}</pre> : null}
       </div>
@@ -262,6 +334,7 @@ export function ChartPanel({ embedded = false }: { embedded?: boolean }) {
             onOpenSession={() =>
               void act(async () => {
                 if (selected.kind === 'bot') await attachSeat(projectId, selected.id)
+                requestTerminalSession({ name: `@${selected.slug}`, cmd: 'opencode' })
                 openPanelType('terminal')
               })
             }
@@ -449,20 +522,28 @@ function SeatInspector({
   const projectId = usePlaygroundStore((s) => s.currentProjectId)
   const [description, setDescription] = useState(seat.description)
   const [prompt, setPrompt] = useState(seat.prompt || '')
-  const [skills, setSkills] = useState((seat.skills || []).join(', '))
-  const [models, setModels] = useState((seat.preferred_models || []).join(', '))
+  const [skills, setSkills] = useState<string[]>(seat.skills || [])
+  const [models, setModels] = useState<string[]>(seat.preferred_models || [])
   const [tools, setTools] = useState<string[]>(seat.tools || [])
   const [permission, setPermission] = useState<Record<string, string>>(seat.permission || {})
   const [teamId, setTeamId] = useState(seat.team_id || '')
   const [reportsTo, setReportsTo] = useState(seat.reports_to_id || '')
   const [browseOpen, setBrowseOpen] = useState(false)
   const [catalog, setCatalog] = useState<CatalogItem[]>(CHAT_MODELS)
+  const [skillOptions, setSkillOptions] = useState<TypeaheadOption[]>([])
+  const [toolOptions, setToolOptions] = useState<TypeaheadOption[]>(
+    OPENCODE_TOOL_PERMISSIONS.map((t) => ({
+      id: t.id,
+      label: t.label,
+      description: t.description,
+    })),
+  )
 
   useEffect(() => {
     setDescription(seat.description)
     setPrompt(seat.prompt || '')
-    setSkills((seat.skills || []).join(', '))
-    setModels((seat.preferred_models || []).join(', '))
+    setSkills(seat.skills || [])
+    setModels(seat.preferred_models || [])
     setTools(seat.tools || [])
     setPermission(seat.permission || {})
     setTeamId(seat.team_id || '')
@@ -503,11 +584,52 @@ function SeatInspector({
       })
   }, [projectId])
 
-  const split = (raw: string) =>
-    raw
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
+  useEffect(() => {
+    if (!projectId) return
+    void getOpenCodeHarness(projectId)
+      .then((harness) => {
+        const skillsRaw = harness.skills || []
+        setSkillOptions(
+          skillsRaw
+            .map((raw) => skillFromPack(raw))
+            .filter((s) => s.id)
+            .map((s) => ({
+              id: s.id,
+              label: s.name || s.id,
+              description: s.description,
+            })),
+        )
+        const mcpIds = Object.keys(harness.mcp || {})
+        setToolOptions([
+          ...OPENCODE_TOOL_PERMISSIONS.map((t) => ({
+            id: t.id,
+            label: t.label,
+            description: t.description,
+          })),
+          ...mcpIds.map((id) => ({
+            id,
+            label: id,
+            description: 'MCP server',
+          })),
+        ])
+      })
+      .catch(() => {
+        setSkillOptions([])
+        setToolOptions(
+          OPENCODE_TOOL_PERMISSIONS.map((t) => ({
+            id: t.id,
+            label: t.label,
+            description: t.description,
+          })),
+        )
+      })
+  }, [projectId])
+
+  const modelOptions: TypeaheadOption[] = catalog.map((m) => ({
+    id: m.id,
+    label: m.label,
+    description: m.description,
+  }))
 
   const reportsName = byId[seat.reports_to_id || '']?.name
 
@@ -545,20 +667,24 @@ function SeatInspector({
         <h4>Skills and models</h4>
         <label className="chart-field">
           Skills
-          <TextInput
-            value={skills}
-            onChange={(_e, v) => setSkills(v)}
-            aria-label="Skills"
-            placeholder="skill ids"
+          <TypeaheadMultiSelect
+            id={`seat-skills-${seat.id}`}
+            ariaLabel="Skills"
+            placeholder="Search skills"
+            options={skillOptions}
+            selected={skills}
+            onChange={setSkills}
           />
         </label>
         <label className="chart-field">
           Model pool
-          <TextInput
-            value={models}
-            onChange={(_e, v) => setModels(v)}
-            aria-label="Preferred models"
-            placeholder="provider/model"
+          <TypeaheadMultiSelect
+            id={`seat-models-${seat.id}`}
+            ariaLabel="Preferred models"
+            placeholder="Search models"
+            options={modelOptions}
+            selected={models}
+            onChange={setModels}
           />
           <Button size="sm" variant="secondary" onClick={() => setBrowseOpen(true)}>
             Browse models
@@ -568,39 +694,37 @@ function SeatInspector({
           isOpen={browseOpen}
           onClose={() => setBrowseOpen(false)}
           models={catalog}
-          selectedId={split(models)[0] || ''}
-          pinnedIds={split(models)}
+          selectedId={models[0] || ''}
+          pinnedIds={models}
           onSelect={(id) => {
-            const pool = split(models)
-            setModels([id, ...pool.filter((m) => m !== id)].join(', '))
+            setModels([id, ...models.filter((m) => m !== id)])
             setBrowseOpen(false)
           }}
           onTogglePin={(id) => {
-            const pool = split(models)
-            setModels((pool.includes(id) ? pool.filter((m) => m !== id) : [...pool, id]).join(', '))
+            setModels((pool) => (pool.includes(id) ? pool.filter((m) => m !== id) : [...pool, id]))
           }}
         />
       </section>
 
       <section className="chart-group">
         <h4>Tools</h4>
-        <div className="chart-chips">
-          {OPENCODE_TOOL_PERMISSIONS.map((t) => {
-            const on = tools.includes(t.id)
-            return (
-              <button
-                key={t.id}
-                type="button"
-                className={`chart-chip${on ? ' is-on' : ''}`}
-                onClick={() =>
-                  setTools((prev) => (prev.includes(t.id) ? prev.filter((x) => x !== t.id) : [...prev, t.id]))
-                }
-              >
-                {t.id}
-              </button>
-            )
-          })}
-        </div>
+        <TypeaheadMultiSelect
+          id={`seat-tools-${seat.id}`}
+          ariaLabel="Tools"
+          placeholder="Search tools"
+          options={toolOptions}
+          selected={tools}
+          onChange={(next) => {
+            setTools(next)
+            setPermission((prev) => {
+              const copy = { ...prev }
+              for (const id of next) {
+                if (!copy[id]) copy[id] = 'allow'
+              }
+              return copy
+            })
+          }}
+        />
         {tools.map((t) => (
           <div key={t} className="chart-perm">
             <span>{t}</span>
@@ -651,8 +775,8 @@ function SeatInspector({
           void onSave({
             description,
             prompt,
-            skills: split(skills),
-            preferred_models: split(models),
+            skills,
+            preferred_models: models,
             tools,
             permission,
             team_id: teamId || null,

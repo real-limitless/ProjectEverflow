@@ -132,6 +132,8 @@ interface PlaygroundState {
   catalogVersion: number
   /** Prefill Terminal input (e.g. from Agents panel) */
   terminalPrefill: string | null
+  /** Open a named Terminal session (Room advanced conversation). Not persisted. */
+  terminalSessionRequest: { name: string; cmd?: string } | null
   /** Per-project active repository id (Repository panel + repo strip) */
   activeRepoByProject: Record<string, string>
   /**
@@ -209,6 +211,8 @@ interface PlaygroundState {
   discardMissingProject: (id: string) => void
   setTerminalPrefill: (cmd: string | null) => void
   clearTerminalPrefill: () => void
+  requestTerminalSession: (req: { name: string; cmd?: string }) => void
+  clearTerminalSessionRequest: () => void
   createProject: (
     draft: import('@/data/createProjectDraft').CreateProjectDraft | string,
   ) => Promise<string | null>
@@ -587,6 +591,7 @@ function createInitial() {
     },
     catalogVersion: 0,
     terminalPrefill: null as string | null,
+    terminalSessionRequest: null as { name: string; cmd?: string } | null,
     activeRepoByProject: {},
     repoViewPathByProject: {},
     sandboxReadyByProject: {},
@@ -618,6 +623,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   theme: typeof document !== 'undefined' ? loadTheme() : 'light',
   paletteDragging: false,
   terminalPrefill: null,
+  terminalSessionRequest: null,
   activeRepoByProject: initial.activeRepoByProject || {},
   repoViewPathByProject: initial.repoViewPathByProject || {},
   sandboxReadyByProject: initial.sandboxReadyByProject || {},
@@ -646,6 +652,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   setTerminalPrefill: (cmd) => set({ terminalPrefill: cmd }),
   clearTerminalPrefill: () => set({ terminalPrefill: null }),
+  requestTerminalSession: (req) => set({ terminalSessionRequest: req }),
+  clearTerminalSessionRequest: () => set({ terminalSessionRequest: null }),
 
   getActiveRepoId: (projectId) => {
     const id = projectId === undefined ? get().currentProjectId : projectId
