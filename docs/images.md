@@ -43,8 +43,26 @@ These are mirrored from other registries into the local registry during seed:
 | `branch-development-everflow` | Branch slug from the workflow |
 
 `BETA-v0.0.1` shipped **without** a guaranteed published multi-arch GHCR set.
-Until a human with GHCR write access runs [`.github/workflows/publish-images.yml`](../.github/workflows/publish-images.yml),
-`INSTALL_MODE=ghcr` must fail honestly.
+
+### Publish status (after #7)
+
+All four required packages are on GHCR, public, linked to this repo
+(`linux/amd64`, tags `latest` / `sha-446eb19` / `branch-Development-Everflow`):
+
+- `ghcr.io/real-limitless/everflow-frontend`
+- `ghcr.io/real-limitless/everflow-backend`
+- `ghcr.io/real-limitless/everflow-sandbox-agent`
+- `ghcr.io/real-limitless/everflow-sandbox-guest`
+
+The guest package already existed (2026-07-21) and was initially **unlinked**,
+so the first `GITHUB_TOKEN` push failed with `write_package`. After connecting
+it to **ProjectEverflow**, CI overwrote `latest` (old `dev` tag remains).
+
+If a later guest push is denied, reconnect the package:
+
+1. Open [everflow-sandbox-guest](https://github.com/users/real-limitless/packages/container/package/everflow-sandbox-guest).
+2. **Package settings** → connect repository **ProjectEverflow**.
+3. Re-run [Publish images](https://github.com/real-limitless/ProjectEverflow/actions/workflows/publish-images.yml).
 
 ## How `INSTALL_MODE=ghcr` is supposed to work
 
