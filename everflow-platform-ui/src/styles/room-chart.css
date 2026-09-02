@@ -9,10 +9,14 @@
   background: var(--pf-t--global--background--color--primary--default);
 }
 
+.room-layout {
+  flex-wrap: wrap;
+}
+
 .room-rail,
 .room-roster,
 .chart-inspector {
-  width: 15.5rem;
+  width: 12.5rem;
   flex-shrink: 0;
   border-inline-end: 1px solid var(--pf-t--global--border--color--default);
   background: var(--pf-t--global--background--color--secondary--default);
@@ -149,8 +153,8 @@
 
 .room-main,
 .chart-canvas {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 16rem;
+  min-width: 16rem;
   display: flex;
   flex-direction: column;
   overflow: hidden;

@@ -1274,11 +1274,12 @@
 .chat-layout .chat-composer-pill,
 .chat-composer .chat-composer-pill {
   display: flex !important;
-  align-items: flex-end !important;
-  gap: 0.4rem !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 0.35rem !important;
   width: 100%;
   box-sizing: border-box;
-  padding: 0.5rem 0.5rem 0.5rem 0.9rem !important;
+  padding: 0.55rem 0.65rem 0.5rem !important;
   border-radius: 1.25rem !important;
   border: 1px solid var(--pf-t--global--border--color--default) !important;
   background: var(--pf-t--global--background--color--secondary--default) !important;
@@ -1326,7 +1327,9 @@ textarea.chat-composer-input {
 .chat-composer .chat-composer-actions {
   display: flex !important;
   align-items: center !important;
-  gap: 0.1rem !important;
+  justify-content: flex-end !important;
+  flex-wrap: wrap !important;
+  gap: 0.15rem !important;
   flex-shrink: 0 !important;
   padding-bottom: 0.05rem;
 }

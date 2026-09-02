@@ -660,7 +660,16 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   clearTerminalPrefill: () => set({ terminalPrefill: null }),
   requestTerminalSession: (req) => set({ terminalSessionRequest: req }),
   clearTerminalSessionRequest: () => set({ terminalSessionRequest: null }),
-  requestChatSeat: (req) => set({ chatSeatRequest: req }),
+  requestChatSeat: (req) => {
+    const agent = req.agent.trim()
+    if (!agent) return
+    set({ chatSeatRequest: req })
+    for (const key of Object.keys(get().instanceState)) {
+      if (typeOf(key) === 'chat') {
+        get().setConversationAgent(key, agent)
+      }
+    }
+  },
   clearChatSeatRequest: () => set({ chatSeatRequest: null }),
 
   getActiveRepoId: (projectId) => {
