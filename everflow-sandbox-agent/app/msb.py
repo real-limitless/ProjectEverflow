@@ -141,6 +141,10 @@ class SandboxRecord:
 
 
 class SandboxBackend(ABC):
+    # True when OpenCode/desktop run inside the guest (microVM or container),
+    # not as host processes on the agent image.
+    guest_opencode: bool = False
+
     @abstractmethod
     async def health(self) -> dict[str, Any]: ...
 
@@ -528,6 +532,8 @@ class MockSandboxBackend(SandboxBackend):
 
 class MicrosandboxBackend(SandboxBackend):
     """Real microsandbox SDK backend (requires KVM + microsandbox package)."""
+
+    guest_opencode = True
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings

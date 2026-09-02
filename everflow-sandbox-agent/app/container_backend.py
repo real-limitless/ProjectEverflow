@@ -137,6 +137,8 @@ class _DockerCtx:
 class ContainerSandboxBackend(SandboxBackend):
     """Run the Everflow guest image as a sibling Docker container."""
 
+    guest_opencode = True
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._meta: dict[str, SandboxRecord] = {}
@@ -351,6 +353,8 @@ class ContainerSandboxBackend(SandboxBackend):
         ]
         for key, value in labels.items():
             run_args.extend(["--label", f"everflow.user.{key}={value}"])
+        if harnesses:
+            run_args.extend(["--label", f"everflow.harnesses={','.join(harnesses)}"])
         if self._network:
             run_args.extend(["--network", self._network])
 
@@ -410,38 +414,74 @@ class ContainerSandboxBackend(SandboxBackend):
         return rec
 
     async def _inspect_status(self, name: str) -> str | None:
+        info = await self._inspect(name)
+        return None if info is None else info.get("status")
+
+    async def _inspect(self, name: str) -> dict[str, Any] | None:
+        import json
+
         code, out, _ = await self._docker_run(
             [
                 "inspect",
                 "-f",
-                "{{.State.Status}}",
+                "{{.State.Status}}\t{{.Config.Image}}\t{{json .Config.Labels}}",
                 self._container_name(name),
             ],
             timeout=15,
         )
         if code != 0:
             return None
-        return (out or "").strip() or None
+        raw = (out or "").strip()
+        if not raw:
+            return None
+        status, _, rest = raw.partition("\t")
+        image, _, labels_json = rest.partition("\t")
+        labels_raw: dict[str, str] = {}
+        try:
+            parsed = json.loads(labels_json or "{}")
+            if isinstance(parsed, dict):
+                labels_raw = {str(k): str(v) for k, v in parsed.items()}
+        except json.JSONDecodeError:
+            labels_raw = {}
+        user_labels = {
+            k[len("everflow.user.") :]: v
+            for k, v in labels_raw.items()
+            if k.startswith("everflow.user.")
+        }
+        harnesses = [
+            h for h in (labels_raw.get("everflow.harnesses") or "").split(",") if h
+        ]
+        return {
+            "status": status.strip() or None,
+            "image": image.strip() or None,
+            "labels": user_labels,
+            "harnesses": harnesses,
+        }
 
     async def get(self, name: str) -> SandboxRecord | None:
-        status = await self._inspect_status(name)
+        info = await self._inspect(name)
         meta = self._meta.get(name)
-        if status is None:
+        if info is None or not info.get("status"):
             if meta is None:
                 return None
             meta.status = "error"
             meta.error = meta.error or "Sandbox container not found"
             return meta
+        status = str(info["status"])
         mapped = "running" if status == "running" else status
         if status == "exited":
             mapped = "stopped"
         rec = SandboxRecord(
             name=name,
             status=mapped,
-            image=meta.image if meta else self._settings.default_image,
-            labels=meta.labels if meta else {},
-            harnesses=meta.harnesses if meta else [],
-            workspace_path=meta.workspace_path if meta else str(self._settings.workspace_path / name),
+            image=(meta.image if meta else None) or info.get("image") or self._settings.default_image,
+            labels=(meta.labels if meta and meta.labels else None) or info.get("labels") or {},
+            harnesses=(meta.harnesses if meta and meta.harnesses else None)
+            or info.get("harnesses")
+            or [],
+            workspace_path=meta.workspace_path
+            if meta
+            else str(self._settings.workspace_path / name),
             created_at=meta.created_at if meta else None,
             error=None if mapped == "running" else (meta.error if meta else None),
         )

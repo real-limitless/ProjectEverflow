@@ -71,6 +71,15 @@ def test_build_backend_auto_uses_msb_when_kvm_works(monkeypatch) -> None:
     assert isinstance(backend, MicrosandboxBackend)
 
 
+def test_container_backend_uses_guest_opencode() -> None:
+    from app.container_backend import ContainerSandboxBackend
+    from app.msb import MicrosandboxBackend, MockSandboxBackend
+
+    assert ContainerSandboxBackend.guest_opencode is True
+    assert MicrosandboxBackend.guest_opencode is True
+    assert MockSandboxBackend.guest_opencode is False
+
+
 def test_build_backend_container_forced_without_docker_raises(monkeypatch) -> None:
     monkeypatch.setattr("app.container_backend.docker_cli_available", lambda _b="docker": False)
     settings = Settings(sandbox_mock=False, sandbox_runtime="container")

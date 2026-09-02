@@ -542,10 +542,14 @@ class OpenCodeManager:
                 logger.debug("guest opencode kill ignored name=%s: %s", name, exc)
             self._instances.pop(name, None)
 
-        # Start detached serve (PATH may include .everflow/bin)
+        # Start detached serve. Prefer the prebaked guest CLI over leftover
+        # mock-harness stubs in /workspace/.everflow/bin (from SANDBOX_MOCK).
         start_cmd = (
             "mkdir -p /workspace/.everflow && "
-            "export PATH=\"/workspace/.everflow/bin:$PATH\" && "
+            "if [ -f /workspace/.everflow/bin/opencode ] && "
+            "grep -q 'mock harness' /workspace/.everflow/bin/opencode 2>/dev/null; then "
+            "rm -f /workspace/.everflow/bin/opencode; fi && "
+            "export PATH=\"/usr/local/bin:/workspace/.everflow/bin:$PATH\" && "
             f"(nohup opencode serve --hostname 127.0.0.1 --port {port} "
             f">/workspace/.everflow/opencode-serve.log 2>&1 & echo $!)"
         )
