@@ -123,6 +123,12 @@ export function ChartPanel() {
     [visibleSeats, parentOf],
   )
 
+  useEffect(() => {
+    if (addReportsTo) return
+    const human = visibleSeats.find((s) => s.kind === 'human')
+    if (human) setAddReportsTo(human.id)
+  }, [visibleSeats, addReportsTo])
+
   const selected = visibleSeats.find((s) => s.id === selectedId) || null
   const byId = useMemo(
     () => Object.fromEntries((chart?.seats || []).map((s) => [s.id, s])),
