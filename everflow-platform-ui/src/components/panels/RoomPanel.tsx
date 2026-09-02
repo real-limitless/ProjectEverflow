@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  Alert,
+  AlertActionCloseButton,
   Button,
   Checkbox,
   Dropdown,
@@ -17,11 +19,18 @@ import {
   NavItem,
   NavList,
   Spinner,
-  TextArea,
   TextInput,
 } from '@patternfly/react-core'
 import EllipsisVIcon from '@patternfly/react-icons/dist/esm/icons/ellipsis-v-icon'
 import PlusIcon from '@patternfly/react-icons/dist/esm/icons/plus-icon'
+import {
+  DEFAULT_CHAT_MCPS,
+  DEFAULT_CHAT_MODEL,
+  DEFAULT_CHAT_MODE,
+  DEFAULT_CHAT_SKILLS,
+  DEFAULT_CHAT_TOOLS,
+  type CatalogItem,
+} from '@/data/chatCatalog'
 import { isDemoMode } from '@/lib/api'
 import {
   attachSeat,
@@ -38,9 +47,35 @@ import {
 } from '@/lib/orgApi'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import type { Channel, ChannelMessage, OrgRun, Seat, Team } from '@/types/org'
+import type { ChatMode } from '@/types/panels'
+import { ChatComposer } from './ChatComposer'
+import { ChatEmptyState } from './ChatEmptyState'
 
-const DEMO_SENTENCE =
-  'Talk to Product and the Eng team. When they complete, have DevOps deploy to staging and QA test everything.'
+const ROOM_EMPTY_SUGGESTIONS = [
+  '@product review the latest brief',
+  '@eng-build implement the next slice',
+  '@qa test staging after deploy',
+]
+
+function withMentions(body: string, slugs: string[]): string {
+  const missing = slugs.filter((slug) => {
+    if (!slug) return false
+    const escaped = slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return !new RegExp(`@${escaped}\\b`, 'i').test(body)
+  })
+  if (!missing.length) return body
+  return `${missing.map((s) => `@${s}`).join(' ')} ${body}`.trim()
+}
+
+function agentInitials(name?: string): string {
+  if (!name) return 'AI'
+  return name
+    .split(/\s+/)
+    .map((p) => p[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase()
+}
 
 function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -50,13 +85,20 @@ export function RoomPanel() {
   const projectId = usePlaygroundStore((s) => s.currentProjectId)
   const openPanelType = usePlaygroundStore((s) => s.openPanelType)
   const requestTerminalSession = usePlaygroundStore((s) => s.requestTerminalSession)
+  const requestChatSeat = usePlaygroundStore((s) => s.requestChatSeat)
   const [channels, setChannels] = useState<Channel[]>([])
   const [teams, setTeams] = useState<Team[]>([])
   const [channelId, setChannelId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChannelMessage[]>([])
   const [seats, setSeats] = useState<Seat[]>([])
   const [run, setRun] = useState<OrgRun | null>(null)
-  const [draft, setDraft] = useState(DEMO_SENTENCE)
+  const [draft, setDraft] = useState('')
+  const [composerAgent, setComposerAgent] = useState('')
+  const [composerMode, setComposerMode] = useState<ChatMode>(DEFAULT_CHAT_MODE)
+  const [composerModel, setComposerModel] = useState(DEFAULT_CHAT_MODEL)
+  const [composerTools, setComposerTools] = useState(DEFAULT_CHAT_TOOLS)
+  const [composerMcps, setComposerMcps] = useState(DEFAULT_CHAT_MCPS)
+  const [composerSkills, setComposerSkills] = useState(DEFAULT_CHAT_SKILLS)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -72,6 +114,25 @@ export function RoomPanel() {
 
   const seatById = useMemo(() => Object.fromEntries(seats.map((s) => [s.id, s])), [seats])
   const active = channels.find((c) => c.id === channelId)
+  const botSeats = useMemo(
+    () => seats.filter((s) => s.kind === 'bot' && !s.is_conductor && !s.fired),
+    [seats],
+  )
+  const composerAgentOptions = useMemo<CatalogItem[]>(
+    () =>
+      botSeats.map((s) => ({
+        id: (s.agent_slug || s.slug).trim(),
+        label: s.name,
+        description: `@${s.slug}${s.role ? ` · ${s.role}` : ''}`,
+      })),
+    [botSeats],
+  )
+
+  useEffect(() => {
+    if (!composerAgent && composerAgentOptions[0]) {
+      setComposerAgent(composerAgentOptions[0].id)
+    }
+  }, [composerAgent, composerAgentOptions])
 
   const refresh = useCallback(async () => {
     if (!projectId || isDemoMode()) {
@@ -115,10 +176,33 @@ export function RoomPanel() {
 
   const send = async () => {
     if (!projectId || !channelId || !draft.trim()) return
+    const agentSeat =
+      botSeats.find((s) => (s.agent_slug || s.slug).trim() === composerAgent) ||
+      botSeats.find((s) => s.slug === composerAgent)
+    const mentionSlugs = [
+      ...participants.map((p) => p.slug),
+      ...(agentSeat ? [agentSeat.slug] : composerAgent ? [composerAgent] : []),
+    ]
+    const body = withMentions(draft.trim(), mentionSlugs)
+    const hasMentions = /@[\w-]+/.test(body)
+    const optimistic: ChannelMessage = {
+      id: `local-${Date.now()}`,
+      channel_id: channelId,
+      thread_id: null,
+      author_user_id: 'you',
+      author_seat_id: null,
+      body,
+      kind: 'message',
+      mentions: [],
+      run_id: null,
+      created_at: new Date().toISOString(),
+    }
     setSending(true)
+    setError(null)
+    setDraft('')
+    setMessages((prev) => [...prev, optimistic])
     try {
-      const msg = await postMessage(projectId, channelId, draft.trim())
-      setDraft('')
+      const msg = await postMessage(projectId, channelId, body, { compileRun: hasMentions })
       const msgs = await listMessages(projectId, channelId)
       setMessages(msgs)
       if (msg.run_id) setRun(await getRun(projectId, msg.run_id))
@@ -127,6 +211,11 @@ export function RoomPanel() {
     } finally {
       setSending(false)
     }
+  }
+
+  const startChat = (seat: Seat) => {
+    requestChatSeat({ agent: seat.agent_slug || seat.slug })
+    openPanelType('chat')
   }
 
   const insertMention = (handle: string) => {
@@ -151,6 +240,20 @@ export function RoomPanel() {
       openPanelType('terminal')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Attach seat failed')
+    }
+  }
+
+  const composerAdvanced = async () => {
+    const seat =
+      botSeats.find((s) => (s.agent_slug || s.slug).trim() === composerAgent) ||
+      seats.find((s) => s.slug === composerAgent)
+    if (seat) {
+      await advancedConversation(seat)
+      return
+    }
+    if (composerAgent) {
+      requestTerminalSession({ name: `@${composerAgent}`, cmd: 'opencode' })
+      openPanelType('terminal')
     }
   }
 
@@ -350,47 +453,56 @@ export function RoomPanel() {
             </LabelGroup>
           ) : null}
         </header>
-        {error ? <div className="room-error">{error}</div> : null}
+        {error ? (
+          <Alert
+            className="chat-inline-alert"
+            variant="danger"
+            isInline
+            title={error}
+            actionClose={
+              <AlertActionCloseButton title="Close alert" onClose={() => setError(null)} />
+            }
+          />
+        ) : null}
         {run ? <RunCard run={run} /> : null}
         <div className="room-msgs">
-          {messages.length === 0 ? (
-            <p className="room-hint">Speak in the channel. Bots pick up the work and hand it along.</p>
-          ) : (
-            messages.map((m) => (
-              <article key={m.id} className={`room-msg room-msg--${m.kind}`}>
-                <div className="room-msg__who">
-                  {m.author_seat_id
-                    ? seatById[m.author_seat_id]?.name || 'Seat'
-                    : m.kind === 'run_event'
-                      ? 'System'
-                      : 'You'}
-                </div>
-                <div className="room-msg__body">{m.body}</div>
-              </article>
-            ))
-          )}
+          <div className={`messages${messages.length === 0 ? ' messages--empty' : ''}`}>
+            {messages.length === 0 ? (
+              <ChatEmptyState
+                title="Start chatting"
+                description="Mention a seat to put work on the floor. @product reviews, @eng-build ships, @qa tests."
+                suggestions={ROOM_EMPTY_SUGGESTIONS}
+                onSuggestion={(text) => setDraft(text)}
+              />
+            ) : (
+              messages.map((m) => (
+                <RoomMessageBubble key={m.id} message={m} seatById={seatById} />
+              ))
+            )}
+          </div>
         </div>
         <div className="room-composer">
-          <div className="room-mentions">
-            {teams.map((t) => (
-              <button key={t.id} type="button" className="chart-chip" onClick={() => insertMention(t.mention)}>
-                @{t.mention}
-              </button>
-            ))}
-            {seats
-              .filter((s) => s.kind === 'bot')
-              .map((s) => (
-                <button key={s.id} type="button" className="chart-chip" onClick={() => insertMention(s.slug)}>
-                  @{s.slug}
-                </button>
-              ))}
-          </div>
-          <div className="room-composer__row">
-            <TextArea value={draft} onChange={(_e, v) => setDraft(v)} aria-label="Message" rows={3} />
-            <Button variant="primary" onClick={() => void send()} isDisabled={sending || !draft.trim()}>
-              Send
-            </Button>
-          </div>
+          <ChatComposer
+            draft={draft}
+            onDraftChange={setDraft}
+            onSend={() => void send()}
+            model={composerModel}
+            tools={composerTools}
+            mcps={composerMcps}
+            skills={composerSkills}
+            agent={composerAgent}
+            mode={composerMode}
+            onModelChange={setComposerModel}
+            onToolsChange={setComposerTools}
+            onMcpsChange={setComposerMcps}
+            onSkillsChange={setComposerSkills}
+            onAgentChange={setComposerAgent}
+            onModeChange={setComposerMode}
+            agentOptions={composerAgentOptions}
+            sendDisabled={sending}
+            isRunning={sending}
+            onAdvanced={() => void composerAdvanced()}
+          />
         </div>
       </section>
 
@@ -418,6 +530,7 @@ export function RoomPanel() {
             <DropdownList>
               <DropdownItem onClick={() => insertMention(s.slug)}>Mention</DropdownItem>
               <DropdownItem onClick={() => addToChannel(s)}>Add to channel</DropdownItem>
+              <DropdownItem onClick={() => startChat(s)}>Start Chat</DropdownItem>
               {s.kind === 'bot' ? (
                 <DropdownItem onClick={() => void advancedConversation(s)}>
                   Advanced conversation
@@ -485,6 +598,43 @@ export function RoomPanel() {
           </Button>
         </ModalFooter>
       </Modal>
+    </div>
+  )
+}
+
+function RoomMessageBubble({
+  message,
+  seatById,
+}: {
+  message: ChannelMessage
+  seatById: Record<string, Seat>
+}) {
+  const isYou =
+    message.kind !== 'run_event' &&
+    message.kind !== 'system' &&
+    !message.author_seat_id
+  const seat = message.author_seat_id ? seatById[message.author_seat_id] : undefined
+  const name = isYou
+    ? 'You'
+    : message.kind === 'run_event' || message.kind === 'system'
+      ? 'System'
+      : seat?.name || 'Seat'
+  return (
+    <div className={`msg ${isYou ? 'user' : 'assistant'}`}>
+      <div
+        className={`msg-avatar${isYou ? '' : ' agent-general'}`}
+        title={name}
+      >
+        {isYou ? 'U' : agentInitials(name)}
+      </div>
+      <div className="msg-col">
+        {!isYou ? <div className="msg-agent-label agent-general">{name}</div> : null}
+        <div className="bubble">
+          <div className="msg-md" style={{ whiteSpace: 'pre-wrap' }}>
+            {message.body}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ActionList,
+  ActionListGroup,
+  ActionListItem,
   Button,
   Checkbox,
   FormSelect,
   FormSelectOption,
+  Label,
+  LabelGroup,
   Modal,
   ModalBody,
   ModalFooter,
@@ -13,6 +18,7 @@ import {
   TextArea,
   TextInput,
 } from '@patternfly/react-core'
+import PlusIcon from '@patternfly/react-icons/dist/esm/icons/plus-icon'
 import SearchMinusIcon from '@patternfly/react-icons/dist/esm/icons/search-minus-icon'
 import SearchPlusIcon from '@patternfly/react-icons/dist/esm/icons/search-plus-icon'
 import { TypeaheadMultiSelect, type TypeaheadOption } from '@/components/org/TypeaheadMultiSelect'
@@ -73,6 +79,7 @@ export function ChartPanel({ embedded = false }: { embedded?: boolean }) {
   const [addTeamId, setAddTeamId] = useState('')
   const [addReportsTo, setAddReportsTo] = useState('')
   const [teamName, setTeamName] = useState('')
+  const [addTeamOpen, setAddTeamOpen] = useState(false)
   const [zoom, setZoom] = useState(ZOOM_DEFAULT)
   const treeViewportRef = useRef<HTMLDivElement>(null)
   const requestTerminalSession = usePlaygroundStore((s) => s.requestTerminalSession)
@@ -254,40 +261,24 @@ export function ChartPanel({ embedded = false }: { embedded?: boolean }) {
             </div>
           </div>
           <div className="chart-head__teams">
-            {teams.map((t) => (
-              <span key={t.id} className="chart-team-chip">
-                @{t.mention}
-                <button
-                  type="button"
-                  aria-label={`Remove @${t.mention}`}
-                  onClick={() => void act(() => deleteTeam(projectId, t.id))}
+            <LabelGroup className="chart-head__team-labels" aria-label="Teams" numLabels={8}>
+              {teams.map((t) => (
+                <Label
+                  key={t.id}
+                  variant="outline"
+                  onClose={() => void act(() => deleteTeam(projectId, t.id))}
                 >
-                  ×
-                </button>
-              </span>
-            ))}
-            <span className="chart-team-add">
-              <TextInput
-                value={teamName}
-                onChange={(_e, v) => setTeamName(v)}
-                aria-label="New team name"
-                placeholder="New team"
-              />
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() =>
-                  void act(async () => {
-                    const slug = slugify(teamName)
-                    if (!slug) return
-                    await createTeam(projectId, { name: teamName, slug, mention: slug })
-                    setTeamName('')
-                  })
-                }
-              >
-                Add team
-              </Button>
-            </span>
+                  @{t.mention}
+                </Label>
+              ))}
+            </LabelGroup>
+            <Button
+              variant="plain"
+              size="sm"
+              aria-label="Add team"
+              icon={<PlusIcon />}
+              onClick={() => setAddTeamOpen(true)}
+            />
           </div>
         </header>
         {error ? <div className="room-error">{error}</div> : null}
@@ -412,6 +403,54 @@ export function ChartPanel({ embedded = false }: { embedded?: boolean }) {
             Add
           </Button>
           <Button variant="link" onClick={() => setAdding(false)}>
+            Cancel
+          </Button>
+        </ModalFooter>
+      </Modal>
+
+      <Modal
+        variant={ModalVariant.small}
+        isOpen={addTeamOpen}
+        onClose={() => setAddTeamOpen(false)}
+        aria-labelledby="chart-add-team-title"
+      >
+        <ModalHeader title="Add team" labelId="chart-add-team-title" />
+        <ModalBody>
+          <TextInput
+            id="chart-new-team-name"
+            value={teamName}
+            onChange={(_e, v) => setTeamName(v)}
+            placeholder="e.g. eng"
+            aria-label="Team name"
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              const slug = slugify(teamName)
+              if (!slug || !projectId) return
+              void act(async () => {
+                await createTeam(projectId, { name: teamName, slug, mention: slug })
+                setTeamName('')
+                setAddTeamOpen(false)
+              })
+            }}
+          />
+        </ModalBody>
+        <ModalFooter>
+          <Button
+            variant="primary"
+            isDisabled={!slugify(teamName)}
+            onClick={() =>
+              void act(async () => {
+                const slug = slugify(teamName)
+                if (!slug) return
+                await createTeam(projectId, { name: teamName, slug, mention: slug })
+                setTeamName('')
+                setAddTeamOpen(false)
+              })
+            }
+          >
+            Add
+          </Button>
+          <Button variant="link" onClick={() => setAddTeamOpen(false)}>
             Cancel
           </Button>
         </ModalFooter>
@@ -770,51 +809,58 @@ function SeatInspector({
         ) : null}
       </section>
 
-      <Button
-        onClick={() =>
-          void onSave({
-            description,
-            prompt,
-            skills,
-            preferred_models: models,
-            tools,
-            permission,
-            team_id: teamId || null,
-            reports_to_id: reportsTo || null,
-          })
-        }
-      >
-        Save
-      </Button>
-
-      <div className="chart-inspector__btns">
-        <Button size="sm" variant="secondary" onClick={onOpenRoom}>
-          Open room
-        </Button>
-        {seat.kind === 'bot' ? (
-          <>
-            <Button size="sm" variant="secondary" onClick={onOpenSession}>
-              Open session
+      <ActionList className="chart-inspector__actions">
+        <ActionListGroup>
+          <ActionListItem>
+            <Button
+              onClick={() =>
+                void onSave({
+                  description,
+                  prompt,
+                  skills,
+                  preferred_models: models,
+                  tools,
+                  permission,
+                  team_id: teamId || null,
+                  reports_to_id: reportsTo || null,
+                })
+              }
+            >
+              Save
             </Button>
-            {seat.paused ? (
-              <Button size="sm" variant="secondary" onClick={() => void onResume()}>
-                Resume
-              </Button>
-            ) : (
-              <Button size="sm" variant="secondary" onClick={() => void onPause()}>
-                Pause
-              </Button>
-            )}
-          </>
-        ) : null}
-      </div>
-      {seat.kind === 'bot' ? (
-        <div className="chart-inspector__remove">
-          <Button size="sm" variant="danger" onClick={() => void onRemove()}>
-            Remove
-          </Button>
-        </div>
-      ) : null}
+          </ActionListItem>
+          <ActionListItem>
+            <Button variant="secondary" onClick={onOpenRoom}>
+              Open room
+            </Button>
+          </ActionListItem>
+          {seat.kind === 'bot' ? (
+            <>
+              <ActionListItem>
+                <Button variant="secondary" onClick={onOpenSession}>
+                  Open session
+                </Button>
+              </ActionListItem>
+              <ActionListItem>
+                {seat.paused ? (
+                  <Button variant="secondary" onClick={() => void onResume()}>
+                    Resume
+                  </Button>
+                ) : (
+                  <Button variant="secondary" onClick={() => void onPause()}>
+                    Pause
+                  </Button>
+                )}
+              </ActionListItem>
+              <ActionListItem>
+                <Button variant="danger" onClick={() => void onRemove()}>
+                  Remove
+                </Button>
+              </ActionListItem>
+            </>
+          ) : null}
+        </ActionListGroup>
+      </ActionList>
     </>
   )
 }

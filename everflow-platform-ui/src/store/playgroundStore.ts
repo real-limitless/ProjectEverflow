@@ -134,6 +134,8 @@ interface PlaygroundState {
   terminalPrefill: string | null
   /** Open a named Terminal session (Room advanced conversation). Not persisted. */
   terminalSessionRequest: { name: string; cmd?: string } | null
+  /** Focus Chat on an org seat (Room Start Chat). Not persisted. */
+  chatSeatRequest: { agent: string } | null
   /** Per-project active repository id (Repository panel + repo strip) */
   activeRepoByProject: Record<string, string>
   /**
@@ -213,6 +215,8 @@ interface PlaygroundState {
   clearTerminalPrefill: () => void
   requestTerminalSession: (req: { name: string; cmd?: string }) => void
   clearTerminalSessionRequest: () => void
+  requestChatSeat: (req: { agent: string }) => void
+  clearChatSeatRequest: () => void
   createProject: (
     draft: import('@/data/createProjectDraft').CreateProjectDraft | string,
   ) => Promise<string | null>
@@ -592,6 +596,7 @@ function createInitial() {
     catalogVersion: 0,
     terminalPrefill: null as string | null,
     terminalSessionRequest: null as { name: string; cmd?: string } | null,
+    chatSeatRequest: null as { agent: string } | null,
     activeRepoByProject: {},
     repoViewPathByProject: {},
     sandboxReadyByProject: {},
@@ -624,6 +629,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   paletteDragging: false,
   terminalPrefill: null,
   terminalSessionRequest: null,
+  chatSeatRequest: null,
   activeRepoByProject: initial.activeRepoByProject || {},
   repoViewPathByProject: initial.repoViewPathByProject || {},
   sandboxReadyByProject: initial.sandboxReadyByProject || {},
@@ -654,6 +660,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   clearTerminalPrefill: () => set({ terminalPrefill: null }),
   requestTerminalSession: (req) => set({ terminalSessionRequest: req }),
   clearTerminalSessionRequest: () => set({ terminalSessionRequest: null }),
+  requestChatSeat: (req) => set({ chatSeatRequest: req }),
+  clearChatSeatRequest: () => set({ chatSeatRequest: null }),
 
   getActiveRepoId: (projectId) => {
     const id = projectId === undefined ? get().currentProjectId : projectId
