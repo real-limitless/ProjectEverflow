@@ -100,12 +100,17 @@ jobs:
           build-args: ${{ matrix.build_args }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          provenance: false
+          sbom: false
 
   guest:
     name: Publish sandbox-guest
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_guest != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    # Pre-existing ghcr.io/real-limitless/everflow-sandbox-guest (Jul 2026)
+    # is public but not linked to this repo. GITHUB_TOKEN cannot overwrite it
+    # until a maintainer connects the package to ProjectEverflow (docs/images.md).
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -150,3 +155,6 @@ jobs:
           labels: ${{ steps.tags.outputs.labels }}
           cache-from: type=gha,scope=everflow-sandbox-guest
           cache-to: type=gha,mode=max,scope=everflow-sandbox-guest
+          # Large Fedora+Playwright image — skip attestation payloads on push.
+          provenance: false
+          sbom: false

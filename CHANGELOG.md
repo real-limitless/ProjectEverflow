@@ -15,6 +15,7 @@ Post-`BETA-v0.0.1` hardening on `Development-Everflow` ([#6](https://github.com/
 
 - GitHub Actions workflow to publish control-plane and guest images to `ghcr.io/real-limitless/*` ([`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml)).
 - [`docs/images.md`](docs/images.md) — required image names, tags, and how `INSTALL_MODE=ghcr` is supposed to work.
+- First publish after merge: frontend, backend, and sandbox-agent are on GHCR (`latest` / `sha-446eb19`). Guest push is blocked until the pre-existing unlinked `everflow-sandbox-guest` package is connected to this repository.
 
 ### Changed
 

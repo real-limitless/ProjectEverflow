@@ -43,8 +43,30 @@ These are mirrored from other registries into the local registry during seed:
 | `branch-development-everflow` | Branch slug from the workflow |
 
 `BETA-v0.0.1` shipped **without** a guaranteed published multi-arch GHCR set.
-Until a human with GHCR write access runs [`.github/workflows/publish-images.yml`](../.github/workflows/publish-images.yml),
-`INSTALL_MODE=ghcr` must fail honestly.
+
+### Publish status (after merge of #7)
+
+Control-plane packages **are** on GHCR and linked to this repo (public,
+`linux/amd64`, tags `latest` / `sha-446eb19` / `branch-Development-Everflow`):
+
+- `ghcr.io/real-limitless/everflow-frontend`
+- `ghcr.io/real-limitless/everflow-backend`
+- `ghcr.io/real-limitless/everflow-sandbox-agent`
+
+`everflow-sandbox-guest` already existed (public, tags `latest` + `dev` from
+2026-07-21) but is **not linked** to `real-limitless/ProjectEverflow`.
+`GITHUB_TOKEN` therefore gets `permission_denied: write_package` on push.
+The guest **image builds** in CI; only the overwrite is blocked.
+
+A maintainer must connect that package to this repository, then re-run
+**Actions → Publish images**:
+
+1. Open [everflow-sandbox-guest](https://github.com/users/real-limitless/packages/container/package/everflow-sandbox-guest).
+2. **Package settings** → connect repository **ProjectEverflow**.
+3. Re-run [Publish images](https://github.com/real-limitless/ProjectEverflow/actions/workflows/publish-images.yml).
+
+Until that link exists, `INSTALL_MODE=ghcr` will fail honestly on the guest
+image (use `BUILD_FROM_SOURCE=1` / `INSTALL_MODE=build`).
 
 ## How `INSTALL_MODE=ghcr` is supposed to work
 
