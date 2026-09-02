@@ -15,6 +15,8 @@ import { TerminalPanel } from '@/components/panels/TerminalPanel'
 import { TestsPanel } from '@/components/panels/TestsPanel'
 import { ToolsPanel } from '@/components/panels/ToolsPanel'
 import { WorkflowsPanel } from '@/components/panels/WorkflowsPanel'
+import { RoomPanel } from '@/components/panels/RoomPanel'
+import { ChartPanel } from '@/components/panels/ChartPanel'
 
 interface PanelHostProps {
   panelKey: PanelKey
@@ -37,6 +39,8 @@ export function PanelHost({ panelKey }: PanelHostProps) {
       data-panel-content={panelKey}
     >
       {type === 'chat' && <ChatPanel panelKey={panelKey} />}
+      {type === 'room' && <RoomPanel />}
+      {type === 'chart' && <ChartPanel />}
       {type === 'preview' && <PreviewPanel />}
       {type === 'desktop' && <DesktopPanel />}
       {type === 'knowledge' && <KnowledgePanel />}

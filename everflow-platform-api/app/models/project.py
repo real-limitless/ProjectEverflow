@@ -13,10 +13,13 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.agent import ProjectAgent
+    from app.models.bus import BusEvent, OrgRun
     from app.models.deploy import DeployNode, DeploySshKey
     from app.models.http_tool import ProjectHttpTool
     from app.models.knowledge import KnowledgeCanvas, KnowledgeCollection
+    from app.models.org import Seat, Team
     from app.models.organization import Organization
+    from app.models.room import Channel
     from app.models.test_suite import TestSuite
     from app.models.workflow import Workflow
 
@@ -54,6 +57,9 @@ class Project(Base):
     sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sandbox_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     sandbox_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Project law every seat must read (also written as constitution.md in the sandbox).
+    constitution_md: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -105,6 +111,31 @@ class Project(Base):
     )
     deploy_nodes: Mapped[list["DeployNode"]] = relationship(
         "DeployNode",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    teams: Mapped[list["Team"]] = relationship(
+        "Team",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    seats: Mapped[list["Seat"]] = relationship(
+        "Seat",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    channels: Mapped[list["Channel"]] = relationship(
+        "Channel",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    runs: Mapped[list["OrgRun"]] = relationship(
+        "OrgRun",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    bus_events: Mapped[list["BusEvent"]] = relationship(
+        "BusEvent",
         back_populates="project",
         cascade="all, delete-orphan",
     )

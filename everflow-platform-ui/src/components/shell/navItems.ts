@@ -14,7 +14,7 @@ export interface NavItemDef {
 }
 
 export const NAV_ITEMS: NavItemDef[] = [
-  { id: 'overview', label: 'Overview', path: '/overview', icon: TachometerAltIcon },
+  { id: 'overview', label: 'Org chart', path: '/overview', icon: TachometerAltIcon },
   { id: 'usage', label: 'Usage', path: '/usage', icon: ChartLineIcon },
   {
     id: 'playground',

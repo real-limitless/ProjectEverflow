@@ -31,6 +31,9 @@ from app.models.workflow import (
 from app.models.test_suite import TestCase, TestSuite
 from app.models.http_tool import ProjectHttpTool
 from app.models.deploy import DeployNode, DeployRoute, DeployRun, DeploySshKey
+from app.models.org import Seat, Team
+from app.models.room import Channel, ChannelMessage
+from app.models.bus import BusEvent, MemoryBlock, OrgRun, OrgRunNode
 
 __all__ = [
     "User",
@@ -66,4 +69,12 @@ __all__ = [
     "DeployNode",
     "DeployRoute",
     "DeployRun",
+    "Team",
+    "Seat",
+    "Channel",
+    "ChannelMessage",
+    "OrgRun",
+    "OrgRunNode",
+    "BusEvent",
+    "MemoryBlock",
 ]

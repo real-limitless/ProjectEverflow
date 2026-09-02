@@ -137,6 +137,36 @@ async def test_list_projects() -> None:
 
 
 @pytest.mark.asyncio
+@respx.mock
+async def test_bus_and_seats() -> None:
+    respx.get(f"{BASE}/api/v1/projects/{PID}/seats").mock(
+        return_value=httpx.Response(
+            200,
+            json=[{"id": "seat-1", "slug": "floor", "name": "Floor"}],
+        )
+    )
+    respx.post(f"{BASE}/api/v1/projects/{PID}/bus").mock(
+        return_value=httpx.Response(
+            200,
+            json={"id": "ev-1", "verb": "ask_human", "status": "ok"},
+        )
+    )
+    respx.post(f"{BASE}/api/v1/projects/{PID}/runs/compile").mock(
+        return_value=httpx.Response(
+            201,
+            json={"id": "run-1", "status": "compiled", "nodes": []},
+        )
+    )
+    c = _client()
+    seats = await c.list_seats()
+    assert seats[0]["slug"] == "floor"
+    ev = await c.bus_dispatch("ask_human", from_seat_id="seat-1", payload={"reason": "gate"})
+    assert ev["verb"] == "ask_human"
+    run = await c.compile_run("Talk to Product and QA")
+    assert run["id"] == "run-1"
+
+
+@pytest.mark.asyncio
 async def test_connect_error_surfaces_quickly() -> None:
     """Unreachable base URL should raise EverflowApiError (not hang indefinitely)."""
     c = EverflowClient(

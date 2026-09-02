@@ -38,6 +38,7 @@ import {
   allPanelsInLayout,
   cloneLayout,
   countTypeInLayout,
+  findPanelLocation,
   firstGroup,
   movePanelToGroupAt,
   removePanelFromLayout,
@@ -89,6 +90,7 @@ import type {
   ChatMode,
   ConversationWorktree,
 } from '@/types/panels'
+import type { SurfaceMode } from '@/types/org'
 import {
   createProject as apiCreateProject,
   deleteProject as apiDeleteProject,
@@ -142,6 +144,10 @@ interface PlaygroundState {
    * Not persisted — reload always re-verifies before mounting the workbench.
    */
   sandboxReadyByProject: Record<string, boolean>
+  /** Room | Harness | Chart — same seats, three views */
+  surfaceMode: SurfaceMode
+  setSurfaceMode: (mode: SurfaceMode) => void
+  cycleSurfaceMode: () => void
 
   // derived helpers exposed as methods
   nextGroupId: () => string
@@ -298,6 +304,8 @@ function seedInstances(
 ): Record<string, PanelKey> {
   return {
     chat: spawn('chat'),
+    room: spawn('room'),
+    chart: spawn('chart'),
     preview: spawn('preview'),
     knowledge: spawn('knowledge'),
     code: spawn('code'),
@@ -367,8 +375,8 @@ function buildDefaultLayout(
         {
           type: 'group',
           id: nextGroupId(),
-          tabs: [keys.chat],
-          active: keys.chat,
+          tabs: [keys.room, keys.chat],
+          active: keys.room,
         },
         {
           type: 'group',
@@ -423,8 +431,8 @@ function buildDefaultLayout(
       {
         type: 'group',
         id: nextGroupId(),
-        tabs: [keys.chat],
-        active: keys.chat,
+        tabs: [keys.room, keys.chat],
+        active: keys.room,
       },
       {
         type: 'split',
@@ -440,7 +448,7 @@ function buildDefaultLayout(
           {
             type: 'group',
             id: nextGroupId(),
-            tabs: [keys.terminal],
+            tabs: [keys.terminal, keys.chart],
             active: keys.terminal,
           },
         ],
@@ -553,6 +561,7 @@ function createInitial() {
       activeRepoByProject: {},
       repoViewPathByProject: {},
       sandboxReadyByProject: {},
+      surfaceMode: 'room' as SurfaceMode,
     }
   }
 
@@ -581,6 +590,7 @@ function createInitial() {
     activeRepoByProject: {},
     repoViewPathByProject: {},
     sandboxReadyByProject: {},
+    surfaceMode: 'room' as SurfaceMode,
   }
 }
 
@@ -611,8 +621,28 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   activeRepoByProject: initial.activeRepoByProject || {},
   repoViewPathByProject: initial.repoViewPathByProject || {},
   sandboxReadyByProject: initial.sandboxReadyByProject || {},
+  surfaceMode: (initial.surfaceMode || 'room') as SurfaceMode,
   projectsSyncedKey: null,
   projectsSyncError: null,
+
+  setSurfaceMode: (mode) => {
+    set({ surfaceMode: mode })
+    const type = mode === 'harness' ? 'terminal' : mode
+    const existing = allPanelsInLayout(get().layout).find((k) => typeOf(k) === type)
+    if (existing) {
+      const loc = findPanelLocation(get().layout, existing)
+      if (loc) {
+        set({ layout: setActiveTab(get().layout, loc.group.id, existing) })
+      }
+    } else {
+      get().openPanelType(type)
+    }
+  },
+  cycleSurfaceMode: () => {
+    const order: SurfaceMode[] = ['room', 'harness', 'chart']
+    const i = order.indexOf(get().surfaceMode)
+    get().setSurfaceMode(order[(i + 1) % order.length])
+  },
 
   setTerminalPrefill: (cmd) => set({ terminalPrefill: cmd }),
   clearTerminalPrefill: () => set({ terminalPrefill: null }),
