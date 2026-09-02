@@ -66,6 +66,8 @@ interface ChatComposerProps {
   /** True while a prompt / agent turn is in flight */
   isRunning?: boolean
   onStop?: () => void
+  /** Open a named OpenCode terminal for the selected seat / agent */
+  onAdvanced?: () => void
 }
 
 function toggle(list: string[], id: string) {
@@ -102,6 +104,7 @@ export function ChatComposer({
   sendDisabled,
   isRunning,
   onStop,
+  onAdvanced,
 }: ChatComposerProps) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const [modelOpen, setModelOpen] = useState(false)
@@ -364,6 +367,17 @@ export function ChatComposer({
               ) : null}
             </SelectList>
           </Select>
+
+          {onAdvanced ? (
+            <Button
+              variant="link"
+              isInline
+              className="chat-composer-advanced"
+              onClick={onAdvanced}
+            >
+              Advanced
+            </Button>
+          ) : null}
 
           {isRunning ? (
             <Button

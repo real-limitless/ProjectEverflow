@@ -71,6 +71,8 @@ import {
   replaceConversationInList,
   sanitizeMessagesForRemint,
 } from '@/lib/opencode/sessionSync'
+import { attachSeat, listSeats } from '@/lib/orgApi'
+import type { Seat } from '@/types/org'
 import { agentFromPack, getOpenCodeHarness } from '@/lib/harness/opencodePack'
 import { pushToast } from '@/lib/studioToast'
 import { buildKnowledgeSystemContext } from '@/lib/knowledgeRag'
@@ -166,6 +168,9 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const patchConversationWorktree = usePlaygroundStore((s) => s.patchConversationWorktree)
   const getActiveRepoId = usePlaygroundStore((s) => s.getActiveRepoId)
   const setRepoViewPath = usePlaygroundStore((s) => s.setRepoViewPath)
+  const requestTerminalSession = usePlaygroundStore((s) => s.requestTerminalSession)
+  const chatSeatRequest = usePlaygroundStore((s) => s.chatSeatRequest)
+  const clearChatSeatRequest = usePlaygroundStore((s) => s.clearChatSeatRequest)
   const [draft, setDraft] = useState('')
   const [worktreeBusy, setWorktreeBusy] = useState(false)
   const [liveStatus, setLiveStatus] = useState<LiveStatus>('idle')
@@ -201,6 +206,10 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
   const answeredQuestionIdsRef = useRef<Set<string>>(new Set())
   /** Soft-default everflow MCP at most once per panel mount. */
   const everflowDefaultedRef = useRef(false)
+  /** Soft-default first org seat at most once per panel mount. */
+  const seatDefaultedRef = useRef(false)
+  /** Picker id (agent_slug || slug) → org seat for attachSeat / Advanced. */
+  const seatsByAgentRef = useRef<Record<string, Seat>>({})
   /** Current chat mode for SSE handlers (avoid stale closures). */
   const modeRef = useRef<ChatMode>(DEFAULT_CHAT_MODE)
   /** Soft permissions for SSE auto-approve decisions. */
@@ -327,6 +336,12 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     scrollMessagesToEnd('auto')
     setShowJumpOrb(false)
   }, [messages, sending, stickToBottom, scrollMessagesToEnd, chatAlert])
+
+  useEffect(() => {
+    if (!chatSeatRequest?.agent) return
+    setConversationAgent(panelKey, chatSeatRequest.agent)
+    clearChatSeatRequest()
+  }, [chatSeatRequest, panelKey, setConversationAgent, clearChatSeatRequest])
 
   const clearChatError = useCallback(() => {
     setLiveError(null)
@@ -763,11 +778,12 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
 
   const loadCatalogs = useCallback(async (projectId: string) => {
     try {
-      const [prov, mcpMap, agentList, harness] = await Promise.all([
+      const [prov, mcpMap, agentList, harness, orgSeats] = await Promise.all([
         listProviders(projectId),
         listMcp(projectId).catch(() => ({})),
         listAgents(projectId).catch(() => []),
         getOpenCodeHarness(projectId).catch(() => null),
+        listSeats(projectId).catch(() => [] as Seat[]),
       ])
       // harness-updated listeners call loadCatalogs to pick up new agents/MCP
       const modelItems: CatalogItem[] = []
@@ -868,18 +884,53 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           mode: a.mode || prev?.mode || 'all',
         })
       }
-      const agentItems: CatalogItem[] = Array.from(byName.values()).map(
+      const ocItems: CatalogItem[] = Array.from(byName.values()).map(
         ({ id, label, description }) => ({ id, label, description }),
       )
+
+      const botSeats = (orgSeats || []).filter(
+        (s) => s.kind === 'bot' && !s.is_conductor && !s.fired,
+      )
+      const seatMap: Record<string, Seat> = {}
+      const seatItems: CatalogItem[] = []
+      for (const s of botSeats) {
+        const id = (s.agent_slug || s.slug).trim()
+        if (!id) continue
+        seatMap[id] = s
+        seatItems.push({
+          id,
+          label: s.name,
+          description: `@${s.slug}${s.role ? ` · ${s.role}` : ''}`,
+        })
+      }
+      seatsByAgentRef.current = seatMap
+      const seatIds = new Set(seatItems.map((a) => a.id.toLowerCase()))
+      const remainingOc = ocItems.filter((a) => !seatIds.has(a.id.toLowerCase()))
+      const agentItems = [...seatItems, ...remainingOc]
       setAgentsLive(agentItems.length ? agentItems : null)
 
-      // Soft-default primary agent if panel has none (prefer build from live catalog)
+      // Soft-default: first org seat when seats exist; otherwise OpenCode build/plan.
+      // DEFAULT_PRIMARY_AGENT is seeded on every panel, so treat it as unset
+      // until the user picks a non-default or Start Chat sets a seat.
       if (agentItems.length) {
         const cur =
           usePlaygroundStore.getState().instanceState[panelKey]?.primaryAgent
-        if (!cur) {
-          const def = pickDefaultPrimaryAgent(agentItems.map((a) => a.id))
-          usePlaygroundStore.getState().setConversationAgent(panelKey, def)
+        const curIsSeat = Boolean(cur && seatMap[cur])
+        if (
+          seatItems[0] &&
+          !seatDefaultedRef.current &&
+          !curIsSeat &&
+          (!cur || cur === DEFAULT_PRIMARY_AGENT)
+        ) {
+          seatDefaultedRef.current = true
+          usePlaygroundStore.getState().setConversationAgent(panelKey, seatItems[0].id)
+        } else if (!cur) {
+          usePlaygroundStore
+            .getState()
+            .setConversationAgent(
+              panelKey,
+              pickDefaultPrimaryAgent(agentItems.map((a) => a.id)),
+            )
         }
       }
 
@@ -1405,6 +1456,15 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
       if (modelRef) body.model = modelRef
       if (agentName) body.agent = agentName
       if (Object.keys(toolsMap).length) body.tools = toolsMap
+
+      const selectedSeat = agentName ? seatsByAgentRef.current[agentName] : undefined
+      if (selectedSeat && selectedSeat.kind === 'bot' && !selectedSeat.fired) {
+        try {
+          await attachSeat(projectId, selectedSeat.id)
+        } catch {
+          /* best-effort: harness sync via attach; prompt still uses body.agent */
+        }
+      }
 
       // Auto-RAG: inject top knowledge chunks into system so Chat answers from
       // the platform vector index even if the model skips knowledge_search.
@@ -2021,6 +2081,25 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
     else await hydrateSession(currentProjectId, st.convId)
   }
 
+  const handleAdvanced = useCallback(async () => {
+    const agentId =
+      usePlaygroundStore.getState().instanceState[panelKey]?.primaryAgent ||
+      primaryAgent
+    const seat = seatsByAgentRef.current[agentId]
+    const slug = seat?.slug || agentId
+    if (currentProjectId && seat && seat.kind === 'bot' && !seat.fired) {
+      try {
+        await attachSeat(currentProjectId, seat.id)
+      } catch {
+        /* best-effort */
+      }
+    }
+    if (slug) {
+      requestTerminalSession({ name: `@${slug}`, cmd: 'opencode' })
+      openPanelType('terminal')
+    }
+  }, [currentProjectId, panelKey, primaryAgent, requestTerminalSession, openPanelType])
+
   const composerModels = models
   // Respect enabledMcps ∩ live MCP ids (do not force-check every live server)
   const composerMcps = mcpsLive
@@ -2357,6 +2436,7 @@ export function ChatPanel({ panelKey }: ChatPanelProps) {
           }
           isRunning={sending}
           onStop={stopRunning}
+          onAdvanced={() => void handleAdvanced()}
         />
       </div>
 
