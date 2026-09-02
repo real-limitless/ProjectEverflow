@@ -113,6 +113,16 @@ For anything beyond this sketch, **query the graph** — do not invent connectio
 - Do not create commits or PRs unless the user asks.
 - After substantive code edits, run `graphify update .`.
 
+## Cloud Agent / nested Compose
+
+Product path is still **Compose only**. On a Cloud Agent VM, Docker is nested:
+
+- Storage driver: `fuse-overlayfs`. Start `dockerd` if the socket is down.
+- Use `docker-compose.dev.yml` so this checkout’s API/UI/agent source is bind-mounted.
+- Set `SANDBOX_MOCK=true` unless a guest image has been seeded into the embedded registry. `/dev/kvm` may exist; mock is still the default here because guest seed is a separate install phase.
+- Helpers: `scripts/cloud-agent/install.sh` (idempotent `.env`, no servers) and `scripts/cloud-agent/start.sh` (dockerd + compose up, then exit).
+- First admin: `./scripts/everflow setup-admin` or `POST /api/v1/setup/bootstrap`. Do not commit passwords.
+
 ## Where to read more
 
 | Doc | Use |
