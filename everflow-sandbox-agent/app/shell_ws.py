@@ -559,3 +559,127 @@ async def run_mock_shell(
         except Exception:
             pass
         await _safe_send(websocket, {"type": "exit", "code": 0})
+
+
+async def run_docker_exec_shell(
+    docker_bin: str,
+    container: str,
+    websocket: WebSocket,
+    *,
+    cmd: str | None = None,
+    cwd: str = "/workspace",
+    env: dict[str, str] | None = None,
+) -> None:
+    """Interactive shell via ``docker exec -i`` + guest PTY (container backend)."""
+    await _safe_send(websocket, {"type": "ready", "mode": "docker-pty", "need_size": True})
+    try:
+        cols, rows, buffered_input = await _wait_initial_size(websocket)
+    except WebSocketDisconnect:
+        return
+
+    inner = (cmd or "").strip() or "bash -il"
+    prefix = _stty_prefix(cols, rows)
+    guest = (
+        "import os, pty, sys\n"
+        f"os.chdir({cwd!r})\n"
+        f"os.environ['TERM']='xterm-256color'\n"
+        f"os.environ['COLUMNS']={str(cols)!r}\n"
+        f"os.environ['LINES']={str(rows)!r}\n"
+        f"pty.spawn(['/bin/bash','-lc',{prefix + 'exec ' + inner!r}])\n"
+    )
+    argv = [
+        docker_bin,
+        "exec",
+        "-i",
+        "-w",
+        cwd,
+        "-e",
+        "TERM=xterm-256color",
+        "-e",
+        f"COLUMNS={cols}",
+        "-e",
+        f"LINES={rows}",
+        container,
+        "python3",
+        "-c",
+        guest,
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        env=env,
+    )
+    assert proc.stdin is not None and proc.stdout is not None
+    stop = asyncio.Event()
+    await _safe_send(
+        websocket,
+        {"type": "started", "cols": cols, "rows": rows, "mode": "docker-pty"},
+    )
+    if buffered_input:
+        proc.stdin.write(buffered_input)
+        await proc.stdin.drain()
+
+    async def pump_out() -> None:
+        try:
+            while not stop.is_set():
+                chunk = await proc.stdout.read(4096)
+                if not chunk:
+                    break
+                if not await _safe_send(
+                    websocket,
+                    {"type": "output", "encoding": "base64", "data": _b64(chunk)},
+                ):
+                    break
+        finally:
+            stop.set()
+
+    async def pump_in() -> None:
+        try:
+            while not stop.is_set():
+                try:
+                    raw = await asyncio.wait_for(websocket.receive_text(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                except WebSocketDisconnect:
+                    break
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    proc.stdin.write(raw.encode())
+                    await proc.stdin.drain()
+                    continue
+                mtype = msg.get("type")
+                if mtype == "input":
+                    proc.stdin.write(_decode_input(msg))
+                    await proc.stdin.drain()
+                elif mtype == "ping":
+                    await _safe_send(websocket, {"type": "pong"})
+                elif mtype == "signal":
+                    # Best-effort: Ctrl-C / terminate the exec.
+                    sig = str(msg.get("sig", "INT")).upper()
+                    if "INT" in sig:
+                        proc.stdin.write(b"\x03")
+                        await proc.stdin.drain()
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+        finally:
+            stop.set()
+
+    out_task = asyncio.create_task(pump_out())
+    in_task = asyncio.create_task(pump_in())
+    try:
+        await stop.wait()
+    finally:
+        out_task.cancel()
+        in_task.cancel()
+        try:
+            if proc.returncode is None:
+                proc.kill()
+            await proc.wait()
+        except Exception:
+            pass
+        await _safe_send(websocket, {"type": "exit", "code": int(proc.returncode or 0)})

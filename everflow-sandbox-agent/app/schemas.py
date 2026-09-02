@@ -123,6 +123,8 @@ class HealthResponse(BaseModel):
     kvm: bool
     sdk: str
     mock: bool
+    runtime: str | None = None
+    kvm_usable: bool | None = None
 
 
 class OpenCodeEnsureRequest(BaseModel):

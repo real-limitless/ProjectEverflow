@@ -256,8 +256,10 @@ class MockSandboxBackend(SandboxBackend):
         return {
             "status": "ok",
             "kvm": kvm_available(),
+            "kvm_usable": None,
             "sdk": "mock",
             "mock": True,
+            "runtime": "mock",
         }
 
     async def create(
@@ -550,11 +552,16 @@ class MicrosandboxBackend(SandboxBackend):
             sdk = "microsandbox"
         except ImportError:
             sdk = "missing"
+        from app.kvm_probe import kvm_vcpu_usable
+
+        usable = kvm_vcpu_usable()
         return {
-            "status": "ok" if kvm_available() and sdk == "microsandbox" else "degraded",
+            "status": "ok" if kvm_available() and sdk == "microsandbox" and usable else "degraded",
             "kvm": kvm_available(),
+            "kvm_usable": usable,
             "sdk": sdk,
             "mock": False,
+            "runtime": "microsandbox",
         }
 
     def _cancel_bootstrap(self, name: str) -> None:
@@ -676,6 +683,14 @@ class MicrosandboxBackend(SandboxBackend):
 
         if not kvm_available():
             raise RuntimeError("/dev/kvm is not available on this host")
+        from app.kvm_probe import kvm_vcpu_usable
+
+        if not kvm_vcpu_usable():
+            raise RuntimeError(
+                "KVM device is present but KVM_CREATE_VCPU fails on this kernel "
+                "(nested virt / APICv). Use SANDBOX_RUNTIME=container so the same "
+                "guest image boots as a Docker container, or fix host KVM."
+            )
 
         ws = Path(workspace_host_path or (self._settings.workspace_path / name))
         ws.mkdir(parents=True, exist_ok=True)
@@ -1315,22 +1330,7 @@ def shlex_quote(s: str) -> str:
     return "'" + s.replace("'", "'\"'\"'") + "'"
 
 
-def build_backend(settings: Settings) -> SandboxBackend:
-    """
-    Prefer real microsandbox. Mock only when SANDBOX_MOCK is explicitly true.
-
-    If SANDBOX_MOCK is false/unset and KVM/SDK is missing, raise so deploy fails
-    loudly instead of silently giving fake sandboxes.
-    """
-    if settings.sandbox_mock is True:
-        logger.warning("SANDBOX_MOCK=true — using MockSandboxBackend (NOT for product)")
-        return MockSandboxBackend(settings)
-
-    if not kvm_available():
-        raise RuntimeError(
-            "/dev/kvm is not available. Real microVMs require KVM. "
-            "Pass --device /dev/kvm and privileged, or set SANDBOX_MOCK=true only for CI."
-        )
+def _require_microsandbox_sdk() -> None:
     try:
         import microsandbox  # noqa: F401
     except ImportError as exc:
@@ -1339,12 +1339,81 @@ def build_backend(settings: Settings) -> SandboxBackend:
             "Use deploy/sandbox-agent.Dockerfile based on ghcr.io/superradcompany/microsandbox."
         ) from exc
 
-    # Prefer official runtime binary when present
-    import shutil
 
-    msb = shutil.which("msb")
-    logger.info(
-        "Using MicrosandboxBackend (real microVMs) kvm=yes msb=%s",
-        msb or "(sdk-embedded)",
+def _container_backend(settings: Settings) -> SandboxBackend:
+    from app.container_backend import (
+        ContainerSandboxBackend,
+        docker_cli_available,
+        docker_socket_available,
     )
-    return MicrosandboxBackend(settings)
+
+    docker_bin = getattr(settings, "docker_bin", None) or "docker"
+    docker_host = getattr(settings, "docker_host", None)
+    if not docker_cli_available(docker_bin):
+        raise RuntimeError(
+            "KVM cannot create a vCPU on this host, and docker CLI is missing. "
+            "Mount the host docker binary or install docker-cli in sandbox-agent."
+        )
+    if not docker_socket_available(docker_host):
+        raise RuntimeError(
+            "KVM cannot create a vCPU on this host, and /var/run/docker.sock is "
+            "not mounted into sandbox-agent. Add the socket mount in compose."
+        )
+    logger.warning(
+        "Using ContainerSandboxBackend — same guest image, Docker engine "
+        "(KVM_CREATE_VCPU is broken on this kernel)"
+    )
+    return ContainerSandboxBackend(settings)
+
+
+def build_backend(settings: Settings) -> SandboxBackend:
+    """
+    Prefer real microsandbox microVMs. Mock only when SANDBOX_MOCK is explicitly true.
+
+    When KVM_CREATE_VCPU is broken (nested Cloud Agent kernels), auto-select the
+    container backend so the same guest image still boots. Never silently mock.
+    """
+    if settings.sandbox_mock is True:
+        logger.warning("SANDBOX_MOCK=true — using MockSandboxBackend (NOT for product)")
+        return MockSandboxBackend(settings)
+
+    runtime = (getattr(settings, "sandbox_runtime", None) or "auto").strip().lower()
+    if runtime == "container":
+        return _container_backend(settings)
+    if runtime == "microsandbox":
+        if not kvm_available():
+            raise RuntimeError(
+                "/dev/kvm is not available. Real microVMs require KVM. "
+                "Pass --device /dev/kvm and privileged, or set SANDBOX_RUNTIME=container."
+            )
+        _require_microsandbox_sdk()
+        import shutil
+
+        msb = shutil.which("msb")
+        logger.info(
+            "Using MicrosandboxBackend (forced) kvm=yes msb=%s",
+            msb or "(sdk-embedded)",
+        )
+        return MicrosandboxBackend(settings)
+
+    from app.kvm_probe import kvm_vcpu_usable
+
+    if kvm_vcpu_usable():
+        _require_microsandbox_sdk()
+        import shutil
+
+        msb = shutil.which("msb")
+        logger.info(
+            "Using MicrosandboxBackend (real microVMs) kvm=yes msb=%s",
+            msb or "(sdk-embedded)",
+        )
+        return MicrosandboxBackend(settings)
+
+    if kvm_available():
+        logger.warning(
+            "/dev/kvm is present but KVM_CREATE_VCPU fails — falling back to "
+            "container runtime for the guest image"
+        )
+    else:
+        logger.warning("/dev/kvm is missing — falling back to container runtime")
+    return _container_backend(settings)

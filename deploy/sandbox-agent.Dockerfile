@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     ca-certificates \
     curl \
+    docker.io \
     && rm -rf /var/lib/apt/lists/*
 
 # Avoid PEP 668 blocks for system Python in Ubuntu 24.04

@@ -120,7 +120,7 @@ Product path is still **Compose only**. On a Cloud Agent VM, Docker is nested:
 
 - Storage driver: `fuse-overlayfs`. Start `dockerd` if the socket is down.
 - Use `docker-compose.dev.yml` so this checkout’s API/UI/agent source is bind-mounted.
-- Keep `SANDBOX_MOCK=false` and seed the guest image (`./deploy/local-registry.sh seed` or `ONLY=guest ./deploy/local-registry.sh build-push`) so harnesses are real microVMs. `/dev/kvm` is required.
+- Keep `SANDBOX_MOCK=false` and seed the guest image (`./deploy/local-registry.sh seed` or `ONLY=guest ./deploy/local-registry.sh build-push`) so harnesses are real guests. `/dev/kvm` is required for microVMs. If `KVM_CREATE_VCPU` fails (nested Cloud Agent kernels that BUG in `alloc_loaded_vmcs`), the agent boots the same guest image as a sibling Docker container — mount `/var/run/docker.sock` (already in compose). Do not flip `SANDBOX_MOCK=true`.
 - Helpers: `scripts/cloud-agent/install.sh` (idempotent `.env`, no servers) and `scripts/cloud-agent/start.sh` (dockerd + compose up, then exit).
 - First admin: `./scripts/everflow setup-admin` or `POST /api/v1/setup/bootstrap`. Do not commit passwords.
 

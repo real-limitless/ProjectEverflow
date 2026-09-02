@@ -84,10 +84,12 @@ microsandbox runtime (`libkrunfw` + `msb`). Our Compose image is based on:
 
 Requirements (product Compose):
 
-- Linux host with `/dev/kvm` (read/write)
+- Linux host with `/dev/kvm` (read/write) for microVMs
 - `privileged: true` and device `/dev/kvm` (already in compose)
+- `/var/run/docker.sock` mounted so the agent can fall back to sibling containers when nested KVM cannot create a vCPU
 - Persistent volume on `/root/.microsandbox` for guest images
-- `SANDBOX_MOCK=false` for real microVMs (default in product compose)
+- `SANDBOX_MOCK=false` for real guests (default in product compose)
+- `SANDBOX_RUNTIME=auto` uses microVMs when `KVM_CREATE_VCPU` works; otherwise the same guest image runs as a Docker container (nested Cloud Agent kernels). Not mock.
 
 ## Unit tests (mock mode — not a supported stack)
 
