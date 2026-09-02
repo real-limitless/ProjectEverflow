@@ -33,8 +33,9 @@
 #   EVERFLOW_REF          Alias for EVERFLOW_VERSION
 #   EVERFLOW_ACTION       install | menu | setup-admin  (default: install on non-TTY, menu on TTY)
 #   CONTAINER_ENGINE      docker | podman
-#   BUILD_FROM_SOURCE=1   Build images instead of pull path
-#   INSTALL_MODE=ghcr|pull|build   Passed through to everflow install
+#   BUILD_FROM_SOURCE=1   Build images instead of pull path (exported to everflow)
+#   INSTALL_MODE=ghcr|pull|build   Exported to everflow install (no silent remap)
+#   EVERFLOW_IMAGE_TAG    GHCR/local image tag (default: latest)
 #   SKIP_CLONE=1          Reuse existing EVERFLOW_DIR without re-downloading
 #   EVERFLOW_NONINTERACTIVE=1  Force non-interactive install (no menu)
 #
@@ -118,10 +119,10 @@ check_engine() {
     ok "podman found"
     return
   fi
-  die "need Docker or Podman on the host.
+  die "Container engine not found (Docker or Podman).
 
-  Everflow runs only under Docker Compose or Podman Compose.
-  Running UI / API / sandbox-agent as host processes is not supported.
+  Everflow's only supported runtime is Docker Compose or Podman Compose.
+  Running the UI, API, or sandbox-agent as host processes is not supported.
 
   Install Docker Engine: https://docs.docker.com/engine/install/
   or Podman:           https://podman.io/getting-started/installation
@@ -152,7 +153,9 @@ check_compose() {
   die "${engine} Compose plugin not found.
 
   Everflow is a multi-service stack; Compose is the only supported runtime.
-  Install Compose V2 (docker compose / podman compose), then re-run."
+  Install Compose V2, then re-run:
+    docker compose version   # or: podman compose version
+  Docs: https://docs.docker.com/compose/install/"
 }
 
 clone_or_update() {
@@ -254,6 +257,22 @@ run_everflow() {
   cd "${dir}"
   export EVERFLOW_ROOT="${dir}"
 
+  # Explicit passthrough — do not rely on implicit shell inheritance alone.
+  export INSTALL_MODE="${INSTALL_MODE:-}"
+  export BUILD_FROM_SOURCE="${BUILD_FROM_SOURCE:-0}"
+  export REGISTRY_SEED_MODE="${REGISTRY_SEED_MODE:-}"
+  export CONTAINER_ENGINE="${CONTAINER_ENGINE:-}"
+  export ENVIRONMENT="${ENVIRONMENT:-}"
+  export SANDBOX_MOCK="${SANDBOX_MOCK:-}"
+  export EVERFLOW_IMAGE_TAG="${EVERFLOW_IMAGE_TAG:-latest}"
+  export EVERFLOW_PUBLIC_REGISTRY="${EVERFLOW_PUBLIC_REGISTRY:-ghcr.io/real-limitless}"
+  export EVERFLOW_NONINTERACTIVE
+  export VERBOSE="${VERBOSE:-0}"
+
+  if [[ -n "${INSTALL_MODE}" || "${BUILD_FROM_SOURCE}" == "1" || "${BUILD_FROM_SOURCE}" == "true" ]]; then
+    log "Passing through INSTALL_MODE=${INSTALL_MODE:-} BUILD_FROM_SOURCE=${BUILD_FROM_SOURCE} REGISTRY_SEED_MODE=${REGISTRY_SEED_MODE:-}"
+  fi
+
   case "${action}" in
     menu)
       log "Launching interactive control menu"
@@ -283,7 +302,9 @@ main() {
   check_compose
 
   if [[ ! -e /dev/kvm ]]; then
-    warn "/dev/kvm missing — real microVMs need KVM; install may use SANDBOX_MOCK=true for dev only"
+    warn "/dev/kvm is missing on this host."
+    warn "Real project sandboxes need KVM (device passthrough to sandbox-agent)."
+    warn "SANDBOX_MOCK=true is for development and CI only — not production."
   else
     ok "/dev/kvm present"
   fi

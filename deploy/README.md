@@ -29,9 +29,10 @@ Same repository path after one push — no dual-push required.
 # Mirror upstream (microsandbox, searxng) + build/push all Everflow images
 ./deploy/local-registry.sh seed
 
-# Or mirror published GHCR images without a local compile:
+# Or mirror published GHCR images without a local compile (fails if unpublished):
 SEED_FROM_GHCR=1 ./deploy/local-registry.sh seed
 # equivalent: ./deploy/local-registry.sh mirror-upstream && ./deploy/local-registry.sh mirror-ghcr
+# Required refs: docs/images.md — CI: .github/workflows/publish-images.yml
 ```
 
 ### HTTP / insecure registry

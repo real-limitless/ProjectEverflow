@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     sandbox_enabled: bool = True
     sandbox_agent_url: str = "http://localhost:8090"
     sandbox_agent_token: str = "change-me"
+    # Mirrored from compose SANDBOX_MOCK so non-dev startup can refuse mock mode.
+    sandbox_mock: bool = False
     # Prebaked guest image (./deploy/build-sandbox-guest.sh); override via SANDBOX_DEFAULT_IMAGE
     sandbox_default_image: str = "ghcr.io/real-limitless/everflow-sandbox-guest:dev"
     # Keep in sync with sandbox-agent default; 2GiB OOMs under OpenCode+desktop+browser.

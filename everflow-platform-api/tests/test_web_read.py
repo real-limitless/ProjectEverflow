@@ -23,10 +23,28 @@ def test_validate_blocks_localhost() -> None:
             pass
 
 
+def test_validate_blocks_metadata_and_link_local() -> None:
+    for url in (
+        "http://169.254.169.254/latest/meta-data/",
+        "http://metadata.google.internal/",
+        "http://[::ffff:169.254.169.254]/",
+    ):
+        try:
+            validate_public_http_url(url)
+            raise AssertionError(f"expected block for {url}")
+        except WebReadError:
+            pass
+
+
 def test_validate_allows_public_https() -> None:
-    assert validate_public_http_url("https://example.com/news/article") == (
-        "https://example.com/news/article"
-    )
+    try:
+        assert validate_public_http_url("https://example.com/news/article") == (
+            "https://example.com/news/article"
+        )
+    except WebReadError as exc:
+        if "Unable to resolve" in str(exc):
+            return
+        raise
 
 
 def test_html_extracts_article_body() -> None:

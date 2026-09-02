@@ -58,6 +58,24 @@ async def test_request_without_mocks_raises_ssrf_for_localhost() -> None:
         await execute_http_request(cfg)
 
 
+@pytest.mark.asyncio
+async def test_request_without_mocks_raises_ssrf_for_metadata() -> None:
+    from app.services.http_tools import HttpToolSsrfError
+
+    cfg = HttpRequestConfig(url="http://169.254.169.254/latest/meta-data/", method="GET")
+    with pytest.raises(HttpToolSsrfError):
+        await execute_http_request(cfg)
+
+
+def test_safe_redirect_used_by_workflow_client() -> None:
+    from app.services.http_tools import HttpToolSsrfError, safe_redirect_target
+
+    with pytest.raises(HttpToolSsrfError):
+        safe_redirect_target("https://example.com/x", "http://169.254.169.254/")
+    with pytest.raises(HttpToolSsrfError):
+        safe_redirect_target("https://example.com/x", "http://127.0.0.1/")
+
+
 def test_apply_auth_header_mode() -> None:
     from app.services.workflows.http_client import _apply_auth
     import httpx

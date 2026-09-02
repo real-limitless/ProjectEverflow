@@ -1,7 +1,8 @@
 """Encrypt/decrypt provider API keys at rest (Fernet).
 
 Uses CREDENTIALS_ENCRYPTION_KEY when set; otherwise derives a Fernet key from
-SECRET_KEY (dev/test only — set an explicit key in production).
+SECRET_KEY (development/test only). Production and staging require an explicit
+CREDENTIALS_ENCRYPTION_KEY and refuse to encrypt without it.
 """
 
 from __future__ import annotations
@@ -31,12 +32,17 @@ def _get_fernet(key_material: str) -> Fernet:
 
 def fernet_for_settings(settings: Settings | None = None) -> Fernet:
     s = settings or get_settings()
-    material = (s.credentials_encryption_key or "").strip() or s.secret_key
-    if not (s.credentials_encryption_key or "").strip() and s.environment == "production":
-        logger.warning(
-            "CREDENTIALS_ENCRYPTION_KEY unset in production; falling back to SECRET_KEY",
-        )
-    return _get_fernet(material)
+    dedicated = (s.credentials_encryption_key or "").strip()
+    if not dedicated:
+        from app.services.production_checks import is_non_dev_environment
+
+        if is_non_dev_environment(s.environment):
+            raise RuntimeError(
+                "CREDENTIALS_ENCRYPTION_KEY is required outside development/test"
+            )
+        logger.debug("CREDENTIALS_ENCRYPTION_KEY unset; deriving Fernet key from SECRET_KEY")
+        return _get_fernet(s.secret_key)
+    return _get_fernet(dedicated)
 
 
 def encrypt_secret(plaintext: str, settings: Settings | None = None) -> tuple[str, str]:

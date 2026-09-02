@@ -25,6 +25,15 @@ FRONTEND_URL="${FRONTEND_URL:-http://localhost:3000}"
 API_URL="${PUBLIC_API_URL}"
 UI_URL="${FRONTEND_URL}"
 
+EVERFLOW_PUBLIC_REGISTRY="${EVERFLOW_PUBLIC_REGISTRY:-ghcr.io/real-limitless}"
+EVERFLOW_IMAGE_TAG="${EVERFLOW_IMAGE_TAG:-latest}"
+EVERFLOW_GHCR_IMAGE_NAMES=(
+  everflow-frontend
+  everflow-backend
+  everflow-sandbox-agent
+  everflow-sandbox-guest
+)
+
 # Optional explicit seed control for install phase 1 (build|ghcr|skip|auto).
 # Leave empty for interactive install wizard; install_phase_registry treats empty as auto.
 REGISTRY_SEED_MODE="${REGISTRY_SEED_MODE:-}"
@@ -42,6 +51,81 @@ if [[ -z "${INSTALL_MODE}" ]]; then
     # Do not force REGISTRY_SEED_MODE here — empty triggers TTY wizard on `install`
   fi
 fi
+
+sync_install_mode() {
+  # Re-apply after CLI flags mutate INSTALL_MODE / BUILD_FROM_SOURCE.
+  if [[ -z "${INSTALL_MODE}" ]]; then
+    if [[ "${BUILD_FROM_SOURCE}" == "1" || "${BUILD_FROM_SOURCE}" == "true" ]]; then
+      INSTALL_MODE=build
+    elif [[ "${INSTALL_FROM_GHCR:-0}" == "1" || "${INSTALL_FROM_GHCR:-}" == "true" ]]; then
+      INSTALL_MODE=ghcr
+    else
+      INSTALL_MODE=pull
+    fi
+  fi
+  case "${INSTALL_MODE}" in
+    ghcr)
+      : "${REGISTRY_SEED_MODE:=ghcr}"
+      ;;
+    build)
+      : "${REGISTRY_SEED_MODE:=build}"
+      ;;
+  esac
+  if [[ "${BUILD_FROM_SOURCE}" == "1" || "${BUILD_FROM_SOURCE}" == "true" ]]; then
+    if [[ "${INSTALL_MODE}" != "ghcr" ]]; then
+      INSTALL_MODE=build
+      : "${REGISTRY_SEED_MODE:=build}"
+    fi
+  fi
+  export INSTALL_MODE BUILD_FROM_SOURCE REGISTRY_SEED_MODE
+}
+
+sync_install_mode
+
+print_required_ghcr_images() {
+  local name
+  echo "Required GHCR images for INSTALL_MODE=ghcr (tag=${EVERFLOW_IMAGE_TAG}):"
+  for name in "${EVERFLOW_GHCR_IMAGE_NAMES[@]}"; do
+    echo "  ${EVERFLOW_PUBLIC_REGISTRY}/${name}:${EVERFLOW_IMAGE_TAG}"
+  done
+  echo "Also mirrored from upstream (not Everflow GHCR packages):"
+  echo "  ghcr.io/superradcompany/microsandbox:latest  → local everflow/upstream-microsandbox"
+  echo "  docker.io/searxng/searxng:latest             → local everflow/upstream-searxng"
+}
+
+die_ghcr_missing() {
+  local why="${1:-could not pull or mirror published images}"
+  echo "" >&2
+  echo "  ✗ INSTALL_MODE=ghcr failed: ${why}" >&2
+  echo "" >&2
+  print_required_ghcr_images >&2
+  echo "" >&2
+  echo "  These packages are published by .github/workflows/publish-images.yml" >&2
+  echo "  when a maintainer with GHCR write access runs the workflow or merges" >&2
+  echo "  to Development-Everflow / a release tag. See docs/images.md." >&2
+  echo "" >&2
+  echo "  Until the packages exist, use a source seed — this is not a GHCR success:" >&2
+  echo "    BUILD_FROM_SOURCE=1 ./scripts/everflow install" >&2
+  echo "    INSTALL_MODE=build ./scripts/everflow install" >&2
+  echo "" >&2
+  if [[ -f "${INSTALL_LOG}" ]]; then
+    echo "    Last log lines (${INSTALL_LOG}):" >&2
+    tail -n 40 "${INSTALL_LOG}" >&2 || true
+  fi
+  exit 1
+}
+
+warn_kvm_status() {
+  if [[ -e /dev/kvm ]]; then
+    ok "/dev/kvm present"
+    return 0
+  fi
+  warn "/dev/kvm is missing on this host."
+  warn "Real project sandboxes need KVM (device passthrough to sandbox-agent)."
+  warn "SANDBOX_MOCK=true is for development and CI only — not production."
+  warn "Production/staging install refuses mock mode and default secrets."
+  return 1
+}
 
 if [[ -z "${COMPOSE_UP_TIMEOUT_SEC}" ]]; then
   if [[ "${INSTALL_MODE}" == "build" ]]; then
@@ -188,10 +272,17 @@ detect_engine() {
     echo podman
     return
   fi
-  echo "error: need Docker or Podman on the host." >&2
-  echo "       Everflow runs only under Docker Compose or Podman Compose." >&2
-  echo "       Running UI / API / sandbox-agent as host processes is not supported." >&2
-  echo "       Install Docker Engine or Podman, then re-run this tool." >&2
+  echo "" >&2
+  echo "  ✗ Container engine not found (Docker or Podman)." >&2
+  echo "" >&2
+  echo "  Everflow's only supported runtime is Docker Compose or Podman Compose." >&2
+  echo "  Running the UI, API, or sandbox-agent as host processes is not supported." >&2
+  echo "" >&2
+  echo "  Install one of:" >&2
+  echo "    Docker Engine — https://docs.docker.com/engine/install/" >&2
+  echo "    Podman        — https://podman.io/getting-started/installation" >&2
+  echo "  Then re-run: ./scripts/everflow install" >&2
+  echo "" >&2
   exit 1
 }
 
@@ -219,9 +310,16 @@ compose() {
     docker-compose "$@"
     return
   fi
-  echo "error: ${ENGINE} compose plugin not found." >&2
-  echo "       Everflow is a multi-service stack; Compose is the only supported runtime." >&2
-  echo "       Install Compose V2 (docker compose / podman compose), then re-run." >&2
+  echo "" >&2
+  echo "  ✗ ${ENGINE} Compose plugin not found." >&2
+  echo "" >&2
+  echo "  Everflow is a multi-service stack; Compose is the only supported runtime." >&2
+  echo "  Install Compose V2, then re-run:" >&2
+  echo "    docker compose version   # or: podman compose version" >&2
+  echo "" >&2
+  echo "  Docker:  https://docs.docker.com/compose/install/" >&2
+  echo "  Podman:  https://github.com/containers/podman-compose" >&2
+  echo "" >&2
   exit 1
 }
 

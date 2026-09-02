@@ -24,6 +24,10 @@ _ALWAYS_BLOCKED_HOSTS = frozenset(
     }
 )
 
+_METADATA_IPV4 = ipaddress.ip_address("169.254.169.254")
+_REDIRECT_STATUS = frozenset({301, 302, 303, 307, 308})
+_MAX_REDIRECTS = 5
+
 _MAX_BODY_BYTES = 64 * 1024
 
 
@@ -59,10 +63,15 @@ def _ip_blocked(
     allow_sandbox_internal: bool,
 ) -> str | None:
     """Return a reason string if blocked, else None."""
+    # Unwrap IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) before policy checks.
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _ip_blocked(mapped, allow_sandbox_internal=allow_sandbox_internal)
+
     # Link-local + metadata always blocked (AWS/GCP/Azure IMDS lives in 169.254.169.254).
     if ip.is_link_local:
         return "link-local addresses are not allowed"
-    if ip == ipaddress.ip_address("169.254.169.254"):
+    if ip == _METADATA_IPV4:
         return "cloud metadata addresses are not allowed"
     # IPv6 unique-local / site-local treated as private unless sandbox-internal allowed
     if ip.is_multicast or ip.is_unspecified:
@@ -138,6 +147,54 @@ def assert_url_safe(url: str, *, settings: Settings | None = None) -> str:
             raise HttpToolSsrfError(f"{reason} (resolved {addr} for {host})")
 
     return raw
+
+
+def safe_redirect_target(current_url: str, location: str, *, settings: Settings | None = None) -> str:
+    """Join a redirect Location onto ``current_url`` and re-run the SSRF guard.
+
+    Raises :class:`HttpToolSsrfError` when Location is missing or the joined
+    target is link-local, metadata, loopback, or another blocked range.
+    """
+    loc = (location or "").strip()
+    if not loc:
+        raise HttpToolSsrfError("redirect is missing a Location header")
+    joined = str(httpx.URL(current_url).join(loc))
+    return assert_url_safe(joined, settings=settings)
+
+
+async def request_with_safe_redirects(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    *,
+    follow_redirects: bool = True,
+    max_redirects: int = _MAX_REDIRECTS,
+    settings: Settings | None = None,
+    **kwargs: Any,
+) -> httpx.Response:
+    """Issue a request and, when following redirects, SSRF-check every hop."""
+    current = assert_url_safe(url, settings=settings)
+    current_method = method.upper()
+    send_kwargs = dict(kwargs)
+    for _hop in range(max_redirects + 1):
+        resp = await client.request(
+            current_method,
+            current,
+            follow_redirects=False,
+            **send_kwargs,
+        )
+        if not follow_redirects or resp.status_code not in _REDIRECT_STATUS:
+            return resp
+        location = resp.headers.get("location")
+        if not location:
+            return resp
+        current = safe_redirect_target(current, location, settings=settings)
+        if resp.status_code in (302, 303) and current_method not in {"HEAD", "GET"}:
+            current_method = "GET"
+            send_kwargs.pop("content", None)
+            send_kwargs.pop("data", None)
+            send_kwargs.pop("json", None)
+    raise HttpToolSsrfError("too many redirects")
 
 
 def merge_query(url: str, query: dict[str, str] | None) -> str:

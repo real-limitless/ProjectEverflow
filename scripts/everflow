@@ -82,8 +82,10 @@ Install is always phased:
 
 Install options (env):
   BUILD_FROM_SOURCE=1      Seed registry from source, then start stack
-  INSTALL_MODE=ghcr        Seed registry by mirroring GHCR, then start
+  INSTALL_MODE=ghcr        Seed registry by mirroring GHCR (fails if unpublished)
   INSTALL_MODE=pull        Start stack (auto-seed registry if empty)
+  INSTALL_MODE=build       Same as BUILD_FROM_SOURCE=1
+  EVERFLOW_IMAGE_TAG       GHCR/local tag (default latest)
   REGISTRY_SEED_MODE=…     build | ghcr | skip | auto (default auto)
   VERBOSE=1                Stream compose output
   CONTAINER_ENGINE=podman  Force engine
@@ -247,11 +249,31 @@ main() {
         case "$1" in
           --no-admin) offer=no ;;
           --yes-admin) offer=yes ;;
+          --mode)
+            INSTALL_MODE="${2:-}"
+            export INSTALL_MODE
+            shift
+            ;;
+          --mode=*)
+            INSTALL_MODE="${1#--mode=}"
+            export INSTALL_MODE
+            ;;
+          --build-from-source)
+            BUILD_FROM_SOURCE=1
+            export BUILD_FROM_SOURCE
+            INSTALL_MODE=build
+            export INSTALL_MODE
+            ;;
           -h | --help) usage; exit 0 ;;
           *) echo "  unknown option: $1" >&2; exit 1 ;;
         esac
         shift
       done
+      case "${INSTALL_MODE}" in
+        "" | pull | ghcr | build) ;;
+        *) echo "  unknown INSTALL_MODE: ${INSTALL_MODE} (use ghcr|pull|build)" >&2; exit 1 ;;
+      esac
+      sync_install_mode
       # Interactive TTY without explicit seed/mode: run ask wizard first
       if is_tty \
         && [[ "${EVERFLOW_NONINTERACTIVE:-0}" != "1" ]] \
