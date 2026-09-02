@@ -91,9 +91,12 @@ tui_install_wizard() {
 
   # ── Ask: sandbox / environment ──────────────────────────────────────────
   if [[ ! -e /dev/kvm ]]; then
-    warn "/dev/kvm missing — real sandboxes need KVM"
+    warn "/dev/kvm is missing — real sandboxes need KVM"
+    warn "SANDBOX_MOCK=true is for development and CI only — not production."
     if confirm_yes "Enable SANDBOX_MOCK=true (dev/CI only)?" "y"; then
       SANDBOX_MOCK=true
+    else
+      SANDBOX_MOCK=false
     fi
   else
     if confirm_yes "Use real microVMs (SANDBOX_MOCK=false)?" "y"; then
@@ -113,7 +116,13 @@ tui_install_wizard() {
   env_choice="${env_choice:-1}"
   if [[ "${env_choice}" == "2" ]]; then
     ENVIRONMENT=production
-    warn "production refuses default secrets — ensure unique keys in .env after install"
+    warn "production refuses default secrets, missing CREDENTIALS_ENCRYPTION_KEY, and SANDBOX_MOCK"
+    if [[ ! -e /dev/kvm ]]; then
+      die "production requires /dev/kvm. SANDBOX_MOCK=true is not allowed."
+    fi
+    if [[ "${SANDBOX_MOCK}" == "true" ]]; then
+      die "SANDBOX_MOCK=true cannot be used with ENVIRONMENT=production"
+    fi
   else
     ENVIRONMENT=development
   fi

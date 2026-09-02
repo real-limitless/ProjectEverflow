@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Everflow Sandbox Agent"
+    # development|staging|production|test — production/staging refuse default tokens and mock.
+    environment: str = "development"
     sandbox_agent_token: str = "change-me"
     # Explicit true → mock. False/None → real microsandbox (fail if KVM/SDK missing).
     sandbox_mock: bool | None = False

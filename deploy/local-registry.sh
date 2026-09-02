@@ -269,9 +269,13 @@ mirror_one() {
   local dest
   dest="$(host_ref "${local_name}")"
   log "Mirror ${src} → ${dest}"
-  engine_pull "${src}"
+  if ! engine_pull "${src}"; then
+    warn "pull failed: ${src}"
+    return 1
+  fi
   if ! engine_image_exists "${src}"; then
-    die "after pull, ${src} missing from ${ENGINE} store — check CONTAINER_ENGINE / docker vs podman"
+    warn "after pull, ${src} missing from ${ENGINE} store — check CONTAINER_ENGINE / docker vs podman"
+    return 1
   fi
   push_image "${src}" "${dest}"
 }
@@ -310,9 +314,27 @@ cmd_build_push() {
 
 cmd_mirror_ghcr() {
   cmd_up
-  local name
+  local name src
+  log "Mirroring published images from ${PUBLIC_GHCR} tag=${TAG}"
+  echo "  Required:"
   for name in everflow-frontend everflow-backend everflow-sandbox-agent everflow-sandbox-guest; do
-    mirror_one "${PUBLIC_GHCR}/${name}:${TAG}" "${name}"
+    echo "    ${PUBLIC_GHCR}/${name}:${TAG}"
+  done
+  for name in everflow-frontend everflow-backend everflow-sandbox-agent everflow-sandbox-guest; do
+    src="${PUBLIC_GHCR}/${name}:${TAG}"
+    if ! mirror_one "${src}" "${name}"; then
+      die "GHCR pull/mirror failed for ${src}
+
+  INSTALL_MODE=ghcr requires these published packages (see docs/images.md):
+    ${PUBLIC_GHCR}/everflow-frontend:${TAG}
+    ${PUBLIC_GHCR}/everflow-backend:${TAG}
+    ${PUBLIC_GHCR}/everflow-sandbox-agent:${TAG}
+    ${PUBLIC_GHCR}/everflow-sandbox-guest:${TAG}
+
+  CI workflow: .github/workflows/publish-images.yml
+  Until a maintainer publishes them, use BUILD_FROM_SOURCE=1 / INSTALL_MODE=build.
+  This command does not fall back to a local compile."
+    fi
   done
   ok "GHCR → local mirror complete"
 }

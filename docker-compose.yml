@@ -4,7 +4,10 @@
 #   ./deploy/local-registry.sh seed
 #   ./scripts/everflow install
 #
-# Maintainers can still publish to GHCR:
+# INSTALL_MODE=ghcr mirrors published packages into this registry (no silent
+# source-build fallback). Required names/tags: docs/images.md
+# CI: .github/workflows/publish-images.yml
+# Maintainers can also publish manually:
 #   EVERFLOW_REGISTRY=ghcr.io/real-limitless PUSH=true ./deploy/build-images.sh
 #
 # From source without seed: BUILD_FROM_SOURCE=1 ./scripts/everflow-install.sh
@@ -56,7 +59,9 @@ services:
     privileged: true
     devices:
       - /dev/kvm
+    # Privileged control plane — compose network only (do not publish 8090).
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       SANDBOX_AGENT_TOKEN: ${SANDBOX_AGENT_TOKEN:-dev-sandbox-token-change-me}
       SANDBOX_MOCK: ${SANDBOX_MOCK:-false}
       # msb pulls from compose DNS — use registry:5000, not localhost
@@ -125,6 +130,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:////data/everflow.db}
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-a-long-random-string}
       CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
+      SANDBOX_MOCK: ${SANDBOX_MOCK:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}

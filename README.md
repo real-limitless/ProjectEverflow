@@ -113,7 +113,7 @@ See [`scripts/screenshots/README.md`](scripts/screenshots/README.md).
 | **`/dev/kvm`** | Real microVMs (`ls -l /dev/kvm`) |
 | Privileged containers + device passthrough | For `sandbox-agent` |
 
-Without KVM (CI/dev only): set `SANDBOX_MOCK=true` in `.env` — not for product use.
+Without KVM (CI/dev only): set `SANDBOX_MOCK=true` in `.env` — **not for product use**. Production and staging install refuse mock mode and refuse documented default secrets.
 
 No host Python or Node is required for the control plane.
 
@@ -206,6 +206,9 @@ What it does: check Docker/Podman → clone into `~/everflow` (product branch) �
 | `EVERFLOW_VERSION` | `Development-Everflow` | Git branch or tag (e.g. `BETA-v0.0.1`) |
 | `EVERFLOW_ACTION` | `menu` (TTY) / `install` | After download |
 | `EVERFLOW_NONINTERACTIVE=1` | — | Force `install` |
+| `INSTALL_MODE` | `pull` | `ghcr` \| `pull` \| `build` (passed through to `everflow install`) |
+| `BUILD_FROM_SOURCE=1` | — | Same as `INSTALL_MODE=build` |
+| `EVERFLOW_IMAGE_TAG` | `latest` | GHCR / local image tag |
 | `EVERFLOW_REPO` | this GitHub repo | Override source |
 
 ```bash
@@ -230,19 +233,24 @@ Everflow runs an **always-on private OCI registry** (`registry` compose service)
 # Build + seed local registry, then start
 BUILD_FROM_SOURCE=1 ./scripts/everflow install
 
-# Mirror published GHCR images into the local registry (when published), then start
+# Mirror published GHCR images into the local registry, then start.
+# Fails honestly if ghcr.io/real-limitless/* packages are unpublished.
 INSTALL_MODE=ghcr ./scripts/everflow install
+# equivalent: ./scripts/everflow install --mode=ghcr
 
 # Airgap: export on online host, import offline
 ./deploy/local-registry.sh export /path/everflow-images.tar
 ./deploy/local-registry.sh import /path/everflow-images.tar
 ```
 
+Required GHCR names and tags: [`docs/images.md`](docs/images.md).  
+CI publish path: [`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml).
+
 Registry-only: `./scripts/everflow registry status|seed|up`
 
 Configure Docker/Podman for the HTTP registry (`insecure-registries` / Podman `insecure=true`) — see [`deploy/README.md`](deploy/README.md).
 
-Quiet by default (logs → `.everflow-install.log`). If the local registry is empty, install falls back to build+seed.
+Quiet by default (logs → `.everflow-install.log`). `INSTALL_MODE=ghcr` never falls back to a local compile. `INSTALL_MODE=pull` with an empty registry still seeds from source.
 
 ---
 
@@ -253,7 +261,7 @@ Quiet by default (logs → `.everflow-install.log`). If the local registry is em
 | `registry` | Embedded private OCI registry | `127.0.0.1:5000` |
 | `frontend` | UI | `3000` / `5173` (Vite) |
 | `backend` | **Sole public API** | `8000` |
-| `sandbox-agent` | Privileged microsandbox control plane | not published / `8090` in dev |
+| `sandbox-agent` | Privileged microsandbox control plane | not published / `127.0.0.1:8090` in dev |
 | `searxng` | Internal knowledge search | not published |
 
 ```
@@ -264,10 +272,10 @@ Browser / UI  →  everflow-platform-api  →  everflow-sandbox-agent  →  micr
 
 ## Production checklist
 
-- Set `ENVIRONMENT=production` (API refuses default `SECRET_KEY` / `SANDBOX_AGENT_TOKEN`)
+- Set `ENVIRONMENT=production` (API and sandbox-agent refuse default secrets, missing `CREDENTIALS_ENCRYPTION_KEY`, and `SANDBOX_MOCK=true`)
 - Set unique `SECRET_KEY`, `SANDBOX_AGENT_TOKEN`, and `CREDENTIALS_ENCRYPTION_KEY`
 - Prefer PostgreSQL via `DATABASE_URL=postgresql+asyncpg://…`
-- Confirm `/dev/kvm` and `SANDBOX_MOCK=false` for real sandboxes
+- Confirm `/dev/kvm` and `SANDBOX_MOCK=false` for real sandboxes (install refuses production without KVM)
 - Optional: GitHub/Google OAuth (`GITHUB_CLIENT_*`, `OAUTH_REDIRECT_BASE_URL`)
 - After boot: first-run wizard → invite teammates → add Git credentials under Organization & Git
 
@@ -293,7 +301,9 @@ Bind-mounts use the `:Z` SELinux label (Fedora/RHEL/Podman). Package READMEs doc
 
 ## Publishing images (maintainers)
 
-Default builds target the **local** registry. Optional public GHCR:
+Default builds target the **local** registry. Public GHCR packages are published by
+[`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml) (needs
+org GHCR write access). Manual:
 
 ```bash
 ./deploy/local-registry.sh seed
@@ -302,7 +312,7 @@ EVERFLOW_REGISTRY=ghcr.io/real-limitless PUSH=true ./deploy/build-images.sh
 EVERFLOW_IMAGE_TAG=v0.1.0 EVERFLOW_REGISTRY=ghcr.io/real-limitless PUSH=true ./deploy/build-images.sh
 ```
 
-See [`deploy/README.md`](deploy/README.md).
+Image names and tags: [`docs/images.md`](docs/images.md) · [`deploy/README.md`](deploy/README.md).
 
 ---
 

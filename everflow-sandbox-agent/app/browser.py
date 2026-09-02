@@ -439,19 +439,44 @@ def apply_playwright_mcp_host(workspace: Path) -> None:
 
 # ── Knowledge Reader: headless page extract (reuse Playwright Chromium) ───────
 
-# Minimal SSRF guard mirrored from platform web_read (host-only; agent re-checks).
+# DNS-aware SSRF guard for browser navigate (fail-closed for metadata / RFC1918).
 _BLOCKED_HOST_SUFFIXES = (".localhost", ".local")
 _BLOCKED_HOSTS = {
     "localhost",
     "localhost.localdomain",
     "metadata.google.internal",
+    "metadata.goog",
     "metadata",
+    "kubernetes.default",
+    "kubernetes.default.svc",
 }
 
 
-def validate_public_http_url(url: str) -> str:
-    """Allow only public http(s) URLs (basic SSRF guard for browser navigate)."""
+def _ip_blocked(ip: object) -> bool:
     import ipaddress
+
+    if not isinstance(ip, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
+        return True
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _ip_blocked(mapped)
+    if ip.is_link_local or ip == ipaddress.ip_address("169.254.169.254"):
+        return True
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        return True
+    return False
+
+
+def validate_public_http_url(url: str) -> str:
+    """Allow only public http(s) URLs (DNS-aware SSRF guard for browser navigate)."""
+    import ipaddress
+    import socket
     from urllib.parse import urlparse
 
     raw = (url or "").strip()
@@ -465,21 +490,36 @@ def validate_public_http_url(url: str) -> str:
     host = (parsed.hostname or "").strip().lower().rstrip(".")
     if not host or host in _BLOCKED_HOSTS:
         raise ValueError("URL host is not allowed")
+    if host.endswith(".metadata.google.internal"):
+        raise ValueError("URL host is not allowed")
     if any(host.endswith(s) for s in _BLOCKED_HOST_SUFFIXES):
         raise ValueError("URL host is not allowed")
     try:
-        ip = ipaddress.ip_address(host)
+        ip = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
+        ip = None
+    if ip is not None:
+        if _ip_blocked(ip):
+            raise ValueError("URL host is not allowed")
         return raw
-    if (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    ):
-        raise ValueError("URL host is not allowed")
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or 80, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError(f"Unable to resolve host: {host}") from exc
+    if not infos:
+        raise ValueError(f"Unable to resolve host: {host}")
+    seen: set[str] = set()
+    for info in infos:
+        addr = info[4][0]
+        if addr in seen:
+            continue
+        seen.add(addr)
+        try:
+            resolved = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if _ip_blocked(resolved):
+            raise ValueError("URL host is not allowed")
     return raw
 
 

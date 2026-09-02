@@ -42,7 +42,11 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from app.services.http_tools import HttpToolSsrfError, assert_url_safe
+from app.services.http_tools import (
+    HttpToolSsrfError,
+    assert_url_safe,
+    request_with_safe_redirects,
+)
 from app.services.workflows.graph import ExecNode
 from app.services.workflows.http_client import (
     HttpRequestConfig,
@@ -709,17 +713,32 @@ async def _fetch_feed_body(
     url: str, ctx: "EngineContext", timeout: float = 30.0
 ) -> str:
     """Fetch the feed body, applying the SSRF guard unless mocking is active."""
+    accept = (
+        "application/rss+xml, application/atom+xml, "
+        "application/xml;q=0.9, */*;q=0.8"
+    )
     if ctx is None or not ctx.mocks:
-        # The SSRF guard is bypassed when mocks are supplying responses, so
-        # tests can use loopback URLs against fixture servers.
+        # The SSRF guard is bypassed when mocks are supplying the response
+        # (tests may use loopback fixture URLs).
         assert_url_safe(url)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        resp = await client.get(url, headers={"Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8"})
-        if resp.status_code >= 400:
-            raise RuntimeError(
-                f"rssFeedRead: HTTP {resp.status_code} fetching {url}"
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=False, trust_env=False
+        ) as client:
+            resp = await request_with_safe_redirects(
+                client,
+                "GET",
+                url,
+                follow_redirects=True,
+                headers={"Accept": accept},
             )
-        return resp.text
+    else:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            resp = await client.get(url, headers={"Accept": accept})
+    if resp.status_code >= 400:
+        raise RuntimeError(
+            f"rssFeedRead: HTTP {resp.status_code} fetching {url}"
+        )
+    return resp.text
 
 
 async def exec_rss_feed_read(

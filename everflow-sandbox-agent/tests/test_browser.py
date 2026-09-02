@@ -62,11 +62,18 @@ def test_apply_browser_stamps_preserves_mode(tmp_path: Path) -> None:
 
 
 def test_validate_public_http_url_blocks_private() -> None:
-    assert validate_public_http_url("https://example.com/a") == "https://example.com/a"
+    try:
+        assert validate_public_http_url("https://example.com/a") == "https://example.com/a"
+    except ValueError as exc:
+        if "Unable to resolve" not in str(exc):
+            raise
     for bad in (
         "http://localhost/",
         "http://127.0.0.1/",
         "http://10.0.0.1/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://metadata.google.internal/",
+        "http://[::ffff:169.254.169.254]/",
         "file:///etc/passwd",
     ):
         with pytest.raises(ValueError):

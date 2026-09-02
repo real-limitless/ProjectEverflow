@@ -136,7 +136,9 @@ install_phase_registry() {
       ;;
     ghcr)
       step "Seeding registry from GHCR (mirror)"
-      seed_local_registry ghcr || return 1
+      if ! seed_local_registry ghcr; then
+        die_ghcr_missing "registry seed from ${EVERFLOW_PUBLIC_REGISTRY} failed"
+      fi
       ok "registry seeded from GHCR"
       ;;
     build | *)
@@ -164,14 +166,16 @@ install_phase_stack() {
   echo "  Starting frontend, backend, sandbox-agent, searxng from the local registry."
   echo ""
 
-  # Prefer pull from local registry; build only when requested or pull fails.
+  # Prefer pull from local registry. INSTALL_MODE=ghcr never falls back to a
+  # source compile (that would look like a successful GHCR install).
   if [[ "${INSTALL_MODE}" == "build" ]]; then
-    # Images already seeded in phase 1; just bring stack up (build fallback for any missing)
     SKIP_REGISTRY_SEED=1
     if ! start_stack_pull; then
       warn "pull after seed failed — compose up --build"
       start_stack_build || return 1
     fi
+  elif [[ "${INSTALL_MODE}" == "ghcr" ]]; then
+    start_stack_pull || return 1
   else
     start_stack_pull || return 1
   fi
@@ -213,7 +217,12 @@ start_stack_pull() {
   ensure_local_registry || return 1
   if [[ "${VERBOSE}" == "1" || "${VERBOSE}" == "true" ]]; then
     step "Pulling images (local registry / overrides)"
-    compose -f "${COMPOSE_FILE}" pull || warn "compose pull had errors — continuing"
+    if ! compose -f "${COMPOSE_FILE}" pull; then
+      if [[ "${INSTALL_MODE}" == "ghcr" ]]; then
+        die_ghcr_missing "compose pull failed after GHCR seed"
+      fi
+      warn "compose pull had errors — continuing"
+    fi
     step "Starting stack"
     if ! compose -f "${COMPOSE_FILE}" up -d --no-build; then
       diagnose_stack_failure "compose up -d --no-build failed"
@@ -228,7 +237,12 @@ start_stack_pull() {
   (
     echo ""
     echo "===== $(date -Iseconds 2>/dev/null || date) :: compose pull ====="
-    compose -f "${COMPOSE_FILE}" pull || true
+    if ! compose -f "${COMPOSE_FILE}" pull; then
+      if [[ "${INSTALL_MODE}" == "ghcr" ]]; then
+        echo "compose pull failed (INSTALL_MODE=ghcr — not ignoring)" >&2
+        exit 1
+      fi
+    fi
     echo "===== compose up -d --no-build ====="
     compose -f "${COMPOSE_FILE}" up -d --no-build
   ) >>"${INSTALL_LOG}" 2>&1 &
@@ -356,25 +370,45 @@ cmd_install() {
   ensure_env_file
   apply_install_toggles
   apply_local_registry_env_defaults
+  assert_operator_secrets_or_die || die "insecure production/staging secrets (see above)"
 
-  if [[ ! -e /dev/kvm ]]; then
-    warn "/dev/kvm missing — set SANDBOX_MOCK=true for CI/dev only"
-  else
-    ok "/dev/kvm present"
+  if ! warn_kvm_status; then
+    local env_val mock_val
+    env_val="${ENVIRONMENT:-$(env_get ENVIRONMENT || true)}"
+    env_val="${env_val:-development}"
+    mock_val="${SANDBOX_MOCK:-$(env_get SANDBOX_MOCK || true)}"
+    mock_val="$(printf '%s' "${mock_val}" | tr '[:upper:]' '[:lower:]')"
+    case "${env_val}" in
+      production | staging)
+        die "ENVIRONMENT=${env_val} requires /dev/kvm. SANDBOX_MOCK=true is dev/CI only."
+        ;;
+    esac
+    if [[ "${mock_val}" == "true" || "${mock_val}" == "1" ]]; then
+      warn "Continuing with SANDBOX_MOCK=true (development/CI only)."
+    else
+      warn "Without /dev/kvm the sandbox-agent will refuse to start unless SANDBOX_MOCK=true."
+      warn "Set SANDBOX_MOCK=true only for development or CI, then re-run install."
+    fi
   fi
 
   # ── Phase 1/2: registry ──────────────────────────────────────────────────
   if ! install_phase_registry; then
-    die "registry install/seed failed (see ${INSTALL_LOG})"
+    if [[ "${INSTALL_MODE}" == "ghcr" ]]; then
+      die_ghcr_missing "registry install/seed failed"
+    fi
+    die "registry install/seed failed (see ${INSTALL_LOG}). Re-run with VERBOSE=1."
   fi
 
   # ── Phase 2/2: full stack ────────────────────────────────────────────────
   if ! install_phase_stack; then
-    # Last resort: full compose build if pull failed after seed
+    if [[ "${INSTALL_MODE}" == "ghcr" ]]; then
+      die_ghcr_missing "stack start failed after GHCR seed (not falling back to a local compile)"
+    fi
+    # Last resort for pull/build: full compose build if pull failed after seed
     warn "stack start failed — retrying with compose --build"
     SKIP_REGISTRY_SEED=1
     if ! start_stack_build; then
-      die "full stack install failed (see ${INSTALL_LOG})"
+      die "full stack install failed (see ${INSTALL_LOG}). Re-run with VERBOSE=1."
     fi
   fi
 
@@ -654,11 +688,7 @@ cmd_status() {
     warn ".env missing — run: everflow install"
   fi
 
-  if [[ -e /dev/kvm ]]; then
-    ok "/dev/kvm present"
-  else
-    warn "/dev/kvm missing"
-  fi
+  warn_kvm_status || true
 
   echo ""
   step "Containers"

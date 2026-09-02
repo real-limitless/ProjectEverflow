@@ -19,16 +19,18 @@ The **CORE** branch holds concept and methodology. This file tracks the **softwa
 - **Workflow engine foundations** — n8n-inspired node catalog path (see `docs/workflows-n8n.md`); many integrations still maturing
 - **Live preview** — Host-based preview proxy for project endpoints
 - **Public beta tag** — `BETA-v0.0.1` (pin installs with `EVERFLOW_VERSION=BETA-v0.0.1`)
+- **GHCR publish workflow** — `.github/workflows/publish-images.yml` + [`docs/images.md`](docs/images.md) (`INSTALL_MODE=ghcr` fails closed if packages are missing)
+- **Install fail-closed checks** — engine/Compose errors, KVM vs `SANDBOX_MOCK` (dev/CI only), production/staging refuse default secrets
+- **SSRF / credential hardening** — redirect re-validation, DNS-aware public URL guards, `CREDENTIALS_ENCRYPTION_KEY` required outside development/test
 
 ---
 
 ## Next
 
-- **Stable public images** on `ghcr.io/real-limitless/*` so `INSTALL_MODE=ghcr` works without a full local compile
+- **Published GHCR packages** — a maintainer with write access must run the publish workflow so `INSTALL_MODE=ghcr` can pull without a local compile
 - **Operator docs** — production PostgreSQL, backups, TLS, reverse proxy, multi-host notes
-- **Install polish** — clearer first-run errors, KVM detection, mock-vs-real sandbox guidance
 - **Workflow coverage** — deepen high-value nodes (HTTP, Git, cloud storage, AI providers) with real I/O and tests
-- **Hardening** — security reviews of sandbox proxy boundaries, credential storage, SSRF defaults
+- **Further hardening** — preview ticket model, additional proxy-boundary reviews
 - **Release cadence** — further beta/rc tags toward a stable `v1.x`
 
 ---
@@ -67,4 +69,4 @@ Ideas that appear in early product thinking but are **not** delivery promises:
 - See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup
 - Security-sensitive reports: [SECURITY.md](SECURITY.md)
 
-Last updated: 2026-08
+Last updated: 2026-09

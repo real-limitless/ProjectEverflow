@@ -99,6 +99,84 @@ apply_install_toggles() {
   fi
 }
 
+_is_default_secret() {
+  local value="${1:-}"
+  [[ -z "${value}" ]] && return 0
+  [[ "${value}" == "change-me-in-production-use-a-long-random-string" ]] && return 0
+  [[ "${value}" == *change-me* ]] && return 0
+  return 1
+}
+
+_is_default_agent_token() {
+  local value="${1:-}"
+  [[ -z "${value}" ]] && return 0
+  [[ "${value}" == "change-me" || "${value}" == "dev-sandbox-token-change-me" ]] && return 0
+  [[ "${value}" == *change-me* ]] && return 0
+  return 1
+}
+
+# Production/staging refuse documented placeholders. Fresh install writes random
+# secrets, so this mainly catches an existing .env that was copied from .env.example.
+assert_operator_secrets_or_die() {
+  local env_val secret token creds mock
+  env_val="${ENVIRONMENT:-}"
+  if [[ -z "${env_val}" ]]; then
+    env_val="$(env_get ENVIRONMENT || true)"
+  fi
+  env_val="${env_val:-development}"
+  case "${env_val}" in
+    production | staging) ;;
+    *) return 0 ;;
+  esac
+
+  secret="${SECRET_KEY:-}"
+  if [[ -z "${secret}" ]]; then
+    secret="$(env_get SECRET_KEY || true)"
+  fi
+  token="${SANDBOX_AGENT_TOKEN:-}"
+  if [[ -z "${token}" ]]; then
+    token="$(env_get SANDBOX_AGENT_TOKEN || true)"
+  fi
+  creds="${CREDENTIALS_ENCRYPTION_KEY:-}"
+  if [[ -z "${creds}" ]]; then
+    creds="$(env_get CREDENTIALS_ENCRYPTION_KEY || true)"
+  fi
+  mock="${SANDBOX_MOCK:-}"
+  if [[ -z "${mock}" ]]; then
+    mock="$(env_get SANDBOX_MOCK || true)"
+  fi
+  mock="$(printf '%s' "${mock}" | tr '[:upper:]' '[:lower:]')"
+
+  local problems=()
+  if _is_default_secret "${secret}"; then
+    problems+=("SECRET_KEY is missing or still a documented default")
+  fi
+  if _is_default_agent_token "${token}"; then
+    problems+=("SANDBOX_AGENT_TOKEN is missing or still a documented default")
+  fi
+  if [[ -z "${creds}" ]] || _is_default_secret "${creds}"; then
+    problems+=("CREDENTIALS_ENCRYPTION_KEY is required outside development/test")
+  fi
+  if [[ "${mock}" == "true" || "${mock}" == "1" ]]; then
+    problems+=("SANDBOX_MOCK=true is not allowed for ENVIRONMENT=${env_val}")
+  fi
+
+  if [[ ${#problems[@]} -gt 0 ]]; then
+    echo "" >&2
+    echo "  ✗ Refusing ${env_val} install with insecure operator config:" >&2
+    local p
+    for p in "${problems[@]}"; do
+      echo "      - ${p}" >&2
+    done
+    echo "" >&2
+    echo "  Set unique values in .env (or let a fresh install generate them)," >&2
+    echo "  keep SANDBOX_MOCK=false, and confirm /dev/kvm is present." >&2
+    echo "  See SECURITY.md." >&2
+    echo "" >&2
+    return 1
+  fi
+}
+
 # Point .env image refs at the embedded local registry when unset or still on legacy GHCR defaults.
 apply_local_registry_env_defaults() {
   local port="${REGISTRY_HOST_PORT:-5000}"

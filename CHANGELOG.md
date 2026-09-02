@@ -7,6 +7,30 @@ Version tags use the project scheme `BETA-vX.Y.Z` for early public betas.
 
 ---
 
+## [Unreleased]
+
+Post-`BETA-v0.0.1` hardening on `Development-Everflow` ([#6](https://github.com/real-limitless/ProjectEverflow/issues/6)).
+
+### Added
+
+- GitHub Actions workflow to publish control-plane and guest images to `ghcr.io/real-limitless/*` ([`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml)).
+- [`docs/images.md`](docs/images.md) — required image names, tags, and how `INSTALL_MODE=ghcr` is supposed to work.
+
+### Changed
+
+- `INSTALL_MODE=ghcr` fails honestly when GHCR packages are missing (no silent source-build fallback).
+- `get-everflow.sh` and `./scripts/everflow install` pass through `INSTALL_MODE` and `BUILD_FROM_SOURCE` (plus `--mode=` / `--build-from-source`).
+- First-run errors for a missing container engine, missing Compose, registry seed failure, and GHCR pull failure are explicit.
+- KVM detection states that `/dev/kvm` missing means `SANDBOX_MOCK=true` is **dev/CI only**; production/staging refuse mock mode.
+
+### Security
+
+- Production and staging refuse default `SECRET_KEY` / `SANDBOX_AGENT_TOKEN`, a missing `CREDENTIALS_ENCRYPTION_KEY`, and `SANDBOX_MOCK=true` (API, sandbox-agent, and install).
+- Product compose still does not publish sandbox-agent; dev compose binds `127.0.0.1:8090`.
+- Outbound HTTP / workflow / Reader / agent-browser SSRF guards re-validate redirect targets and deny link-local, metadata, and internal ranges unless explicitly allowed.
+
+---
+
 ## [BETA-v0.0.1] — 2026-08-03
 
 First **public beta** of the runnable product branch (`Development-Everflow`).

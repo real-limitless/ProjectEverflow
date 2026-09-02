@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-import ipaddress
 import logging
 import re
 from html.parser import HTMLParser
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
+
+from app.services.http_tools import (
+    HttpToolSsrfError,
+    assert_url_safe,
+    request_with_safe_redirects,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +26,7 @@ _USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
-_BLOCKED_HOSTS = {
-    "localhost",
-    "localhost.localdomain",
-    "metadata.google.internal",
-    "metadata",
-}
+_PUBLIC_ONLY = SimpleNamespace(http_tools_allow_sandbox_internal=False)
 
 
 class WebReadError(Exception):
@@ -34,41 +35,15 @@ class WebReadError(Exception):
         self.status_code = status_code
 
 
-def _host_blocked(hostname: str) -> bool:
-    host = (hostname or "").strip().lower().rstrip(".")
-    if not host:
-        return True
-    if host in _BLOCKED_HOSTS:
-        return True
-    if host.endswith(".localhost") or host.endswith(".local"):
-        return True
-    # Literal IPs
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
-
-
 def validate_public_http_url(url: str) -> str:
+    """Allow only public http(s) URLs (DNS-aware SSRF guard)."""
     raw = (url or "").strip()
     if not raw or len(raw) > 2048:
         raise WebReadError("Invalid URL")
-    parsed = urlparse(raw)
-    if parsed.scheme not in ("http", "https"):
-        raise WebReadError("Only http(s) URLs are allowed")
-    if not parsed.netloc or parsed.username or parsed.password:
-        raise WebReadError("Invalid URL host")
-    if _host_blocked(parsed.hostname or ""):
-        raise WebReadError("URL host is not allowed")
-    return raw
+    try:
+        return assert_url_safe(raw, settings=_PUBLIC_ONLY)  # type: ignore[arg-type]
+    except HttpToolSsrfError as exc:
+        raise WebReadError(str(exc) or "URL host is not allowed") from exc
 
 
 class _ArticleHTMLParser(HTMLParser):
@@ -334,15 +309,23 @@ async def fetch_reader_content(url: str) -> dict[str, Any]:
     try:
         async with httpx.AsyncClient(
             timeout=_FETCH_TIMEOUT,
-            follow_redirects=True,
+            follow_redirects=False,
+            trust_env=False,
             headers={
                 "User-Agent": _USER_AGENT,
                 "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9",
             },
-            max_redirects=5,
         ) as client:
-            resp = await client.get(safe_url)
+            resp = await request_with_safe_redirects(
+                client,
+                "GET",
+                safe_url,
+                follow_redirects=True,
+                settings=_PUBLIC_ONLY,  # type: ignore[arg-type]
+            )
+    except HttpToolSsrfError as exc:
+        raise WebReadError("Redirect target is not allowed", status_code=400) from exc
     except httpx.RequestError as exc:
         raise WebReadError(f"Failed to fetch URL: {exc}", status_code=502) from exc
 

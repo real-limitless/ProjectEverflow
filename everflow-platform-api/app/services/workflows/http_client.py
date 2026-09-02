@@ -24,7 +24,11 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 import httpx
 
-from app.services.http_tools import HttpToolSsrfError, assert_url_safe
+from app.services.http_tools import (
+    HttpToolSsrfError,
+    assert_url_safe,
+    safe_redirect_target,
+)
 
 if TYPE_CHECKING:
     from app.services.workflows.engine import EngineContext
@@ -199,25 +203,62 @@ async def execute_http_request(
     max_tries = max(1, cfg.retries or 3)
     backoff = max(0.05, cfg.backoff_seconds)
     last_exc: Exception | None = None
+    _redirect_status = frozenset({301, 302, 303, 307, 308})
 
     for attempt in range(1, max_tries + 1):
         t0 = time.monotonic()
         try:
             async with httpx.AsyncClient(
                 timeout=cfg.timeout,
-                follow_redirects=cfg.follow_redirects,
+                follow_redirects=False,
                 verify=cfg.verify_ssl,
+                trust_env=False,
             ) as client:
                 body = _encode_body(cfg)
                 method = cfg.method.upper()
+                current_url = cfg.url
                 req = client.build_request(
                     method,
-                    cfg.url,
+                    current_url,
                     headers=cfg.headers or None,
                     content=body,
                 )
                 _apply_auth(req, cfg)
                 resp = await client.send(req)
+                hops = 0
+                while (
+                    cfg.follow_redirects
+                    and resp.status_code in _redirect_status
+                    and hops < 5
+                ):
+                    location = resp.headers.get("location")
+                    if not location:
+                        break
+                    # Re-validate every hop; mocks already returned above.
+                    current_url = safe_redirect_target(current_url, location)
+                    hops += 1
+                    if resp.status_code in (302, 303) and method not in {"GET", "HEAD"}:
+                        method = "GET"
+                        req = client.build_request(
+                            method,
+                            current_url,
+                            headers=cfg.headers or None,
+                        )
+                    else:
+                        req = client.build_request(
+                            method,
+                            current_url,
+                            headers=cfg.headers or None,
+                            content=body if resp.status_code in (307, 308) else None,
+                        )
+                    _apply_auth(req, cfg)
+                    resp = await client.send(req)
+                if (
+                    cfg.follow_redirects
+                    and resp.status_code in _redirect_status
+                    and hops >= 5
+                ):
+                    raise HttpToolSsrfError("too many redirects")
             elapsed = int((time.monotonic() - t0) * 1000)
             if resp.status_code in (429, 500, 502, 503, 504) and attempt < max_tries:
                 logger.info(

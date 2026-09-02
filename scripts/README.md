@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/real-limitless/ProjectEverflow/Deve
 
 Host the same file on your domain as e.g. `https://everflow.example/install` (raw file, `Content-Type: text/plain` or shell). The script clones the **product branch** (`Development-Everflow` by default; override with `EVERFLOW_VERSION`) into `~/everflow` (override with `EVERFLOW_DIR`) and runs the control tool.
 
-See header comments in `get-everflow.sh` for all env vars.
+`INSTALL_MODE`, `BUILD_FROM_SOURCE`, `EVERFLOW_IMAGE_TAG`, and `REGISTRY_SEED_MODE` are exported through to `./scripts/everflow`. See header comments in `get-everflow.sh` and [`docs/images.md`](../docs/images.md).
 
 ## `./scripts/everflow` (recommended, after clone)
 
@@ -45,7 +45,9 @@ Terminal control plane for self-hosted Everflow: install, status, first admin, l
 
 # Non-interactive phased install
 BUILD_FROM_SOURCE=1 ./scripts/everflow install          # seed from source, then stack
-INSTALL_MODE=ghcr ./scripts/everflow install            # seed from GHCR, then stack
+INSTALL_MODE=ghcr ./scripts/everflow install            # seed from GHCR (fails if unpublished)
+./scripts/everflow install --mode=ghcr                  # same
+./scripts/everflow install --build-from-source          # same as BUILD_FROM_SOURCE=1
 REGISTRY_SEED_MODE=skip ./scripts/everflow install      # registry already filled
 
 # Registry only

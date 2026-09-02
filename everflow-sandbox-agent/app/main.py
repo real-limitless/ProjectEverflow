@@ -17,6 +17,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     log = logging.getLogger("everflow.sandbox_agent")
     settings = get_settings()
+    from app.startup_checks import assert_agent_startup
+
+    assert_agent_startup(settings)
     Path(settings.workspace_root).mkdir(parents=True, exist_ok=True)
 
     # Embedded registry is plain HTTP; msb defaults to HTTPS for pulls.
