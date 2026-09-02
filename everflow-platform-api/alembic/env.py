@@ -11,17 +11,25 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from app.config import get_settings
 from app.db.base import Base
 from app.models import (  # noqa: F401 — register metadata
+    BusEvent,
+    Channel,
+    ChannelMessage,
     GitCredential,
     KnowledgeCanvas,
+    MemoryBlock,
     OAuthAccount,
     Organization,
     OrganizationInvite,
     OrganizationMember,
+    OrgRun,
+    OrgRunNode,
     PreviewEndpoint,
     Project,
     ProjectAgent,
     ProviderCredential,
     SandboxAccessToken,
+    Seat,
+    Team,
     User,
 )
 

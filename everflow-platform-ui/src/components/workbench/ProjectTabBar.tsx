@@ -18,6 +18,7 @@ import { PROJECTS, getProject, isSeedProjectId } from '@/data/projects'
 import { getSandboxStatus, isDemoMode } from '@/lib/api'
 import type { NamedLayoutSnapshot } from '@/lib/namedLayouts'
 import { withEffectiveSandboxStatus } from '@/lib/sandboxReady'
+import { TripleModeToggle } from '@/components/org/TripleModeToggle'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 
 interface ContextMenuState {
@@ -173,6 +174,7 @@ export function ProjectTabBar() {
             )
           })}
         </div>
+        <TripleModeToggle />
         <div className="project-tabs-actions">
           <Dropdown
             isOpen={layoutOpen}

@@ -1,0 +1,364 @@
+/* Room · Chart · triple mode — PatternFly tokens, Everflow chrome */
+
+.triple-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-inline: 0.75rem;
+  padding: 3px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 999px;
+  background: var(--pf-t--global--background--color--secondary--default);
+}
+
+.triple-mode__btn {
+  border: 0;
+  background: transparent;
+  color: var(--pf-t--global--text--color--subtle);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.triple-mode__btn.is-active {
+  background: #e8a317;
+  color: #0b0d10;
+}
+
+.triple-mode__hint {
+  font-size: 0.65rem;
+  color: var(--pf-t--global--text--color--subtle);
+  padding-inline: 0.4rem 0.55rem;
+}
+
+.room-layout,
+.chart-layout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  background: var(--pf-t--global--background--color--primary--default);
+}
+
+.room-rail,
+.room-roster,
+.chart-inspector {
+  width: 13.5rem;
+  flex-shrink: 0;
+  border-inline-end: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--secondary--default);
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+.room-roster,
+.chart-inspector {
+  border-inline-end: 0;
+  border-inline-start: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.room-rail__title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pf-t--global--text--color--subtle);
+  margin-bottom: 0.4rem;
+}
+
+.room-ch,
+.room-seat {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  text-align: start;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.room-ch.is-active,
+.room-seat:hover,
+.room-ch:hover {
+  background: var(--pf-t--global--background--color--primary--default);
+}
+
+.room-ch--static {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.room-seat.is-bot {
+  border: 1px dashed #e8a31766;
+  margin-bottom: 0.25rem;
+}
+
+.room-seat.is-paused {
+  opacity: 0.5;
+}
+
+.room-pip {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #9aa3b2;
+  flex-shrink: 0;
+}
+
+.room-pip--running {
+  background: #3ddc97;
+}
+
+.room-pip--blocked {
+  background: #e8a317;
+}
+
+.room-main,
+.chart-canvas {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.room-head,
+.chart-head {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.room-head h2,
+.chart-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.room-head__meta,
+.chart-head p {
+  margin: 0.2rem 0 0;
+  color: var(--pf-t--global--text--color--subtle);
+  font-size: 0.8rem;
+}
+
+.room-msgs {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.room-msg {
+  margin-bottom: 0.85rem;
+}
+
+.room-msg__who {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #e8a317;
+}
+
+.room-msg--run_event .room-msg__who {
+  color: #7eb6ff;
+}
+
+.room-msg__body {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.room-composer {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-top: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.room-composer textarea {
+  flex: 1;
+}
+
+.room-empty,
+.room-hint,
+.room-error {
+  padding: 1rem;
+}
+
+.room-error {
+  color: #ff4d6d;
+}
+
+.run-card {
+  margin: 0.75rem 1rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 12px;
+  background: var(--pf-t--global--background--color--secondary--default);
+}
+
+.run-card__title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.run-card__steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.run-step {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  font-size: 0.72rem;
+}
+
+.run-step--running,
+.run-step--done {
+  border-color: #e8a317;
+}
+
+.run-step--done {
+  background: #3ddc9722;
+  border-color: #3ddc97;
+}
+
+.run-step--failed {
+  border-color: #ff4d6d;
+}
+
+.chart-head__actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.chart-tree {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 1rem;
+}
+
+.seat-card {
+  width: 9.5rem;
+  text-align: start;
+  padding: 0.65rem 0.7rem;
+  border-radius: 12px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--secondary--default);
+  color: inherit;
+  cursor: pointer;
+}
+
+.seat-card.is-bot {
+  border-style: dashed;
+  border-color: #e8a317;
+}
+
+.seat-card.is-human {
+  border-style: solid;
+}
+
+.seat-card.is-lit {
+  box-shadow: 0 0 0 2px #e8a31788;
+}
+
+.seat-card.is-selected {
+  outline: 2px solid #7eb6ff;
+}
+
+.seat-card__name {
+  display: block;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.seat-card__role,
+.seat-card__reports {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.chart-inspector h3 {
+  margin: 0 0 0.25rem;
+}
+
+.chart-inspector__meta {
+  font-size: 0.75rem;
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.chart-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0.5rem 0;
+}
+
+.chart-chip {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.chart-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+.chart-dl dt {
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+.chart-inspector__btns,
+.chart-hire {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.chart-reparent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.chart-yaml {
+  margin: 0 1rem 1rem;
+  padding: 0.75rem;
+  font-size: 0.72rem;
+  overflow: auto;
+  max-height: 12rem;
+  background: var(--pf-t--global--background--color--secondary--default);
+}
+
+.overview-chart__host {
+  height: min(80vh, 720px);
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 12px;
+  overflow: hidden;
+}

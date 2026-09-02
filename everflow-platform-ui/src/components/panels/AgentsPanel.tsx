@@ -31,7 +31,9 @@ import {
 } from '@/lib/harness/opencodePack'
 import { ensureOpenCode, listAgents, listProviders } from '@/lib/opencode/client'
 import type { CatalogItem } from '@/data/chatCatalog'
+import { listSeats } from '@/lib/orgApi'
 import { pushToast } from '@/lib/studioToast'
+import type { Seat } from '@/types/org'
 import { usePlaygroundStore } from '@/store/playgroundStore'
 import type {
   AgentDefinition,
@@ -102,6 +104,7 @@ export function AgentsPanel() {
     [],
   )
   const [models, setModels] = useState<CatalogItem[]>([])
+  const [seats, setSeats] = useState<Seat[]>([])
 
   const [agentOpen, setAgentOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -259,6 +262,13 @@ export function AgentsPanel() {
     window.addEventListener('everflow:harness-updated', onHarness)
     return () => window.removeEventListener('everflow:harness-updated', onHarness)
   }, [load, projectId])
+
+  useEffect(() => {
+    if (!isApi || projectId === 'default') return
+    void listSeats(projectId)
+      .then(setSeats)
+      .catch(() => setSeats([]))
+  }, [isApi, projectId])
 
   const openCreateAgent = () => {
     if (!isApi || !sandboxReady) {
@@ -578,6 +588,33 @@ export function AgentsPanel() {
 
         {sub === 'agents' ? (
           <>
+            {seats.length > 0 ? (
+              <>
+                <div className="section-label">Org seats</div>
+                <p className="lc-meta" style={{ marginTop: 0, marginBottom: 12 }}>
+                  Starter roster bound to OpenCode agents. Open Chart to hire, pause, fire, or attach.
+                </p>
+                {seats
+                  .filter((s) => !s.fired)
+                  .map((s) => (
+                    <div className="list-card" key={s.id}>
+                      <div className="lc-row">
+                        <div className="lc-title">{s.name}</div>
+                        <Label color={s.kind === 'bot' ? 'orange' : 'grey'} isCompact>
+                          {s.kind}
+                        </Label>
+                        {s.agent_slug ? (
+                          <Label color="blue" isCompact>
+                            {s.agent_slug}
+                          </Label>
+                        ) : null}
+                      </div>
+                      <div className="lc-meta">{s.description}</div>
+                    </div>
+                  ))}
+              </>
+            ) : null}
+
             <div className="section-label">OpenCode agents</div>
             <p className="lc-meta" style={{ marginTop: 0, marginBottom: 12 }}>
               Agents come from OpenCode in the project sandbox. Built-in agents are provided by OpenCode;

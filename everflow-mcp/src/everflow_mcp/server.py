@@ -514,6 +514,135 @@ async def restart_job(job_id: str) -> str:
 
 
 @mcp.tool()
+async def list_seats() -> str:
+    """List org-chart seats (humans and bots) for this project."""
+    try:
+        return _ok(await _client().list_seats())
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def list_teams() -> str:
+    """List @mention teams (e.g. eng, services) for this project."""
+    try:
+        return _ok(await _client().list_teams())
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def compile_run(sentence: str) -> str:
+    """Compile a room sentence into a Conductor-owned run graph (Floor does not write code)."""
+    try:
+        return _ok(await _client().compile_run(sentence))
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def bus_send_message(
+    from_seat_id: str,
+    to_seat_id: str,
+    body: str = "",
+    run_id: str | None = None,
+) -> str:
+    """Send an audited bus message from one seat to another. Cycle-detected per run."""
+    try:
+        return _ok(
+            await _client().bus_dispatch(
+                "send_message",
+                from_seat_id=from_seat_id,
+                to_seat_id=to_seat_id,
+                run_id=run_id,
+                payload={"body": body},
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def bus_handoff(
+    from_seat_id: str,
+    to_seat_id: str,
+    brief: str = "",
+    run_id: str | None = None,
+) -> str:
+    """Close the current seat's phase and open the next with a brief."""
+    try:
+        return _ok(
+            await _client().bus_dispatch(
+                "handoff",
+                from_seat_id=from_seat_id,
+                to_seat_id=to_seat_id,
+                run_id=run_id,
+                payload={"brief": brief},
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def bus_share_memory(
+    name: str,
+    body: str,
+    scope: str = "project",
+    scope_id: str = "",
+    from_seat_id: str | None = None,
+) -> str:
+    """Write a scoped memory block (seat / team / project / org)."""
+    try:
+        return _ok(
+            await _client().bus_dispatch(
+                "share_memory",
+                from_seat_id=from_seat_id,
+                payload={"name": name, "body": body, "scope": scope, "scope_id": scope_id},
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def bus_ask_human(from_seat_id: str, reason: str, run_id: str | None = None) -> str:
+    """Park the run and escalate along reports_to. Never dumps to #general."""
+    try:
+        return _ok(
+            await _client().bus_dispatch(
+                "ask_human",
+                from_seat_id=from_seat_id,
+                run_id=run_id,
+                payload={"reason": reason},
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
+async def bus_report(
+    from_seat_id: str,
+    result: str,
+    run_id: str | None = None,
+    ok: bool = True,
+) -> str:
+    """Post a structured result back to the originating run/thread."""
+    try:
+        return _ok(
+            await _client().bus_dispatch(
+                "report",
+                from_seat_id=from_seat_id,
+                run_id=run_id,
+                payload={"result": result, "ok": ok},
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
+
+
+@mcp.tool()
 async def browser_status() -> str:
     """Status of the opt-in Playwright browser harness (enabled, mode, desktop, prebake).
 

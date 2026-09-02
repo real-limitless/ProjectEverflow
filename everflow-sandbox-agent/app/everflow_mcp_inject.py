@@ -425,6 +425,8 @@ call **everflow MCP** tools. You are not operating the Everflow monorepo control
 | Jobs | Detached long-lived processes (dev servers) |
 | Desktop / noVNC | Headed browser and GUI when enabled |
 | Marketplace / harness | Optional agents, skills, commands, MCPs |
+| constitution.md | Project law every seat must read (deny-by-default, one job, confirm on deploy) |
+| Room / Chart / bus | Channels, org seats, audited bot-to-bot verbs — not nested `task` soup |
 
 ### Tool routing (prefer MCP over guessing)
 
@@ -454,6 +456,12 @@ call **everflow MCP** tools. You are not operating the Everflow monorepo control
 5. **Application code**
    - Use normal file/edit/bash tools in the workspace. Follow this project’s own conventions
      (README, package scripts, toolkit layout).
+
+6. **Org seats and the bus**
+   - Cross-bot work uses Everflow bus tools (`bus_send_message`, `bus_handoff`,
+     `bus_ask_human`, `bus_report`). Do not fan out via the OpenCode `task` tool.
+   - Read `constitution.md` at the workspace root before changing process or permissions.
+   - `ask_human` walks `reports_to`. Never dump approvals to `#general`.
 
 ### Skills and the everflow agent
 

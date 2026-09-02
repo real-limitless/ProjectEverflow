@@ -15,9 +15,12 @@ from app.api.v1 import (
     http_tools,
     jobs,
     knowledge,
+    bus,
     marketplace,
     opencode,
+    org,
     orgs,
+    room,
     preview,
     project_database,
     projects,
@@ -64,6 +67,9 @@ api_router.include_router(harness.router)
 api_router.include_router(marketplace.router)
 api_router.include_router(usage.router)
 api_router.include_router(preview.router)
+api_router.include_router(org.router)
+api_router.include_router(room.router)
+api_router.include_router(bus.router)
 
 # Auth: register, JWT login/logout, users/me
 api_router.include_router(

@@ -5,6 +5,7 @@ import './styles/playground.css'
 import './styles/app.css'
 import './styles/chat.css'
 import './styles/studio-panels.css'
+import './styles/room-chart.css'
 import { applyThemeClass, loadTheme } from '@/lib/namedLayouts'
 import App from './App'
 

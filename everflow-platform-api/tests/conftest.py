@@ -35,6 +35,14 @@ from app.models import (  # noqa: F401
     WorkflowDataTable,
     WorkflowDataTableRow,
     WorkflowRun,
+    Team,
+    Seat,
+    Channel,
+    ChannelMessage,
+    OrgRun,
+    OrgRunNode,
+    BusEvent,
+    MemoryBlock,
 )
 
 

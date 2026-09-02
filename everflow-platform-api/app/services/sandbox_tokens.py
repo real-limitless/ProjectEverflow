@@ -21,6 +21,9 @@ DEFAULT_SCOPES = [
     "deploy:rw",
     "jobs:rw",
     "project:read",
+    "org:rw",
+    "room:rw",
+    "bus:rw",
 ]
 
 

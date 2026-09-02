@@ -385,6 +385,53 @@ class EverflowClient:
             f"/api/v1/projects/{self.project_id}/sandbox/browser/status",
         )
 
+    async def list_seats(self) -> list[dict[str, Any]]:
+        data = await self.request("GET", f"/api/v1/projects/{self.project_id}/seats")
+        return data if isinstance(data, list) else []
+
+    async def list_teams(self) -> list[dict[str, Any]]:
+        data = await self.request("GET", f"/api/v1/projects/{self.project_id}/teams")
+        return data if isinstance(data, list) else []
+
+    async def list_channels(self) -> list[dict[str, Any]]:
+        data = await self.request("GET", f"/api/v1/projects/{self.project_id}/channels")
+        return data if isinstance(data, list) else []
+
+    async def bus_dispatch(
+        self,
+        verb: str,
+        *,
+        from_seat_id: str | None = None,
+        to_seat_id: str | None = None,
+        to_team_id: str | None = None,
+        to_channel_id: str | None = None,
+        run_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"verb": verb, "payload": payload or {}}
+        if from_seat_id:
+            body["from_seat_id"] = from_seat_id
+        if to_seat_id:
+            body["to_seat_id"] = to_seat_id
+        if to_team_id:
+            body["to_team_id"] = to_team_id
+        if to_channel_id:
+            body["to_channel_id"] = to_channel_id
+        if run_id:
+            body["run_id"] = run_id
+        return await self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/bus",
+            json_body=body,
+        )
+
+    async def compile_run(self, sentence: str) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            f"/api/v1/projects/{self.project_id}/runs/compile",
+            json_body={"sentence": sentence},
+        )
+
     async def browser_set_mode(
         self,
         mode: str,
