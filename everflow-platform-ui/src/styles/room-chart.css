@@ -546,6 +546,7 @@
   background: var(--pf-t--global--background--color--secondary--default);
 }
 
+.pf-v6-c-page.pg-shell--standard .overview-chart,
 .overview-chart {
   display: flex;
   flex-direction: column;
