@@ -1,5 +1,5 @@
 {
   "name": "ProjectEverflow CORE",
-  "install": "bash .cursor/install.sh",
-  "start": "bash .cursor/strip-cursor-attribution.sh"
+  "install": "d=.; [ -f .cursor/install.sh ] || d=projecteverflow; bash \"$d/.cursor/install.sh\"",
+  "start": "d=.; [ -f .cursor/strip-cursor-attribution.sh ] || d=projecteverflow; bash \"$d/.cursor/strip-cursor-attribution.sh\""
 }
