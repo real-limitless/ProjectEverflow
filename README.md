@@ -12,6 +12,9 @@ The **runnable software** lives on the product branch:
 | **License** | [Apache-2.0](LICENSE) |
 | **Install / code** | Product branch (link above) |
 | **Roadmap** | [ROADMAP.md on Development-Everflow](https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/ROADMAP.md) |
+| **Install** | [INSTALLATION.md](INSTALLATION.md) |
+| **Branches** | [BRANCHES.md](BRANCHES.md) |
+| **Voice** | [VOICE.md](VOICE.md) |
 
 ---
 
@@ -106,6 +109,18 @@ GitHub **cannot** hide individual branches on a public repository. For personal 
 - [AGENTS.md](https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/AGENTS.md) — for AI coding agents working in the monorepo  
 
 ---
+
+## Family
+
+Written standard: private TheFLOW. Everflow does not use the shared campaign chrome.
+
+- mcp-flow: MCP catalog for a later marketplace
+- skill-flow: skills catalog for a later marketplace
+- OpenFlow: workflows
+- ansible-flow-mcp: Ansible for agents
+- wiki-flow: wiki workspace
+- roster-flow: org of OpenCode agents
+- CleanFlow: clean-room dock
 
 ## License
 
