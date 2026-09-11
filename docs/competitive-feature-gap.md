@@ -3,7 +3,7 @@
 **Status:** living analysis for GitHub tracking  
 **Product ref:** `Development-Everflow` (public beta `BETA-v0.0.1` plus later hardening)  
 **Compared as of:** 2026-09-11  
-**Related:** [ROADMAP.md](../ROADMAP.md), [#4 OpenFlow](https://github.com/real-limitless/ProjectEverflow/issues/4), [#5 mcp-flow + ansible-flow](https://github.com/real-limitless/ProjectEverflow/issues/5)
+**Related:** GitHub [#20](https://github.com/real-limitless/ProjectEverflow/issues/20) (this analysis), [ROADMAP.md](../ROADMAP.md), [#4 OpenFlow](https://github.com/real-limitless/ProjectEverflow/issues/4), [#5 mcp-flow + ansible-flow](https://github.com/real-limitless/ProjectEverflow/issues/5)
 
 This document is the canonical copy of the competitive gap issue. Competitor claims are from public product docs and repos as of the date above. They will drift. Re-check a vendor before treating a cell as a purchase decision.
 
