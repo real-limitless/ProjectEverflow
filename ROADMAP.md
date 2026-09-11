@@ -63,6 +63,14 @@ Ideas that appear in early product thinking but are **not** delivery promises:
 
 ---
 
+## Competitive gaps
+
+Where Everflow sits versus adjacent products (OpenHands, Coder, Dify, Dust, Cursor/Devin, Hugging Face Spaces, and others), and the P0–P2 gaps that follow from that, is tracked in [`docs/competitive-feature-gap.md`](docs/competitive-feature-gap.md).
+
+That analysis is inventory plus sequencing. It does not replace [#4](https://github.com/real-limitless/ProjectEverflow/issues/4) (OpenFlow) or [#5](https://github.com/real-limitless/ProjectEverflow/issues/5) (mcp-flow / ansible-flow).
+
+---
+
 ## How to influence the roadmap
 
 - Open a GitHub Discussion or Issue describing the use case
