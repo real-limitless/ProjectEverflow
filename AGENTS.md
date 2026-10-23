@@ -126,3 +126,5 @@ For anything beyond this sketch, **query the graph** — do not invent connectio
 | `toolkits/README.md` | Starter templates |
 | `CLAUDE.md` | Short graphify reminder (Claude) |
 | `graphify-out/GRAPH_REPORT.md` | Community hubs / broad architecture (local; gitignored) |
+
+No production or environment URLs in code or descriptions.
