@@ -1,6 +1,6 @@
 # Project Everflow
 
-**Governance-first collaborative AI applications — on your infrastructure, with your rules.**
+**Governance-first collaborative AI applications: on your infrastructure, with your rules.**
 
 This is the **CORE** branch: concept, methodology, and orientation for users and operators.  
 The **runnable software** lives on the product branch:
@@ -21,11 +21,11 @@ Everflow is a **self-hosted platform** where teams build, review, and deploy AI-
 
 ### Core ideas
 
-1. **Governance first** — Global rules for compliance, data access, and agent behavior sit at the platform layer, not as optional add-ons.
-2. **Isolated projects** — Every project runs in its own [microsandbox](https://agentsandbox.dev/) microVM. Work is contained; tenants and projects stay separated by design.
-3. **One public API** — Browsers and tools talk only to the Everflow platform API. A privileged **sandbox-agent** owns KVM and the microVM SDK; it is not a public client endpoint.
-4. **Your infrastructure** — Docker/Podman compose install; images can stay in an embedded local registry. Data sovereignty is a product goal, not an afterthought.
-5. **Agents with guardrails** — Coding and automation agents (harnesses, MCP tools, workflows) operate inside org policy and project scope.
+1. **Governance first**. Global rules for compliance, data access, and agent behavior sit at the platform layer, not as optional add-ons.
+2. **Isolated projects**. Every project runs in its own [microsandbox](https://agentsandbox.dev/) microVM. Work is contained; tenants and projects stay separated by design.
+3. **One public API**. Browsers and tools talk only to the Everflow platform API. A privileged **sandbox-agent** owns KVM and the microVM SDK; it is not a public client endpoint.
+4. **Your infrastructure**. Docker/Podman compose install; images can stay in an embedded local registry. Data sovereignty is a product goal, not an afterthought.
+5. **Agents with guardrails**. Coding and automation agents (harnesses, MCP tools, workflows) operate inside org policy and project scope.
 
 ### Typical flow
 
@@ -51,10 +51,10 @@ Team member → Platform UI / API
 
 **Design principles we optimize for:**
 
-- **Least privilege by default** — sandboxes and tokens are scoped; mock mode is for CI/dev only.
-- **Approve the boundary, free the builder** — once policies and tools are approved, individuals move fast inside that box.
-- **Operator honesty** — production refuses default secrets; install is container-native, not a fragile host toolchain.
-- **Open methodology, open code** — concept lives here on CORE; implementation is open on the product branch under Apache-2.0.
+- **Least privilege by default**: sandboxes and tokens are scoped; mock mode is for CI/dev only.
+- **Approve the boundary, free the builder**: once policies and tools are approved, individuals move fast inside that box.
+- **Operator honesty**: production refuses default secrets; install is container-native, not a fragile host toolchain.
+- **Open methodology, open code**: concept lives here on CORE; implementation is open on the product branch under Apache-2.0.
 
 ---
 
@@ -93,20 +93,22 @@ Full install, production checklist, and architecture:
 
 ### Private work
 
-GitHub **cannot** hide individual branches on a public repository. For personal experiments, Red Hat pitch materials, or private notes, use a **private fork** or **private sibling repository** — never push secrets or internal-only docs to this public remote.
+GitHub **cannot** hide individual branches on a public repository. For personal experiments, Red Hat pitch materials, or private notes, use a **private fork** or **private sibling repository**: never push secrets or internal-only docs to this public remote.
 
 ---
 
 ## Resources
 
-- [Product README](https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/README.md) — install TUI, stack, production checklist  
-- [ROADMAP](https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/ROADMAP.md) — shipped / next / later  
+- [Product README](https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/README.md): install TUI, stack, production checklist  
+- [ROADMAP](https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/ROADMAP.md): shipped / next / later  
 - [CONTRIBUTING](https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/CONTRIBUTING.md)  
 - [SECURITY](https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/SECURITY.md)  
-- [AGENTS.md](https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/AGENTS.md) — for AI coding agents working in the monorepo  
+- [AGENTS.md](https://github.com/real-limitless/ProjectEverflow/blob/Development-Everflow/AGENTS.md): for AI coding agents working in the monorepo
+
+Siblings (later marketplace, not this wave): [mcp-flow](https://github.com/real-limitless/mcp-flow), [skill-flow](https://github.com/real-limitless/skill-flow), [OpenFlow](https://github.com/real-limitless/OpenFlow).  
 
 ---
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0: see [LICENSE](LICENSE).
